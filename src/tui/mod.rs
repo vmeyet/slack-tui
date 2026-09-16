@@ -1,5 +1,6 @@
 pub mod app;
 pub mod inbox;
+pub mod jump;
 pub mod ui;
 
 use crate::api::rtm;
@@ -8,7 +9,9 @@ use crate::markdown;
 use crate::resolve::Directory;
 use anyhow::Result;
 use app::{Action, App, ChannelRow, Incoming, Kind};
-use crossterm::event::{Event, EventStream, KeyEventKind};
+use crossterm::event::{
+    Event, EventStream, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use futures_util::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,6 +38,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     }
     app.workspace = workspace;
     let mut terminal = ratatui::init();
+    let enhanced = enable_modifier_keys();
     spawn(Action::LoadChannels, slack.clone(), dir.clone(), tx.clone());
     if open_inbox {
         for action in app.open_inbox() {
@@ -62,8 +66,21 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
             break Ok(());
         }
     };
+    if enhanced {
+        let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    }
     ratatui::restore();
     result
+}
+
+/// Asks terminals speaking the kitty keyboard protocol to report ⌘ and other modifiers,
+/// so ⌘K works where the terminal lets it through (Ghostty, Kitty, WezTerm, iTerm2 with the option on).
+fn enable_modifier_keys() -> bool {
+    if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+        return false;
+    }
+    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+    crossterm::execute!(std::io::stdout(), PushKeyboardEnhancementFlags(flags)).is_ok()
 }
 
 fn spawn_live(slack: crate::api::Slack, tx: mpsc::UnboundedSender<Incoming>) {
@@ -108,7 +125,7 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
                 .into_iter()
                 .map(|(c, label)| ChannelRow { id: c.id.clone(), label, kind: Kind::from(c.kind()) })
                 .collect();
-            Ok(Incoming::Channels(rows, d.names()))
+            Ok(Incoming::Channels { rows, people: d.people(), names: d.names() })
         }
         Action::LoadHistory(channel) => {
             let messages = slack.history(&channel, 100, None).await?;
@@ -146,6 +163,25 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
         Action::OpenUrl(url) => {
             std::process::Command::new("open").arg(&url).spawn()?;
             Ok(Incoming::Status(format!("opened {url}")))
+        }
+        Action::LoadThreads => {
+            let threads = slack.thread_view(30).await.unwrap_or_default();
+            let names = dir.lock().await.names();
+            let candidates = threads
+                .into_iter()
+                .map(|t| {
+                    let preview: String = crate::mrkdwn::plain(&t.root_msg.text, &names).chars().take(60).collect();
+                    jump::Candidate {
+                        label: format!("{} · {}", names.channel_label(&t.root_msg.channel), preview.replace('\n', " ")),
+                        target: jump::Target::Thread { channel: t.root_msg.channel, ts: t.root_msg.ts },
+                    }
+                })
+                .collect();
+            Ok(Incoming::Threads(candidates))
+        }
+        Action::OpenDm(user) => {
+            let channel = slack.open_dm(&user).await?;
+            Ok(Incoming::DmOpened(channel))
         }
         Action::LoadInbox => {
             let me = slack.auth_test().await?.user_id;

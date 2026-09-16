@@ -1,6 +1,6 @@
 use crate::api::{Channel, ChannelKind, Message, Slack, User};
 use crate::cache::Cache;
-use crate::{markdown, mrkdwn};
+use crate::{fuzzy, markdown, mrkdwn};
 use anyhow::{Result, bail};
 use regex::Regex;
 use std::collections::HashMap;
@@ -77,7 +77,12 @@ impl Directory {
                 return Ok(id);
             }
         }
-        let close: Vec<String> = self.channels.iter().filter(|c| c.name.contains(name)).map(|c| format!("#{}", c.name)).take(5).collect();
+        let named = || self.channels.iter().filter(|c| !c.name.is_empty()).map(|c| (c.name.clone(), c));
+        if let Some(c) = fuzzy::best(name, named()) {
+            eprintln!("→ #{}", c.name);
+            return Ok(c.id.clone());
+        }
+        let close: Vec<String> = fuzzy::rank(name, named()).into_iter().map(|(_, c)| format!("#{}", c.name)).take(5).collect();
         match close.is_empty() {
             true => bail!("channel `{target}` not found (are you a member?)"),
             false => bail!("channel `{target}` not found. Did you mean: {}", close.join(", ")),
@@ -103,7 +108,23 @@ impl Directory {
                 return Ok(id);
             }
         }
-        bail!("user `@{handle}` not found")
+        let people = || self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (format!("{} {}", u.handle(), u.real_name), u));
+        if let Some(u) = fuzzy::best(handle, people()) {
+            eprintln!("→ @{}", u.handle());
+            return Ok(u.id.clone());
+        }
+        let close: Vec<String> = fuzzy::rank(handle, people()).into_iter().map(|(_, u)| format!("@{}", u.handle())).take(5).collect();
+        match close.is_empty() {
+            true => bail!("user `@{handle}` not found"),
+            false => bail!("user `@{handle}` not found. Did you mean: {}", close.join(", ")),
+        }
+    }
+
+    pub fn people(&self) -> Vec<(String, String)> {
+        let mut people: Vec<(String, String)> =
+            self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (u.id.clone(), u.handle().to_owned())).collect();
+        people.sort_by_key(|(_, h)| h.to_lowercase());
+        people
     }
 
     fn find_user(&self, handle: &str) -> Option<String> {
@@ -292,7 +313,9 @@ mod tests {
         assert_eq!(d.channel_id("general-fr").await.unwrap(), "C2");
         assert_eq!(d.channel_id("C0AAAAAAAA").await.unwrap(), "C0AAAAAAAA");
         let err = d.channel_id("gener").await.unwrap_err().to_string();
-        assert!(err.contains("#general, 🔒general-fr") || err.contains("#general"), "{err}");
+        assert!(err.contains("Did you mean: #general, #general-fr"), "{err}");
+        assert_eq!(d.channel_id("gfr").await.unwrap(), "C2");
+        assert!(d.channel_id("zzz").await.unwrap_err().to_string().contains("not found"));
     }
 
     #[tokio::test]

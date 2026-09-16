@@ -33,6 +33,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if let Some(inbox) = &app.inbox {
         super::inbox::draw(f, inbox, &app.names, main, app.highlight);
     }
+    if let Some(jump) = &app.jump {
+        super::jump::draw(f, jump, main, app.highlight);
+    }
     if app.help {
         draw_help(f, f.area());
     }
@@ -205,7 +208,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let hints = match (app.input.is_some(), app.focus) {
         (true, _) => "enter send · esc cancel",
-        (_, Focus::Channels) => "j/k move · enter open · i inbox · / filter · s search · R refresh · ? help · q quit",
+        (_, Focus::Channels) => "j/k move · enter open · ^k jump · i inbox · / filter · s search · R refresh · ? help · q quit",
         (_, Focus::Messages) => {
             "j/k move · enter thread · r reply · t thread reply · e react · o open · u link · y copy · s search · ? help"
         }
@@ -245,6 +248,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "  u             open the message's link in the browser",
         "  s   /         search · filter channels",
         "  i             inbox: unread DMs, mentions, thread replies",
+        "  ⌘k / ctrl-k   jump to a channel, person or thread · > searches",
         "  R             refresh",
         "  esc           close thread · clear search or filter",
         "  q             quit",
@@ -302,7 +306,7 @@ mod tests {
             ChannelRow { id: "C2".into(), label: "🔒vault".into(), kind: Kind::Private },
             ChannelRow { id: "D1".into(), label: "@bob".into(), kind: Kind::Dm },
         ];
-        app.apply(Incoming::Channels(rows, NameBook::default()));
+        app.apply(Incoming::Channels { rows, people: vec![], names: NameBook::default() });
         app.current_channel = Some("C1".into());
         let mut root = message(
             "1694700000.000100",

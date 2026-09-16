@@ -64,6 +64,7 @@ Use `--raw` to send Slack mrkdwn untouched.
 
 `slack tui` opens channels, messages and thread panes.
 `j/k` move, `enter` opens, `r` replies, `t` replies in thread, `e` reacts, `o` opens in Slack, `y` copies the permalink, `s` searches, `/` filters channels, `?` shows every key.
+`ctrl-k` (or `⌘k` on terminals that forward it: Ghostty, Kitty, WezTerm, iTerm2 with the kitty keyboard protocol enabled and ⌘K unbound) opens a fuzzy jump box over channels, people and the threads you follow (`vvt` finds `#vivien-vault`); a leading `>` sends the query to Slack search instead.
 New messages, edits, deletions and reactions arrive live over Slack's RTM websocket; other channels light up with `●`.
 If the workspace refuses RTM the open conversation is polled every 10 seconds instead (`↻` in the status bar).
 

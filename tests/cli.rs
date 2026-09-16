@@ -218,11 +218,16 @@ async fn send_blocks_file_is_validated() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn unknown_channel_suggests() {
+async fn fuzzy_channel_resolution_and_not_found() {
     let env = Env::new().await;
     env.mock("conversations.list", channels_payload()).await;
-    let err = stderr_failure(env.slack().args(["send", "#gen", "x", "--dry-run"]));
-    assert_eq!(err, "✗ channel `#gen` not found. Did you mean: #general\n");
+    let out = env.slack().args(["send", "#gen", "x", "--dry-run"]).output().unwrap();
+    assert!(out.status.success());
+    let payload: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(payload["channel"], "C1");
+    assert_eq!(String::from_utf8(out.stderr).unwrap(), "→ #general\n");
+    let err = stderr_failure(env.slack().args(["send", "#zzz", "x", "--dry-run"]));
+    assert_eq!(err, "✗ channel `#zzz` not found (are you a member?)\n");
 }
 
 #[tokio::test(flavor = "multi_thread")]

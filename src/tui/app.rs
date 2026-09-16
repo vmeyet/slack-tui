@@ -1,4 +1,5 @@
 use super::inbox::Inbox;
+use super::jump::{Candidate, Jump, Target};
 use crate::api::rtm;
 use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
 use crate::inbox::{Item, Snooze, State};
@@ -72,6 +73,8 @@ pub enum Action {
     OpenUrl(String),
     Yank { channel: String, ts: String },
     LoadInbox,
+    LoadThreads,
+    OpenDm(String),
     MarkRead(Item),
     SaveInbox { workspace: String, state: State },
 }
@@ -89,7 +92,9 @@ pub enum Incoming {
     Live(rtm::Event),
     Tick,
     Inbox { items: Vec<Item>, names: NameBook },
-    Channels(Vec<ChannelRow>, NameBook),
+    Threads(Vec<Candidate>),
+    DmOpened(String),
+    Channels { rows: Vec<ChannelRow>, people: Vec<(String, String)>, names: NameBook },
     History { channel: String, messages: Vec<Message>, names: NameBook },
     Replies { channel: String, ts: String, messages: Vec<Message>, names: NameBook },
     Sent { channel: String, thread_ts: Option<String> },
@@ -121,6 +126,8 @@ pub struct App {
     pub highlight: Color,
     pub inbox: Option<Inbox>,
     pub workspace: String,
+    pub jump: Option<Jump>,
+    pub people: Vec<(String, String)>,
 }
 
 impl Default for App {
@@ -147,6 +154,8 @@ impl Default for App {
             highlight: DEFAULT_HIGHLIGHT,
             inbox: None,
             workspace: "env".into(),
+            jump: None,
+            people: vec![],
         }
     }
 }
@@ -184,13 +193,21 @@ impl App {
                 return vec![];
             }
             Incoming::Status(s) if s.is_empty() => return vec![],
+            Incoming::Threads(candidates) => {
+                if let Some(jump) = &mut self.jump {
+                    jump.threads = candidates;
+                }
+                return vec![];
+            }
+            Incoming::DmOpened(channel) => return self.open_channel(channel),
             _ => {}
         }
         self.loading = false;
         match incoming {
-            Incoming::Live(_) | Incoming::Tick | Incoming::Inbox { .. } => unreachable!(),
-            Incoming::Channels(rows, names) => {
+            Incoming::Live(_) | Incoming::Tick | Incoming::Inbox { .. } | Incoming::Threads(_) | Incoming::DmOpened(_) => unreachable!(),
+            Incoming::Channels { rows, people, names } => {
                 self.channels = rows;
+                self.people = people;
                 self.names = names;
                 self.status = format!("{} conversations · ? for help", self.channels.len());
             }
@@ -340,10 +357,67 @@ impl App {
         if self.input.is_some() {
             return self.handle_input_key(key);
         }
+        if self.jump.is_some() {
+            return self.handle_jump_key(key);
+        }
+        if key.code == KeyCode::Char('k') && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) {
+            return self.open_jump();
+        }
         if self.inbox.is_some() {
             return self.handle_inbox_key(key);
         }
         self.handle_browse_key(key)
+    }
+
+    pub fn open_jump(&mut self) -> Vec<Action> {
+        let channels = self.channels.iter().map(|c| Candidate { label: c.label.clone(), target: Target::Channel(c.id.clone()) }).collect();
+        let people =
+            self.people.iter().map(|(id, handle)| Candidate { label: format!("@{handle}"), target: Target::Person(id.clone()) }).collect();
+        self.jump = Some(Jump { channels, people, ..Default::default() });
+        vec![Action::LoadThreads]
+    }
+
+    fn handle_jump_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let jump = self.jump.as_mut().expect("jump open");
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => self.jump = None,
+            KeyCode::Down | KeyCode::Tab => jump.move_by(1),
+            KeyCode::Up | KeyCode::BackTab => jump.move_by(-1),
+            KeyCode::Char('n') if ctrl => jump.move_by(1),
+            KeyCode::Char('p') if ctrl => jump.move_by(-1),
+            KeyCode::Backspace => jump.backspace(),
+            KeyCode::Char(c) if !ctrl => jump.type_char(c),
+            KeyCode::Enter => {
+                if jump.is_search() {
+                    let query = jump.query[1..].trim().to_owned();
+                    self.jump = None;
+                    if query.is_empty() {
+                        return vec![];
+                    }
+                    self.loading = true;
+                    self.status = "searching…".into();
+                    return vec![Action::Search(query)];
+                }
+                let Some(candidate) = jump.selected_candidate() else { return vec![] };
+                self.jump = None;
+                self.inbox = None;
+                return match candidate.target {
+                    Target::Channel(id) => self.open_channel(id),
+                    Target::Person(user) => {
+                        self.status = "opening conversation…".into();
+                        vec![Action::OpenDm(user)]
+                    }
+                    Target::Thread { channel, ts } => {
+                        let mut actions = self.open_channel(channel.clone());
+                        actions.push(Action::LoadReplies { channel, ts });
+                        actions
+                    }
+                };
+            }
+            _ => {}
+        }
+        vec![]
     }
 
     pub fn open_inbox(&mut self) -> Vec<Action> {
@@ -747,7 +821,11 @@ mod tests {
 
     fn loaded() -> App {
         let mut app = App::new();
-        app.apply(Incoming::Channels(vec![row("C1", "#general"), row("C2", "#random")], NameBook::default()));
+        app.apply(Incoming::Channels {
+            rows: vec![row("C1", "#general"), row("C2", "#random")],
+            people: vec![("U1".into(), "vivien".into())],
+            names: NameBook::default(),
+        });
         app
     }
 
@@ -1064,6 +1142,53 @@ mod tests {
         assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "9".into() }]);
         assert!(app.inbox.is_none());
         assert_eq!(app.current_channel.as_deref(), Some("C2"));
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn jump_opens_channels_people_threads_and_search() {
+        let mut app = loaded();
+        assert_eq!(app.handle_key(ctrl('k')), vec![Action::LoadThreads]);
+        for c in "rnd".chars() {
+            app.handle_key(key(c));
+        }
+        assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::LoadHistory("C2".into())]);
+        assert!(app.jump.is_none());
+
+        app.handle_key(ctrl('k'));
+        for c in "@viv".chars() {
+            app.handle_key(key(c));
+        }
+        assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::OpenDm("U1".into())]);
+        assert_eq!(app.apply(Incoming::DmOpened("D1".into())), vec![Action::LoadHistory("D1".into())]);
+        assert_eq!(app.current_channel.as_deref(), Some("D1"));
+
+        app.handle_key(ctrl('k'));
+        app.apply(Incoming::Threads(vec![Candidate {
+            label: "#general · plan".into(),
+            target: Target::Thread { channel: "C1".into(), ts: "9".into() },
+        }]));
+        for c in "plan".chars() {
+            app.handle_key(key(c));
+        }
+        assert_eq!(
+            app.handle_key(code(KeyCode::Enter)),
+            vec![Action::LoadHistory("C1".into()), Action::LoadReplies { channel: "C1".into(), ts: "9".into() }]
+        );
+
+        app.handle_key(ctrl('k'));
+        for c in ">deploy failed".chars() {
+            app.handle_key(key(c));
+        }
+        assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::Search("deploy failed".into())]);
+        app.handle_key(ctrl('k'));
+        app.handle_key(code(KeyCode::Esc));
+        assert!(app.jump.is_none());
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
+        assert!(app.jump.is_some());
     }
 
     #[test]
