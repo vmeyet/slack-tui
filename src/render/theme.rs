@@ -89,6 +89,13 @@ impl Theme {
     pub fn err(&self, s: &str) -> String {
         self.paint(s, |s| s.red().bold().to_string())
     }
+    pub fn channel(&self, name: &str) -> String {
+        let idx = name.trim().bytes().fold(7usize, |h, b| h.wrapping_mul(33).wrapping_add(b as usize)) % USER_COLORS.len();
+        self.paint(name, |s| s.color(USER_COLORS[idx]).to_string())
+    }
+    pub fn highlight(&self, s: &str) -> String {
+        self.paint(s, |s| s.black().on_yellow().bold().to_string())
+    }
     pub fn user(&self, name: &str) -> String {
         let idx = name.trim().bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)) % USER_COLORS.len();
         self.paint(name, |s| s.color(USER_COLORS[idx]).bold().to_string())

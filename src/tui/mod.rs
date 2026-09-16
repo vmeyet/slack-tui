@@ -1,4 +1,5 @@
 pub mod app;
+pub mod firehose;
 pub mod inbox;
 pub mod jump;
 pub mod ui;
@@ -37,6 +38,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
             .map_err(|_| anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a` or `236`)"))?;
     }
     app.workspace = workspace;
+    app.highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
     let mut terminal = ratatui::init();
     let enhanced = enable_modifier_keys();
     spawn(Action::LoadChannels, slack.clone(), dir.clone(), tx.clone());
@@ -178,6 +180,11 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
                 })
                 .collect();
             Ok(Incoming::Threads(candidates))
+        }
+        Action::LearnUsers(ids) => {
+            let mut d = dir.lock().await;
+            d.learn_ids(&ids).await?;
+            Ok(Incoming::Names(d.names()))
         }
         Action::OpenDm(user) => {
             let channel = slack.open_dm(&user).await?;

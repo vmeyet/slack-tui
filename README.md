@@ -46,6 +46,7 @@ slack channels [filter] [--all]
 slack users [filter]
 slack api conversations.info channel=C0123          # any Web API method
 slack inbox                                          # unread DMs, mentions, thread replies
+slack firehose -H 'error|failed' -H prod             # every channel as one live ticker
 slack tui
 ```
 
@@ -78,7 +79,13 @@ highlight = "#2a2a2a"   # selected row: a name, #rrggbb, or a 0-255 index
 
 [links]
 show_url = false        # true prints `label (url)`; false keeps the label, clickable on OSC 8 terminals
+
+[firehose]
+highlight = ["prod", "error|failed", "@vivien"]   # case-insensitive regexes lit up in the ticker
 ```
+
+`slack firehose` streams every message from every conversation as one ticker, colour-coded by channel, with `!` and a yellow mark on lines matching a highlight.
+`f` opens the same wall inside the TUI, where scrolling up pauses it, `G` follows again and `enter` jumps into the conversation.
 
 ## Development
 

@@ -43,6 +43,8 @@ pub enum Command {
     Tui,
     /// Unread DMs, mentions and thread replies. Interactive on a terminal, a list when piped.
     Inbox(InboxArgs),
+    /// Stream every message from every conversation as one ticker, like tailing logs.
+    Firehose(FirehoseArgs),
     /// Generate shell completions.
     Completions { shell: clap_complete::Shell },
 }
@@ -161,6 +163,13 @@ pub struct UsersArgs {
     pub query: Option<String>,
     #[arg(long)]
     pub refresh: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct FirehoseArgs {
+    /// Case-insensitive regex to light up (repeatable, adds to `[firehose] highlight` in config).
+    #[arg(short = 'H', long = "highlight", value_name = "REGEX")]
+    pub highlight: Vec<String>,
 }
 
 #[derive(Args, Debug)]

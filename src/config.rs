@@ -13,6 +13,21 @@ pub struct Config {
     pub tui: Tui,
     #[serde(default, skip_serializing_if = "Links::is_default")]
     pub links: Links,
+    #[serde(default, skip_serializing_if = "Firehose::is_default")]
+    pub firehose: Firehose,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Firehose {
+    /// Case-insensitive regexes that light up a line in the firehose.
+    #[serde(default)]
+    pub highlight: Vec<String>,
+}
+
+impl Firehose {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -138,8 +153,9 @@ mod tests {
         let config: Config = toml::from_str("default = \"acme\"\n\n[tui]\nhighlight = \"#2a2a2a\"\n").unwrap();
         assert_eq!(config.tui.highlight.as_deref(), Some("#2a2a2a"));
         assert!(!config.links.show_url);
-        let config: Config = toml::from_str("[links]\nshow_url = true\n").unwrap();
+        let config: Config = toml::from_str("[links]\nshow_url = true\n\n[firehose]\nhighlight = [\"prod\", \"error|failed\"]\n").unwrap();
         assert!(config.links.show_url);
+        assert_eq!(config.firehose.highlight, ["prod", "error|failed"]);
         assert!(!toml::to_string(&Config::default()).unwrap().contains("tui"));
     }
 

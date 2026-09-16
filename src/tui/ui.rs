@@ -34,6 +34,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if let Some(inbox) = &app.inbox {
         super::inbox::draw(f, inbox, &app.names, main, app.highlight);
     }
+    if let Some(view) = &app.firehose {
+        f.render_widget(Clear, main);
+        super::firehose::draw(f, view, &app.wall, &app.names, &app.highlighter, main, app.highlight);
+    }
     if let Some(jump) = &app.jump {
         super::jump::draw(f, jump, main, app.highlight);
     }
@@ -240,7 +244,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let hints = match (app.input.is_some(), app.focus) {
         (true, _) => "enter send · esc cancel",
-        (_, Focus::Channels) => "j/k move · enter open · ^k jump · i inbox · / filter · s search · R refresh · ? help · q quit",
+        (_, Focus::Channels) => "j/k move · enter open · ^k jump · i inbox · f firehose · / filter · s search · ? help · q quit",
         (_, Focus::Messages) => {
             "j/k move · enter thread · r reply · t thread reply · e react · o open · u link · y copy · s search · ? help"
         }
@@ -280,6 +284,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "  u             open the message's link in the browser",
         "  s   /         search · filter channels",
         "  i             inbox: unread DMs, mentions, thread replies",
+        "  f             firehose: every channel as one live ticker",
         "  ⌘k / ctrl-k   jump to a channel, person or thread · > searches",
         "  R             refresh",
         "  esc           close thread · clear search or filter",
@@ -313,7 +318,7 @@ fn style_of(s: TextStyle) -> Style {
     }
 }
 
-fn user_style(name: &str) -> Style {
+pub fn user_style(name: &str) -> Style {
     let idx = name.trim().bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)) % USER_COLORS.len();
     Style::new().fg(USER_COLORS[idx]).bold()
 }

@@ -203,6 +203,17 @@ pub fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
     out
 }
 
+pub fn firehose_line(t: &Theme, names: &NameBook, line: &crate::firehose::Line, hl: &crate::firehose::Highlighter) -> String {
+    let label = fit(&names.channel_label(&line.channel), 16);
+    let author = line.user.as_deref().map(|u| names.user_label(u)).or_else(|| line.username.clone()).unwrap_or_else(|| "bot".into());
+    let text = line.flat_text(names);
+    let hit = hl.hits(&text);
+    let marker = if hit { t.highlight("!") } else { " ".into() };
+    let arrow = if line.in_thread { t.dim("↳ ") } else { String::new() };
+    let body: String = hl.split(&text).into_iter().map(|(piece, h)| if h { t.highlight(&piece) } else { piece }).collect();
+    format!("{marker}{} {} {} {arrow}{body}\n", t.time(&time::hhmm(&line.ts)), t.channel(&label), t.user(&fit(&author, 10)))
+}
+
 pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> String {
     use crate::inbox::Kind;
     let mut out = title_bar(t, "inbox", &plural(items.len() as u64, "item", "items"));
@@ -315,6 +326,27 @@ mod tests {
 
     fn msg(ts: &str, user: Option<&str>) -> Message {
         Message { ts: ts.into(), user: user.map(str::to_owned), text: "x".into(), ..Default::default() }
+    }
+
+    #[test]
+    fn firehose_line_marks_hits() {
+        use crate::firehose::{Highlighter, Line};
+        let t = Theme::plain(100);
+        let hl = Highlighter::new(&["prod".into()]).unwrap();
+        let line = Line {
+            ts: "1694700000.000000".into(),
+            channel: "C1".into(),
+            user: None,
+            username: Some("deploybot".into()),
+            text: "deploy to prod\ndone".into(),
+            in_thread: true,
+            thread_ts: None,
+        };
+        let out = firehose_line(&t, &NameBook::default(), &line, &hl);
+        assert!(out.starts_with('!'), "{out}");
+        assert!(out.ends_with("deploybot  ↳ deploy to prod done\n"), "{out}");
+        let quiet = Line { text: "all good".into(), in_thread: false, ..line };
+        assert!(firehose_line(&t, &NameBook::default(), &quiet, &hl).starts_with(' '));
     }
 
     #[test]

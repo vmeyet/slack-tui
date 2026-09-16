@@ -174,8 +174,12 @@ impl Directory {
 
     /// Fetches the users mentioned or authoring these messages that are not known yet.
     pub async fn learn_users(&mut self, messages: &[Message]) -> Result<()> {
-        let mentioned = messages.iter().flat_map(|m| mentioned_users(&m.text).into_iter().chain(m.user.clone()));
-        let mut unknown: Vec<String> = mentioned.filter(|id| !self.users.iter().any(|u| &u.id == id)).collect();
+        let ids: Vec<String> = messages.iter().flat_map(|m| mentioned_users(&m.text).into_iter().chain(m.user.clone())).collect();
+        self.learn_ids(&ids).await
+    }
+
+    pub async fn learn_ids(&mut self, ids: &[String]) -> Result<()> {
+        let mut unknown: Vec<String> = ids.iter().filter(|id| !self.users.iter().any(|u| &u.id == *id)).cloned().collect();
         unknown.sort();
         unknown.dedup();
         if unknown.is_empty() {

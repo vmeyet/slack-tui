@@ -1,5 +1,6 @@
 pub mod api;
 pub mod channels;
+pub mod firehose;
 pub mod inbox;
 pub mod login;
 pub mod messages;

@@ -1,11 +1,14 @@
+use super::firehose::{self, Firehose};
 use super::inbox::Inbox;
 use super::jump::{Candidate, Jump, Target};
 use crate::api::rtm;
 use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
+use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::{Item, Snooze, State};
 use crate::resolve::NameBook;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
+use std::collections::VecDeque;
 
 pub const DEFAULT_HIGHLIGHT: Color = Color::Indexed(236);
 use std::collections::HashSet;
@@ -74,6 +77,7 @@ pub enum Action {
     Yank { channel: String, ts: String },
     LoadInbox,
     LoadThreads,
+    LearnUsers(Vec<String>),
     OpenDm(String),
     MarkRead(Item),
     SaveInbox { workspace: String, state: State },
@@ -94,6 +98,7 @@ pub enum Incoming {
     Inbox { items: Vec<Item>, names: NameBook },
     Threads(Vec<Candidate>),
     DmOpened(String),
+    Names(NameBook),
     Channels { rows: Vec<ChannelRow>, people: Vec<(String, String)>, names: NameBook },
     History { channel: String, messages: Vec<Message>, names: NameBook },
     Replies { channel: String, ts: String, messages: Vec<Message>, names: NameBook },
@@ -128,6 +133,9 @@ pub struct App {
     pub workspace: String,
     pub jump: Option<Jump>,
     pub people: Vec<(String, String)>,
+    pub wall: VecDeque<LiveLine>,
+    pub firehose: Option<Firehose>,
+    pub highlighter: Highlighter,
 }
 
 impl Default for App {
@@ -156,6 +164,9 @@ impl Default for App {
             workspace: "env".into(),
             jump: None,
             people: vec![],
+            wall: VecDeque::new(),
+            firehose: None,
+            highlighter: Highlighter::default(),
         }
     }
 }
@@ -200,11 +211,20 @@ impl App {
                 return vec![];
             }
             Incoming::DmOpened(channel) => return self.open_channel(channel),
+            Incoming::Names(names) => {
+                self.names = names;
+                return vec![];
+            }
             _ => {}
         }
         self.loading = false;
         match incoming {
-            Incoming::Live(_) | Incoming::Tick | Incoming::Inbox { .. } | Incoming::Threads(_) | Incoming::DmOpened(_) => unreachable!(),
+            Incoming::Live(_)
+            | Incoming::Tick
+            | Incoming::Inbox { .. }
+            | Incoming::Threads(_)
+            | Incoming::DmOpened(_)
+            | Incoming::Names(_) => unreachable!(),
             Incoming::Channels { rows, people, names } => {
                 self.channels = rows;
                 self.people = people;
@@ -264,7 +284,14 @@ impl App {
                     self.live = Live::Connecting;
                 }
             }
-            rtm::Event::Message { channel, message } => self.live_message(channel, message),
+            rtm::Event::Message { channel, message } => {
+                firehose::push(&mut self.wall, LiveLine::from_message(&channel, &message));
+                let unknown = message.user.clone().filter(|u| self.names.user_label(u) == *u);
+                self.live_message(channel, message);
+                if let Some(id) = unknown {
+                    return vec![Action::LearnUsers(vec![id])];
+                }
+            }
             rtm::Event::Changed { channel, message } => {
                 if self.current_channel.as_deref() == Some(&channel) {
                     for m in self.all_messages_mut().into_iter().filter(|m| m.ts == message.ts) {
@@ -363,10 +390,42 @@ impl App {
         if key.code == KeyCode::Char('k') && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) {
             return self.open_jump();
         }
+        if self.firehose.is_some() {
+            return self.handle_firehose_key(key);
+        }
         if self.inbox.is_some() {
             return self.handle_inbox_key(key);
         }
         self.handle_browse_key(key)
+    }
+
+    fn handle_firehose_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let view = self.firehose.as_mut().expect("firehose open");
+        let len = self.wall.len();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('f') => self.firehose = None,
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('j') | KeyCode::Down => view.move_by(1, len),
+            KeyCode::Char('k') | KeyCode::Up => view.move_by(-1, len),
+            KeyCode::PageDown => view.move_by(10, len),
+            KeyCode::PageUp => view.move_by(-10, len),
+            KeyCode::Char('g') | KeyCode::Home => view.move_by(i64::MIN / 2, len),
+            KeyCode::Char('G') | KeyCode::End => view.follow(),
+            KeyCode::Enter => {
+                let Some(line) = view.selected.or_else(|| len.checked_sub(1)).and_then(|i| self.wall.get(i)).cloned() else {
+                    return vec![];
+                };
+                self.firehose = None;
+                let mut actions = self.open_channel(line.channel.clone());
+                if let Some(root) = line.thread_ts {
+                    actions.push(Action::LoadReplies { channel: line.channel, ts: root });
+                }
+                return actions;
+            }
+            KeyCode::Char('?') => self.help = true,
+            _ => {}
+        }
+        vec![]
     }
 
     pub fn open_jump(&mut self) -> Vec<Action> {
@@ -544,6 +603,7 @@ impl App {
             }
             KeyCode::Char('R') => return self.refresh(),
             KeyCode::Char('i') => return self.open_inbox(),
+            KeyCode::Char('f') => self.firehose = Some(Firehose::default()),
             _ => {}
         }
         vec![]
@@ -1189,6 +1249,35 @@ mod tests {
         assert!(app.jump.is_none());
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
         assert!(app.jump.is_some());
+    }
+
+    #[test]
+    fn firehose_collects_every_channel_and_jumps() {
+        let mut app = loaded();
+        live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("1", "one") });
+        let reply = Message { thread_ts: Some("1".into()), ..msg("2", "two") };
+        live(&mut app, rtm::Event::Message { channel: "C9".into(), message: reply });
+        assert_eq!(app.wall.len(), 2);
+        app.handle_key(key('f'));
+        assert!(app.firehose.is_some());
+        app.handle_key(key('k'));
+        assert_eq!(app.firehose.as_ref().unwrap().selected, Some(0));
+        app.handle_key(key('G'));
+        assert!(app.firehose.as_ref().unwrap().following());
+        let actions = app.handle_key(code(KeyCode::Enter));
+        assert_eq!(actions, vec![Action::LoadHistory("C9".into()), Action::LoadReplies { channel: "C9".into(), ts: "1".into() }]);
+        assert!(app.firehose.is_none());
+        app.handle_key(key('f'));
+        app.handle_key(code(KeyCode::Esc));
+        assert!(app.firehose.is_none());
+    }
+
+    #[test]
+    fn unknown_live_authors_are_learned_once_seen() {
+        let mut app = loaded();
+        let actions =
+            live(&mut app, rtm::Event::Message { channel: "C1".into(), message: Message { user: Some("U77".into()), ..msg("1", "x") } });
+        assert_eq!(actions, vec![Action::LearnUsers(vec!["U77".into()])]);
     }
 
     #[test]
