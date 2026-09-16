@@ -54,7 +54,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
         let actions = tokio::select! {
             Some(incoming) = rx.recv() => app.apply(incoming),
             Some(event) = events.next() => match event {
-                Ok(Event::Key(key)) if key.kind == KeyEventKind::Press => app.handle_key(key),
+                Ok(Event::Key(key)) if key.kind != KeyEventKind::Release => app.handle_key(key),
                 Ok(_) => vec![],
                 Err(e) => break Err(e.into()),
             },
@@ -79,7 +79,7 @@ fn enable_modifier_keys() -> bool {
     if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
         return false;
     }
-    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES | KeyboardEnhancementFlags::REPORT_EVENT_TYPES;
+    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
     crossterm::execute!(std::io::stdout(), PushKeyboardEnhancementFlags(flags)).is_ok()
 }
 
