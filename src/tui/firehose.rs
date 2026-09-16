@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{List, ListItem, ListState};
+use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState};
 use std::collections::VecDeque;
 
 pub const CAPACITY: usize = 1000;
@@ -62,11 +62,10 @@ pub fn draw(
     let width = inner.width as usize;
     let items: Vec<ListItem> = wall.iter().map(|l| row(l, names, hl, width)).collect();
     let selected = if wall.is_empty() { None } else { Some(view.selected.unwrap_or(wall.len() - 1)) };
-    let list = List::new(items).highlight_style(if view.following() {
-        Style::new()
-    } else {
-        Style::new().bg(highlight).add_modifier(Modifier::BOLD)
-    });
+    let list = List::new(items)
+        .highlight_symbol(super::ui::cursor_bar(!view.following()))
+        .highlight_spacing(HighlightSpacing::Always)
+        .highlight_style(if view.following() { Style::new() } else { Style::new().bg(highlight).add_modifier(Modifier::BOLD) });
     view.view.select(selected);
     f.render_stateful_widget(list, inner, &mut view.view);
     if wall.is_empty() {

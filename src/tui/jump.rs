@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
@@ -103,7 +103,11 @@ pub fn draw(f: &mut Frame, jump: &mut Jump, area: Rect, highlight: Color) {
         })
         .collect();
     let empty = items.is_empty();
-    let list = List::new(items).highlight_style(Style::new().bg(highlight).add_modifier(Modifier::BOLD));
+    let list = List::new(items)
+        .highlight_style(Style::new().bg(highlight).add_modifier(Modifier::BOLD))
+        .highlight_symbol(super::ui::cursor_bar(true))
+        .repeat_highlight_symbol(true)
+        .highlight_spacing(HighlightSpacing::Always);
     jump.view.select((!empty).then_some(jump.selected));
     f.render_stateful_widget(list, list_area, &mut jump.view);
     if empty {

@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Paragraph, Wrap};
 
 const TIME_W: usize = 5;
 const NAME_W: usize = 12;
@@ -26,6 +26,16 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_messages(f, app, middle);
     if app.thread.is_some() {
         draw_thread(f, app, right);
+    }
+    let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help;
+    if app.focus != Focus::Channels || modal {
+        fade(f, left, FADED);
+    }
+    if app.focus != Focus::Messages || modal {
+        fade(f, middle, if modal { FADED } else { FADED_SOFT });
+    }
+    if app.thread.is_some() && (app.focus != Focus::Thread || modal) {
+        fade(f, right, FADED);
     }
     if app.input.is_some() {
         draw_input(f, app, input);
@@ -86,13 +96,40 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
     let title = if app.filter.is_empty() { "channels".to_owned() } else { format!("channels /{}", app.filter) };
-    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
+    let list = List::new(items)
+        .block(pane(&title, focused))
+        .highlight_style(highlight(app, focused))
+        .highlight_symbol(cursor_bar(focused))
+        .repeat_highlight_symbol(true)
+        .highlight_spacing(HighlightSpacing::Always);
     app.channels_view.select(Some(app.channel_selected));
     f.render_stateful_widget(list, area, &mut app.channels_view);
 }
 
 fn highlight(app: &App, focused: bool) -> Style {
     if focused { Style::new().bg(app.highlight).add_modifier(Modifier::BOLD) } else { Style::new().bg(Color::Indexed(234)) }
+}
+
+pub const FADED: Color = Color::Indexed(240);
+pub const FADED_SOFT: Color = Color::Indexed(245);
+
+/// The selected row's ▎ bar, shown only in the focused pane; the column is always reserved so
+/// content never shifts when focus moves.
+pub fn cursor_bar(focused: bool) -> Line<'static> {
+    if focused { Line::from(Span::styled("▎", Style::new().cyan())) } else { Line::from(" ") }
+}
+
+/// Repaints an area in one quiet grey so a pane recedes when it is not the focus, or when a modal is up.
+pub fn fade(f: &mut Frame, area: Rect, color: Color) {
+    let buf = f.buffer_mut();
+    for y in area.top()..area.bottom() {
+        for x in area.left()..area.right() {
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_fg(color);
+                cell.modifier.remove(Modifier::BOLD);
+            }
+        }
+    }
 }
 
 fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
@@ -113,7 +150,12 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
         None => grouped_items(&app.names, &app.messages, width, NAME_W, true),
     };
     let empty = items.is_empty();
-    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
+    let list = List::new(items)
+        .block(pane(&title, focused))
+        .highlight_style(highlight(app, focused))
+        .highlight_symbol(cursor_bar(focused))
+        .repeat_highlight_symbol(true)
+        .highlight_spacing(HighlightSpacing::Always);
     app.messages_view.select((!empty).then_some(app.message_selected));
     f.render_stateful_widget(list, area, &mut app.messages_view);
     if empty && app.current_channel.is_none() {
@@ -128,7 +170,12 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = grouped_items(&app.names, &thread.messages, width, 8, false);
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
-    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
+    let list = List::new(items)
+        .block(pane(&title, focused))
+        .highlight_style(highlight(app, focused))
+        .highlight_symbol(cursor_bar(focused))
+        .repeat_highlight_symbol(true)
+        .highlight_spacing(HighlightSpacing::Always);
     let selected = (!thread.messages.is_empty()).then_some(thread.selected);
     app.thread_view.select(selected);
     f.render_stateful_widget(list, area, &mut app.thread_view);

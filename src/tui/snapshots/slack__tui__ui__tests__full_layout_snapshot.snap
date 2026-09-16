@@ -3,16 +3,16 @@ source: src/tui/ui.rs
 expression: stable
 ---
 "╭ channels ──────────────╮╭ C1 ──────────────────────────────────╮╭ thread · 1 replies ──────────────────────╮"
-"│▸ #general              ││── 14 Sep 2023 ───────────────────────││── 14 Sep 2023 ───────────────────────────│"
-"│  🔒vault               ││HH:MM           U1 Deploy v2 is out,  ││HH:MM       U1 Deploy v2 is out, see      │" Hidden by multi-width symbols: [(4, " ")]
-"│  @bob                  ││                   see notes. A long  ││               notes. A long line that    │"
-"│                        ││                   line that needs    ││               needs wrapping inside the  │"
-"│                        ││                   wrapping inside the││               pane for sure.             │"
-"│                        ││                   pane for sure.     ││               🚀 3                       │" Hidden by multi-width symbols: [(83, " ")]
-"│                        ││                   🚀 3               ││                                          │" Hidden by multi-width symbols: [(47, " ")]
-"│                        ││                   ↳ 2 replies        ││HH:MM       U2 reply                      │"
+"│ ▸ #general             ││ ── 14 Sep 2023 ──────────────────────││ ── 14 Sep 2023 ──────────────────────────│"
+"│   🔒vault              ││ HH:MM           U1 Deploy v2 is out, ││ HH:MM       U1 Deploy v2 is out, see     │" Hidden by multi-width symbols: [(5, " ")]
+"│   @bob                 ││                    see notes. A long ││                notes. A long line that   │"
+"│                        ││                    line that needs   ││                needs wrapping inside the │"
+"│                        ││                    wrapping inside th││                pane for sure.            │"
+"│                        ││                    pane for sure.    ││                🚀 3                      │" Hidden by multi-width symbols: [(84, " ")]
+"│                        ││                    🚀 3              ││▎                                         │" Hidden by multi-width symbols: [(48, " ")]
+"│                        ││                    ↳ 2 replies       ││▎HH:MM       U2 reply                     │"
 "│                        ││                                      ││                                          │"
-"│                        ││HH:MM           U2 ok                 ││                                          │"
+"│                        ││ HH:MM           U2 ok                ││                                          │"
 "│                        ││                                      ││                                          │"
 "│                        ││                                      ││                                          │"
 "│                        ││                                      ││                                          │"

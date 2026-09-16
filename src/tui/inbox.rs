@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
 #[derive(Debug, Default)]
 pub struct Inbox {
@@ -96,7 +96,11 @@ pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, high
     }
     let width = list_area.width as usize;
     let items: Vec<ListItem> = inbox.items.iter().map(|i| item_lines(i, names, width)).collect();
-    let list = List::new(items).highlight_style(Style::new().bg(highlight).add_modifier(Modifier::BOLD));
+    let list = List::new(items)
+        .highlight_style(Style::new().bg(highlight).add_modifier(Modifier::BOLD))
+        .highlight_symbol(super::ui::cursor_bar(true))
+        .repeat_highlight_symbol(true)
+        .highlight_spacing(HighlightSpacing::Always);
     inbox.view.select((!inbox.items.is_empty()).then_some(inbox.selected));
     f.render_stateful_widget(list, list_area, &mut inbox.view);
     let hints = "→ read · ← snooze · r reply · enter open · o slack · a all read · R refresh · esc close";
