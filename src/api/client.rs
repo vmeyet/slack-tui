@@ -200,6 +200,16 @@ impl Slack {
         self.call_as("subscriptions.thread.getView", params(&[("limit", &limit.to_string())]), "threads").await
     }
 
+    pub async fn join(&self, channel: &str) -> Result<()> {
+        self.call("conversations.join", params(&[("channel", channel)])).await?;
+        Ok(())
+    }
+
+    pub async fn leave(&self, channel: &str) -> Result<()> {
+        self.call("conversations.leave", params(&[("channel", channel)])).await?;
+        Ok(())
+    }
+
     pub async fn mark_read(&self, channel: &str, ts: &str) -> Result<()> {
         self.call("conversations.mark", params(&[("channel", channel), ("ts", ts)])).await?;
         Ok(())

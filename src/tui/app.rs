@@ -1,6 +1,7 @@
 use super::firehose::{self, Firehose};
 use super::inbox::Inbox;
 use super::jump::{Candidate, Jump, Target};
+use super::palette::{self, Command, Palette};
 use crate::api::rtm;
 use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
@@ -10,6 +11,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
 use ratatui::widgets::ListState;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
 pub const DEFAULT_HIGHLIGHT: Color = Color::Indexed(236);
 use std::collections::HashSet;
@@ -78,6 +80,11 @@ pub enum Action {
     Yank { channel: String, ts: String },
     LoadInbox,
     LoadThreads,
+    Join(String),
+    Leave(String),
+    SendTo { target: String, text: String },
+    MarkChannelRead { channel: String, ts: String },
+    Export { path: PathBuf, label: String, messages: Vec<Message>, format: palette::Format },
     LearnUsers(Vec<String>),
     OpenDm(String),
     MarkRead(Item),
@@ -100,6 +107,8 @@ pub enum Incoming {
     Threads(Vec<Candidate>),
     DmOpened(String),
     Names(NameBook),
+    Joined(String),
+    Left(String),
     Channels { rows: Vec<ChannelRow>, people: Vec<(String, String)>, names: NameBook },
     History { channel: String, messages: Vec<Message>, names: NameBook },
     Replies { channel: String, ts: String, messages: Vec<Message>, names: NameBook },
@@ -140,6 +149,8 @@ pub struct App {
     /// Scroll offsets survive between frames so the viewport only moves when the selection leaves it.
     /// Reading mode: only the conversation, centered, times shown on the selected row.
     pub zen: bool,
+    pub palette: Option<Palette>,
+    palette_history: Vec<String>,
     pub channels_view: ListState,
     pub messages_view: ListState,
     pub thread_view: ListState,
@@ -175,6 +186,8 @@ impl Default for App {
             firehose: None,
             highlighter: Highlighter::default(),
             zen: false,
+            palette: None,
+            palette_history: vec![],
             channels_view: ListState::default(),
             messages_view: ListState::default(),
             thread_view: ListState::default(),
@@ -226,6 +239,21 @@ impl App {
                 self.names = names;
                 return vec![];
             }
+            Incoming::Joined(channel) => {
+                let mut actions = vec![Action::LoadChannels];
+                actions.extend(self.open_channel(channel));
+                return actions;
+            }
+            Incoming::Left(channel) => {
+                if self.current_channel.as_deref() == Some(&channel) {
+                    self.current_channel = None;
+                    self.messages.clear();
+                    self.thread = None;
+                    self.focus = Focus::Channels;
+                }
+                self.status = "left".into();
+                return vec![Action::LoadChannels];
+            }
             _ => {}
         }
         self.loading = false;
@@ -235,7 +263,9 @@ impl App {
             | Incoming::Inbox { .. }
             | Incoming::Threads(_)
             | Incoming::DmOpened(_)
-            | Incoming::Names(_) => unreachable!(),
+            | Incoming::Names(_)
+            | Incoming::Joined(_)
+            | Incoming::Left(_) => unreachable!(),
             Incoming::Channels { rows, people, names } => {
                 self.channels = rows;
                 self.people = people;
@@ -398,6 +428,13 @@ impl App {
         if self.input.is_some() {
             return self.handle_input_key(key);
         }
+        if self.palette.is_some() {
+            return self.handle_palette_key(key);
+        }
+        if key.code == KeyCode::Char(':') && self.jump.is_none() {
+            self.palette = Some(Palette::with_history(self.palette_history.clone()));
+            return vec![];
+        }
         if self.jump.is_some() {
             return self.handle_jump_key(key);
         }
@@ -415,6 +452,190 @@ impl App {
             self.focus = Focus::Messages;
         }
         actions
+    }
+
+    fn handle_palette_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let palette = self.palette.as_mut().expect("palette open");
+        match key.code {
+            KeyCode::Esc => self.palette = None,
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => palette.type_char(c),
+            KeyCode::Backspace => {
+                if palette.input.is_empty() {
+                    self.palette = None;
+                } else {
+                    palette.backspace();
+                }
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                let candidates = self.completions_for(&self.palette.as_ref().expect("open").input);
+                self.palette.as_mut().expect("open").complete(&candidates, key.code == KeyCode::BackTab);
+            }
+            KeyCode::Up => palette.history_up(),
+            KeyCode::Down => palette.history_down(),
+            KeyCode::Right | KeyCode::End => {
+                let candidates = self.completions_for(&self.palette.as_ref().expect("open").input);
+                self.palette.as_mut().expect("open").accept(&candidates);
+            }
+            KeyCode::Enter => {
+                let line = palette.submit();
+                self.palette_history = palette.history.clone();
+                self.palette = None;
+                return match palette::parse(&line) {
+                    Ok(command) => self.run_command(command),
+                    Err(e) => {
+                        self.status = format!("✗ {e}");
+                        vec![]
+                    }
+                };
+            }
+            _ => {}
+        }
+        vec![]
+    }
+
+    pub fn palette_ghost(&self) -> Option<String> {
+        let palette = self.palette.as_ref()?;
+        palette.ghost(&self.completions_for(&palette.input))
+    }
+
+    fn completions_for(&self, input: &str) -> Vec<String> {
+        let channels = || self.channels.iter().map(|c| c.label.clone());
+        let people = || self.people.iter().map(|(_, h)| format!("@{h}"));
+        match palette::slot(input) {
+            palette::Slot::Verb => palette::VERBS.iter().map(|(v, _)| (*v).to_owned()).collect(),
+            palette::Slot::Channel => channels().collect(),
+            palette::Slot::Person => people().collect(),
+            palette::Slot::Conversation => channels().chain(people()).collect(),
+            palette::Slot::Emoji => {
+                let mut names: Vec<String> = crate::emoji::names().map(str::to_owned).collect();
+                names.sort();
+                names
+            }
+            palette::Slot::Literal(options) => options.iter().map(|o| (*o).to_owned()).collect(),
+            palette::Slot::Free => vec![],
+        }
+    }
+
+    fn run_command(&mut self, command: Command) -> Vec<Action> {
+        match command {
+            Command::Join(name) => {
+                self.status = format!("joining {name}…");
+                vec![Action::Join(name)]
+            }
+            Command::Leave(name) => match name.or_else(|| self.current_channel.clone()) {
+                Some(target) => {
+                    let id = self
+                        .channels
+                        .iter()
+                        .find(|c| c.label.trim_start_matches(['#', '🔒']) == target.trim_start_matches('#'))
+                        .map(|c| c.id.clone())
+                        .unwrap_or(target);
+                    vec![Action::Leave(id)]
+                }
+                None => {
+                    self.status = "no conversation to leave".into();
+                    vec![]
+                }
+            },
+            Command::Go(target) => match self.channels.iter().find(|c| {
+                c.label.eq_ignore_ascii_case(&target)
+                    || c.label.trim_start_matches(['#', '🔒']).eq_ignore_ascii_case(target.trim_start_matches('#'))
+            }) {
+                Some(row) => {
+                    let id = row.id.clone();
+                    self.open_channel(id)
+                }
+                None if target.starts_with('@') => {
+                    let handle = target.trim_start_matches('@').to_lowercase();
+                    match self.people.iter().find(|(_, h)| h.to_lowercase() == handle) {
+                        Some((id, _)) => vec![Action::OpenDm(id.clone())],
+                        None => {
+                            self.status = format!("✗ nobody called {target}");
+                            vec![]
+                        }
+                    }
+                }
+                None => {
+                    self.status = format!("✗ no conversation called {target}");
+                    vec![]
+                }
+            },
+            Command::Msg { target, text } => {
+                self.status = format!("sending to {target}…");
+                vec![Action::SendTo { target, text }]
+            }
+            Command::React(name) => match self.selected_ref() {
+                Some((channel, ts)) => vec![Action::React { channel, ts, name }],
+                None => vec![],
+            },
+            Command::Thread => {
+                self.focus = Focus::Messages;
+                self.activate()
+            }
+            Command::Search(query) => {
+                self.loading = true;
+                self.status = "searching…".into();
+                vec![Action::Search(query)]
+            }
+            Command::Open => self.selected_ref().map(|(channel, ts)| vec![Action::Open { channel, ts }]).unwrap_or_default(),
+            Command::Copy => self.selected_ref().map(|(channel, ts)| vec![Action::Yank { channel, ts }]).unwrap_or_default(),
+            Command::Export(format) => {
+                let (label, messages) = match (&self.thread, self.focus) {
+                    (Some(t), Focus::Thread) => (format!("{} thread", self.current_label()), t.messages.clone()),
+                    _ => (self.current_label(), self.messages.clone()),
+                };
+                if messages.is_empty() {
+                    self.status = "nothing to export".into();
+                    return vec![];
+                }
+                let stem: String = label.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+                let ext = match format {
+                    palette::Format::Json => "json",
+                    palette::Format::Markdown => "md",
+                };
+                let dir = dirs::download_dir().or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("."));
+                let path = dir.join(format!("slack-{}-{}.{ext}", stem.trim_matches('-'), chrono::Local::now().format("%Y%m%d-%H%M")));
+                vec![Action::Export { path, label, messages, format }]
+            }
+            Command::Read => match (&self.current_channel, self.messages.last()) {
+                (Some(channel), Some(last)) => {
+                    self.unread.remove(channel);
+                    vec![Action::MarkChannelRead { channel: channel.clone(), ts: last.ts.clone() }]
+                }
+                _ => vec![],
+            },
+            Command::Snooze(preset) => match &mut self.inbox {
+                Some(inbox) if inbox.selected_item().is_some() => {
+                    inbox.snooze_selected(preset);
+                    self.persist_inbox()
+                }
+                _ => {
+                    self.status = "open the inbox (i) and pick an item first".into();
+                    vec![]
+                }
+            },
+            Command::Set { key, value } => {
+                match key.as_str() {
+                    "highlight" => match value.parse::<Color>() {
+                        Ok(color) => {
+                            self.highlight = color;
+                            self.status = format!("highlight = {value} (this session)");
+                        }
+                        Err(_) => self.status = format!("✗ `{value}` is not a colour"),
+                    },
+                    other => self.status = format!("✗ unknown setting `{other}` (try highlight)"),
+                }
+                vec![]
+            }
+            Command::Help => {
+                self.help = true;
+                vec![]
+            }
+            Command::Quit => {
+                self.should_quit = true;
+                vec![]
+            }
+        }
     }
 
     fn toggle_reading(&mut self) {
@@ -1330,6 +1551,77 @@ mod tests {
         assert!(app.thread.is_none());
         app.handle_key(key('z'));
         assert!(!app.zen);
+    }
+
+    fn palette_run(app: &mut App, line: &str) -> Vec<Action> {
+        app.handle_key(key(':'));
+        for c in line.chars() {
+            app.handle_key(key(c));
+        }
+        app.handle_key(code(KeyCode::Enter))
+    }
+
+    #[test]
+    fn palette_runs_verbs() {
+        let mut app = loaded();
+        assert_eq!(palette_run(&mut app, "go #random"), vec![Action::LoadHistory("C2".into())]);
+        assert_eq!(palette_run(&mut app, "go @vivien"), vec![Action::OpenDm("U1".into())]);
+        assert_eq!(palette_run(&mut app, "join #ops"), vec![Action::Join("#ops".into())]);
+        assert_eq!(
+            palette_run(&mut app, "msg @vivien hello there"),
+            vec![Action::SendTo { target: "@vivien".into(), text: "hello there".into() }]
+        );
+        assert_eq!(palette_run(&mut app, "search deploy"), vec![Action::Search("deploy".into())]);
+        assert_eq!(palette_run(&mut app, "set highlight=#2a2a2a"), vec![]);
+        assert_eq!(app.highlight, Color::Rgb(0x2a, 0x2a, 0x2a));
+        palette_run(&mut app, "jion #x");
+        assert!(app.status.contains("did you mean :join"));
+        assert_eq!(palette_run(&mut app, "leave"), vec![Action::Leave("C2".into())]);
+        app.apply(Incoming::Left("C2".into()));
+        assert_eq!(app.current_channel, None);
+        palette_run(&mut app, "q");
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn palette_completion_and_history() {
+        let mut app = loaded();
+        app.handle_key(key(':'));
+        for c in "go ran".chars() {
+            app.handle_key(key(c));
+        }
+        app.handle_key(code(KeyCode::Tab));
+        assert_eq!(app.palette.as_ref().unwrap().input, "go #random ");
+        app.handle_key(code(KeyCode::Enter));
+        app.handle_key(key(':'));
+        for c in "go #gen".chars() {
+            app.handle_key(key(c));
+        }
+        assert_eq!(app.palette_ghost().as_deref(), Some("eral"));
+        app.handle_key(code(KeyCode::Right));
+        assert_eq!(app.palette.as_ref().unwrap().input, "go #general ");
+        app.handle_key(code(KeyCode::Enter));
+        app.handle_key(key(':'));
+        app.handle_key(code(KeyCode::Up));
+        assert_eq!(app.palette.as_ref().unwrap().input, "go #general");
+        app.handle_key(code(KeyCode::Up));
+        assert_eq!(app.palette.as_ref().unwrap().input, "go #random");
+        app.handle_key(code(KeyCode::Esc));
+        assert!(app.palette.is_none());
+    }
+
+    #[test]
+    fn palette_export_and_read_use_the_open_conversation() {
+        let mut app = loaded();
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+        let actions = palette_run(&mut app, "export md");
+        assert!(matches!(&actions[0], Action::Export { format: palette::Format::Markdown, messages, .. } if messages.len() == 1));
+        assert_eq!(palette_run(&mut app, "read"), vec![Action::MarkChannelRead { channel: "C1".into(), ts: "1".into() }]);
+        assert_eq!(
+            palette_run(&mut app, "react rocket"),
+            vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "rocket".into() }]
+        );
     }
 
     #[test]

@@ -21,6 +21,11 @@ pub fn glyph(name: &str) -> Option<&'static str> {
     TABLE.get(base).copied()
 }
 
+/// Every standard shortcode, for completion.
+pub fn names() -> impl Iterator<Item = &'static str> {
+    TABLE.keys().copied()
+}
+
 pub fn render(name: &str) -> String {
     glyph(name).map(str::to_owned).unwrap_or_else(|| format!(":{name}:"))
 }

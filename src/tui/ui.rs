@@ -16,7 +16,7 @@ const NAME_W: usize = 12;
 const USER_COLORS: [Color; 6] = [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::LightRed];
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let input_rows = u16::from(app.input.is_some());
+    let input_rows = u16::from(app.input.is_some() || app.palette.is_some());
     let [main, input, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(input_rows), Constraint::Length(1)]).areas(f.area());
     let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help;
@@ -46,6 +46,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.input.is_some() {
         draw_input(f, app, input);
+    } else if app.palette.is_some() {
+        draw_palette(f, app, input);
     }
     draw_status(f, app, status);
     let highlight = app.highlight;
@@ -335,8 +337,20 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(line), area);
 }
 
+fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
+    let Some(palette) = &app.palette else { return };
+    let line = Line::from(vec![
+        Span::styled(" : ", Style::new().cyan().bold()),
+        Span::raw(palette.input.clone()),
+        Span::styled("▌", Style::new().cyan()),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
+}
+
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
+    let completion = app.palette.as_ref().and_then(|p| p.hint());
     let hints = match (app.input.is_some(), app.focus) {
+        _ if app.palette.is_some() => completion.as_deref().unwrap_or("tab cycle · → accept · ↑ history · enter run · esc cancel"),
         (true, _) => "enter send · esc cancel",
         (_, Focus::Channels) => "j/k move · enter open · ^k jump · i inbox · f firehose · / filter · s search · ? help · q quit",
         (_, Focus::Messages) => {
@@ -380,6 +394,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "  i             inbox: unread DMs, mentions, thread replies",
         "  f             firehose: every channel as one live ticker",
         "  z             reading mode: one centered conversation, nothing else",
+        "  :             command line: :join :go :msg :react :search :export :read …",
         "  ⌘k / ctrl-k   jump to a channel, person or thread · > searches",
         "  R             refresh",
         "  esc           close thread · clear search or filter",

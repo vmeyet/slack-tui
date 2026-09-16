@@ -48,6 +48,38 @@ pub fn rank<T>(query: &str, items: impl IntoIterator<Item = (String, T)>) -> Vec
     scored
 }
 
+/// Levenshtein distance, for typos a subsequence match cannot see (`jion` → `join`).
+pub fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur.push((prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// Suggestions for a mistyped word: fuzzy matches first, then anything within two edits.
+pub fn suggestions<'a>(query: &str, candidates: impl IntoIterator<Item = &'a str>, limit: usize) -> Vec<&'a str> {
+    let candidates: Vec<&str> = candidates.into_iter().collect();
+    let mut out: Vec<&str> = rank(query, candidates.iter().map(|c| ((*c).to_owned(), *c))).into_iter().map(|(_, c)| c).collect();
+    let mut close: Vec<(usize, &str)> = candidates
+        .iter()
+        .filter(|c| !out.contains(c))
+        .map(|c| (edit_distance(&query.to_lowercase(), &c.to_lowercase()), *c))
+        .filter(|(d, _)| *d <= 2)
+        .collect();
+    close.sort_by_key(|(d, _)| *d);
+    out.extend(close.into_iter().map(|(_, c)| c));
+    out.truncate(limit);
+    out
+}
+
 /// The single obvious match, when one candidate clearly beats the rest.
 pub fn best<T>(query: &str, items: impl IntoIterator<Item = (String, T)>) -> Option<T> {
     let mut ranked = rank(query, items).into_iter();
@@ -81,6 +113,16 @@ mod tests {
     #[test]
     fn case_insensitive_and_shorter_preferred() {
         assert_eq!(order("BOB", &["@bobby-tables", "@bob"])[0], "@bob");
+    }
+
+    #[test]
+    fn suggestions_cover_typos() {
+        assert_eq!(edit_distance("jion", "join"), 2);
+        assert_eq!(edit_distance("", "abc"), 3);
+        let verbs = ["join", "leave", "go", "msg"];
+        assert_eq!(suggestions("jion", verbs, 3), vec!["join"]);
+        assert_eq!(suggestions("lev", verbs, 3), vec!["leave"]);
+        assert!(suggestions("zzzzzz", verbs, 3).is_empty());
     }
 
     #[test]

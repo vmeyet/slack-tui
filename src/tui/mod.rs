@@ -2,6 +2,7 @@ pub mod app;
 pub mod firehose;
 pub mod inbox;
 pub mod jump;
+pub mod palette;
 pub mod ui;
 
 use crate::api::rtm;
@@ -185,6 +186,41 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
             let mut d = dir.lock().await;
             d.learn_ids(&ids).await?;
             Ok(Incoming::Names(d.names()))
+        }
+        Action::Join(name) => {
+            let mut d = dir.lock().await;
+            let id = d.channel_id(&name).await?;
+            slack.join(&id).await?;
+            d.refresh_channels().await?;
+            Ok(Incoming::Joined(id))
+        }
+        Action::Leave(channel) => {
+            slack.leave(&channel).await?;
+            dir.lock().await.refresh_channels().await?;
+            Ok(Incoming::Left(channel))
+        }
+        Action::SendTo { target, text } => {
+            let mut d = dir.lock().await;
+            let channel = d.channel_id(&target).await?;
+            let rendered = markdown::to_blocks(&text, &d.names());
+            slack.post_message(&channel, &rendered.text, Some(&serde_json::Value::Array(rendered.blocks)), None, false).await?;
+            Ok(Incoming::Status(format!("sent to {}", d.names().channel_label(&channel))))
+        }
+        Action::MarkChannelRead { channel, ts } => {
+            slack.mark_read(&channel, &ts).await?;
+            Ok(Incoming::Status("marked read".into()))
+        }
+        Action::Export { path, label, messages, format } => {
+            let names = dir.lock().await.names();
+            let body = match format {
+                palette::Format::Json => serde_json::to_string_pretty(&messages)?,
+                palette::Format::Markdown => {
+                    let theme = crate::render::Theme::plain(100);
+                    crate::render::messages(&theme, &names, &label, &messages, &std::collections::HashMap::new())
+                }
+            };
+            std::fs::write(&path, body)?;
+            Ok(Incoming::Status(format!("saved {}", path.display())))
         }
         Action::OpenDm(user) => {
             let channel = slack.open_dm(&user).await?;
