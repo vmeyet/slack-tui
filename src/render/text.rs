@@ -113,34 +113,72 @@ fn strip_ansi(s: &str) -> String {
 
 type Chunks = Vec<(String, Style)>;
 
+/// A word is a run of styled pieces with no whitespace between them, so a styled
+/// mention glued to punctuation never breaks in the middle.
+struct Word {
+    pieces: Chunks,
+    width: usize,
+    blank: bool,
+}
+
 fn wrap_spans(spans: &[(String, Style)], width: usize) -> Vec<Chunks> {
     let mut lines: Vec<Chunks> = Vec::new();
-    let mut line: Chunks = Vec::new();
-    let mut used = 0;
-    for (text, style) in spans {
-        for (i, paragraph) in text.split('\n').enumerate() {
-            if i > 0 {
+    for paragraph in paragraphs(spans) {
+        let mut line: Chunks = Vec::new();
+        let mut used = 0;
+        for word in words(&paragraph) {
+            if used > 0 && used + word.width > width {
                 lines.push(trim_line(std::mem::take(&mut line)));
                 used = 0;
-            }
-            for word in split_words(paragraph) {
-                let w = word.width();
-                if used > 0 && used + w > width {
-                    lines.push(trim_line(std::mem::take(&mut line)));
-                    used = 0;
-                    if word.trim().is_empty() {
-                        continue;
-                    }
+                if word.blank {
+                    continue;
                 }
-                push_chunk(&mut line, word, *style);
-                used += w;
+            }
+            for (text, style) in &word.pieces {
+                push_chunk(&mut line, text, *style);
+            }
+            used += word.width;
+        }
+        lines.push(trim_line(line));
+    }
+    if lines.is_empty() {
+        lines.push(Vec::new());
+    }
+    lines
+}
+
+fn paragraphs(spans: &[(String, Style)]) -> Vec<Chunks> {
+    let mut out: Vec<Chunks> = vec![Vec::new()];
+    for (text, style) in spans {
+        for (i, part) in text.split('\n').enumerate() {
+            if i > 0 {
+                out.push(Vec::new());
+            }
+            if !part.is_empty() {
+                out.last_mut().expect("one paragraph").push((part.to_owned(), *style));
             }
         }
     }
-    if !line.is_empty() || lines.is_empty() {
-        lines.push(trim_line(line));
+    out
+}
+
+fn words(paragraph: &Chunks) -> Vec<Word> {
+    let mut words: Vec<Word> = Vec::new();
+    let mut open = false;
+    for (text, style) in paragraph {
+        for piece in split_words(text) {
+            let blank = piece.trim().is_empty();
+            if blank || !open {
+                words.push(Word { pieces: vec![(piece.to_owned(), *style)], width: piece.width(), blank });
+            } else {
+                let last = words.last_mut().expect("open word");
+                last.pieces.push((piece.to_owned(), *style));
+                last.width += piece.width();
+            }
+            open = !blank;
+        }
     }
-    lines
+    words
 }
 
 fn push_chunk(line: &mut Chunks, word: &str, style: Style) {
@@ -201,6 +239,13 @@ mod tests {
     fn long_word_is_kept_whole() {
         let s = Styled { spans: vec![("abcdefghijkl x".into(), Style::Plain)] };
         assert_eq!(s.wrap(5), vec!["abcdefghijkl", "x"]);
+    }
+
+    #[test]
+    fn styled_pieces_glued_to_punctuation_stay_together() {
+        let s = Styled { spans: vec![("with ".into(), Style::Plain), ("@Gabriel".into(), Style::Mention), (":".into(), Style::Plain)] };
+        assert_eq!(s.wrap(13), vec!["with", "@Gabriel:"]);
+        assert_eq!(s.wrap_styled(20)[0].len(), 3);
     }
 
     #[test]

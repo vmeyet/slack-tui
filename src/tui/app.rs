@@ -1,6 +1,8 @@
-use crate::api::{ChannelKind, Message, SearchMatch};
+use crate::api::rtm;
+use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
 use crate::resolve::NameBook;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -64,8 +66,18 @@ pub enum Action {
     Yank { channel: String, ts: String },
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Live {
+    #[default]
+    Connecting,
+    Live,
+    Polling(String),
+}
+
 #[derive(Clone, Debug)]
 pub enum Incoming {
+    Live(rtm::Event),
+    Tick,
     Channels(Vec<ChannelRow>, NameBook),
     History { channel: String, messages: Vec<Message>, names: NameBook },
     Replies { channel: String, ts: String, messages: Vec<Message>, names: NameBook },
@@ -93,6 +105,8 @@ pub struct App {
     pub names: NameBook,
     pub help: bool,
     pub should_quit: bool,
+    pub live: Live,
+    pub unread: HashSet<String>,
 }
 
 impl App {
@@ -117,8 +131,14 @@ impl App {
     }
 
     pub fn apply(&mut self, incoming: Incoming) -> Vec<Action> {
+        match incoming {
+            Incoming::Live(event) => return self.apply_live(event),
+            Incoming::Tick => return self.poll(),
+            _ => {}
+        }
         self.loading = false;
         match incoming {
+            Incoming::Live(_) | Incoming::Tick => unreachable!(),
             Incoming::Channels(rows, names) => {
                 self.channels = rows;
                 self.names = names;
@@ -129,7 +149,10 @@ impl App {
                     return vec![];
                 }
                 self.names = names;
-                self.message_selected = messages.len().saturating_sub(1);
+                let at_bottom = self.message_selected + 1 >= self.messages.len();
+                let selected_ts = self.messages.get(self.message_selected).map(|m| m.ts.clone());
+                let kept = selected_ts.filter(|_| !at_bottom).and_then(|ts| messages.iter().position(|m| m.ts == ts));
+                self.message_selected = kept.unwrap_or(messages.len().saturating_sub(1));
                 self.messages = messages;
                 self.status = self.current_label();
             }
@@ -156,6 +179,97 @@ impl App {
             Incoming::Error(e) => self.status = format!("✗ {e}"),
         }
         vec![]
+    }
+
+    fn apply_live(&mut self, event: rtm::Event) -> Vec<Action> {
+        match event {
+            rtm::Event::Connected => self.live = Live::Live,
+            rtm::Event::Disconnected(reason) => {
+                if reason.contains("giving up") {
+                    self.live = Live::Polling(reason);
+                } else {
+                    self.live = Live::Connecting;
+                }
+            }
+            rtm::Event::Message { channel, message } => self.live_message(channel, message),
+            rtm::Event::Changed { channel, message } => {
+                if self.current_channel.as_deref() == Some(&channel) {
+                    for m in self.all_messages_mut().into_iter().filter(|m| m.ts == message.ts) {
+                        m.text = message.text.clone();
+                        m.edited = message.edited.clone();
+                    }
+                }
+            }
+            rtm::Event::Deleted { channel, ts } => {
+                if self.current_channel.as_deref() == Some(&channel) {
+                    self.messages.retain(|m| m.ts != ts);
+                    if let Some(t) = &mut self.thread {
+                        t.messages.retain(|m| m.ts != ts);
+                    }
+                    self.clamp_selections();
+                }
+            }
+            rtm::Event::Reaction { channel, ts, name, added } => {
+                if self.current_channel.as_deref() == Some(&channel) {
+                    for m in self.all_messages_mut().into_iter().filter(|m| m.ts == ts) {
+                        adjust_reaction(&mut m.reactions, &name, added);
+                    }
+                }
+            }
+        }
+        vec![]
+    }
+
+    fn live_message(&mut self, channel: String, message: Message) {
+        if self.current_channel.as_deref() != Some(&channel) {
+            self.unread.insert(channel);
+            return;
+        }
+        if let Some(root) = message.thread_ts.clone().filter(|t| t != &message.ts) {
+            if let Some(m) = self.messages.iter_mut().find(|m| m.ts == root) {
+                m.reply_count += 1;
+                m.latest_reply = Some(message.ts.clone());
+            }
+            if let Some(t) = self.thread.as_mut().filter(|t| t.root_ts == root && !t.messages.iter().any(|m| m.ts == message.ts)) {
+                let follow = t.selected + 1 >= t.messages.len();
+                t.messages.push(message);
+                if follow {
+                    t.selected = t.messages.len() - 1;
+                }
+            }
+            return;
+        }
+        if self.messages.iter().any(|m| m.ts == message.ts) {
+            return;
+        }
+        let follow = self.message_selected + 1 >= self.messages.len();
+        self.messages.push(message);
+        if follow && self.search.is_none() {
+            self.message_selected = self.messages.len() - 1;
+        }
+    }
+
+    fn all_messages_mut(&mut self) -> Vec<&mut Message> {
+        let thread = self.thread.as_mut().map(|t| t.messages.iter_mut()).into_iter().flatten();
+        self.messages.iter_mut().chain(thread).collect()
+    }
+
+    fn clamp_selections(&mut self) {
+        self.message_selected = self.message_selected.min(self.messages.len().saturating_sub(1));
+        if let Some(t) = &mut self.thread {
+            t.selected = t.selected.min(t.messages.len().saturating_sub(1));
+        }
+    }
+
+    /// Without a live feed, the open conversation is refreshed on every tick.
+    fn poll(&mut self) -> Vec<Action> {
+        if self.live == Live::Live || self.loading || self.input.is_some() {
+            return vec![];
+        }
+        match &self.current_channel {
+            Some(c) => vec![Action::LoadHistory(c.clone())],
+            None => vec![],
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Vec<Action> {
@@ -366,6 +480,7 @@ impl App {
     }
 
     fn open_channel(&mut self, id: String) -> Vec<Action> {
+        self.unread.remove(&id);
         self.current_channel = Some(id.clone());
         self.messages.clear();
         self.thread = None;
@@ -397,6 +512,20 @@ impl App {
         } else if !self.filter.is_empty() {
             self.filter.clear();
         }
+    }
+}
+
+fn adjust_reaction(reactions: &mut Vec<Reaction>, name: &str, added: bool) {
+    match reactions.iter_mut().position(|r| r.name == name) {
+        Some(i) if added => reactions[i].count += 1,
+        Some(i) => {
+            reactions[i].count = reactions[i].count.saturating_sub(1);
+            if reactions[i].count == 0 {
+                reactions.remove(i);
+            }
+        }
+        None if added => reactions.push(Reaction { name: name.to_owned(), count: 1, users: vec![] }),
+        None => {}
     }
 }
 
@@ -580,6 +709,91 @@ mod tests {
         assert_eq!(app.channel_selected, 0);
         app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert!(app.should_quit);
+    }
+
+    fn live(app: &mut App, event: rtm::Event) -> Vec<Action> {
+        app.apply(Incoming::Live(event))
+    }
+
+    #[test]
+    fn live_message_appends_and_follows_bottom() {
+        let mut app = loaded();
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+        live(&mut app, rtm::Event::Connected);
+        assert_eq!(app.live, Live::Live);
+        live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
+        assert_eq!(app.messages.len(), 2);
+        assert_eq!(app.message_selected, 1);
+        live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
+        assert_eq!(app.messages.len(), 2);
+        live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("3", "elsewhere") });
+        assert!(app.unread.contains("C2"));
+        assert_eq!(app.messages.len(), 2);
+    }
+
+    #[test]
+    fn live_reply_updates_root_and_open_thread() {
+        let mut app = loaded();
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "root")], names: NameBook::default() });
+        app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
+        let reply = Message { thread_ts: Some("1".into()), ..msg("2", "reply") };
+        live(&mut app, rtm::Event::Message { channel: "C1".into(), message: reply });
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.messages[0].reply_count, 1);
+        let t = app.thread.as_ref().unwrap();
+        assert_eq!(t.messages.len(), 2);
+        assert_eq!(t.selected, 1);
+    }
+
+    #[test]
+    fn live_edit_delete_and_reactions() {
+        let mut app = loaded();
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a"), msg("2", "b")], names: NameBook::default() });
+        live(&mut app, rtm::Event::Changed { channel: "C1".into(), message: msg("1", "edited") });
+        assert_eq!(app.messages[0].text, "edited");
+        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: true });
+        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: true });
+        assert_eq!(app.messages[0].reactions[0].count, 2);
+        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: false });
+        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: false });
+        assert!(app.messages[0].reactions.is_empty());
+        live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "2".into() });
+        assert_eq!(app.messages.len(), 1);
+        assert_eq!(app.message_selected, 0);
+    }
+
+    #[test]
+    fn polling_only_when_feed_is_down() {
+        let mut app = loaded();
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![], names: NameBook::default() });
+        assert_eq!(app.apply(Incoming::Tick), vec![Action::LoadHistory("C1".into())]);
+        live(&mut app, rtm::Event::Connected);
+        assert_eq!(app.apply(Incoming::Tick), vec![]);
+        live(&mut app, rtm::Event::Disconnected("boom (giving up)".into()));
+        assert!(matches!(app.live, Live::Polling(_)));
+        assert_eq!(app.apply(Incoming::Tick), vec![Action::LoadHistory("C1".into())]);
+    }
+
+    #[test]
+    fn refresh_keeps_selection_when_not_at_bottom() {
+        let mut app = loaded();
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::History {
+            channel: "C1".into(),
+            messages: vec![msg("1", "a"), msg("2", "b"), msg("3", "c")],
+            names: NameBook::default(),
+        });
+        app.handle_key(key('g'));
+        app.apply(Incoming::History {
+            channel: "C1".into(),
+            messages: vec![msg("0", "z"), msg("1", "a"), msg("2", "b"), msg("3", "c")],
+            names: NameBook::default(),
+        });
+        assert_eq!(app.message_selected, 1);
     }
 
     #[test]

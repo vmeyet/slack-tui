@@ -102,6 +102,9 @@ pub struct MessagesArgs {
     /// Expand thread replies inline.
     #[arg(short, long)]
     pub threads: bool,
+    /// Keep printing new messages as they arrive (ctrl-c to stop).
+    #[arg(short, long)]
+    pub follow: bool,
 }
 
 #[derive(Args, Debug)]

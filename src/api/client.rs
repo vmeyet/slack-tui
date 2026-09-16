@@ -109,6 +109,15 @@ impl Slack {
         request.send().await.map_err(|e| anyhow!("{method}: {}", e.without_url()))
     }
 
+    pub fn cookie_header(&self) -> Option<String> {
+        self.credentials.cookie_header()
+    }
+
+    pub async fn rtm_url(&self) -> Result<String> {
+        let body = self.call("rtm.connect", vec![]).await?;
+        body["url"].as_str().map(str::to_owned).context("rtm.connect: no url")
+    }
+
     pub async fn auth_test(&self) -> Result<Identity> {
         self.call_as("auth.test", vec![], "").await
     }

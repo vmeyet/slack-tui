@@ -1,4 +1,4 @@
-use super::app::{App, Focus, Input, Kind};
+use super::app::{App, Focus, Input, Kind, Live};
 use crate::api::{Message, SearchMatch};
 use crate::mrkdwn;
 use crate::render::text::{self, Style as TextStyle, Styled};
@@ -48,7 +48,13 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .map(|c| {
             let current = app.current_channel.as_deref() == Some(&c.id);
-            let marker = if current { "▸ " } else { "  " };
+            let marker = if current {
+                "▸ "
+            } else if app.unread.contains(&c.id) {
+                "● "
+            } else {
+                "  "
+            };
             let color = match c.kind {
                 Kind::Public => Color::Reset,
                 Kind::Private => Color::Yellow,
@@ -56,7 +62,7 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
                 Kind::GroupDm => Color::Blue,
             };
             let mut style = Style::new().fg(color);
-            if current {
+            if current || app.unread.contains(&c.id) {
                 style = style.add_modifier(Modifier::BOLD);
             }
             ListItem::new(Line::from(vec![

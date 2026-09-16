@@ -37,6 +37,7 @@ slack send #ops "reply" --thread 1694700000.000100 --broadcast
 slack send #ops "…" --dry-run                        # print the payload only
 
 slack messages #general -n 50 --since 2d --threads
+slack messages #general --follow                     # tail live
 slack thread <permalink>
 slack thread #general 1694700000.000100
 slack search "deploy failed" --in ops --from vivien --after 2026-09-01
@@ -59,6 +60,8 @@ Use `--raw` to send Slack mrkdwn untouched.
 
 `slack tui` opens channels, messages and thread panes.
 `j/k` move, `enter` opens, `r` replies, `t` replies in thread, `e` reacts, `o` opens in Slack, `y` copies the permalink, `s` searches, `/` filters channels, `?` shows every key.
+New messages, edits, deletions and reactions arrive live over Slack's RTM websocket; other channels light up with `●`.
+If the workspace refuses RTM the open conversation is polled every 10 seconds instead (`↻` in the status bar).
 
 ## Development
 

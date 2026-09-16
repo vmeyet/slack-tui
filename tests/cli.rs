@@ -299,3 +299,38 @@ async fn raw_api_call() {
     let json: Value = serde_json::from_str(&stdout(env.slack().args(["api", "conversations.info", "channel=C1"]))).unwrap();
     assert_eq!(json["channel"]["id"], "C1");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn messages_follow_prints_live_events() {
+    use futures_util::SinkExt;
+    let env = Env::new().await;
+    env.mock("conversations.list", channels_payload()).await;
+    env.mock("users.list", users_payload()).await;
+    env.mock("conversations.history", json!({"messages": [{"ts": "1694700000.000100", "user": "U1", "text": "before"}]})).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ws_url = format!("ws://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        ws.send(json!({"type": "hello"}).to_string().into()).await.unwrap();
+        ws.send(
+            json!({"type": "message", "channel": "C1", "ts": "1694700100.000200", "user": "U2", "text": "live one"}).to_string().into(),
+        )
+        .await
+        .unwrap();
+        ws.send(
+            json!({"type": "message", "channel": "C2", "ts": "1694700100.000300", "user": "U2", "text": "other channel"})
+                .to_string()
+                .into(),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    });
+    env.mock("rtm.connect", json!({"url": ws_url})).await;
+    let out = env.slack().args(["messages", "#general", "--follow"]).timeout(std::time::Duration::from_secs(2)).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("before"), "{stdout}");
+    assert!(stdout.contains("bob           live one"), "{stdout}");
+    assert!(!stdout.contains("other channel"), "{stdout}");
+}

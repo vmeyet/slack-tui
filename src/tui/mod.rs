@@ -1,6 +1,7 @@
 pub mod app;
 pub mod ui;
 
+use crate::api::rtm;
 use crate::ctx::Ctx;
 use crate::markdown;
 use crate::resolve::Directory;
@@ -9,6 +10,7 @@ use app::{Action, App, ChannelRow, Incoming, Kind};
 use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures_util::StreamExt;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 
 pub async fn run(ctx: Ctx) -> Result<()> {
@@ -18,6 +20,7 @@ pub async fn run(ctx: Ctx) -> Result<()> {
     let mut app = App::new();
     let mut terminal = ratatui::init();
     spawn(Action::LoadChannels, slack.clone(), dir.clone(), tx.clone());
+    spawn_live(slack.clone(), tx.clone());
     let mut events = EventStream::new();
     let result = loop {
         if let Err(e) = terminal.draw(|f| ui::draw(f, &mut app)) {
@@ -40,6 +43,29 @@ pub async fn run(ctx: Ctx) -> Result<()> {
     };
     ratatui::restore();
     result
+}
+
+fn spawn_live(slack: crate::api::Slack, tx: mpsc::UnboundedSender<Incoming>) {
+    let (live_tx, mut live_rx) = mpsc::unbounded_channel();
+    tokio::spawn(rtm::stream(slack, live_tx));
+    let forward = tx.clone();
+    tokio::spawn(async move {
+        while let Some(event) = live_rx.recv().await {
+            if forward.send(Incoming::Live(event)).is_err() {
+                return;
+            }
+        }
+    });
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(10));
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            if tx.send(Incoming::Tick).is_err() {
+                return;
+            }
+        }
+    });
 }
 
 fn spawn(action: Action, slack: crate::api::Slack, dir: Arc<Mutex<Directory>>, tx: mpsc::UnboundedSender<Incoming>) {
