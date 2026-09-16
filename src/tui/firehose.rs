@@ -5,7 +5,7 @@ use crate::render::time;
 use crate::resolve::NameBook;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState};
 use std::collections::VecDeque;
@@ -57,7 +57,7 @@ pub fn draw(f: &mut Frame, view: &mut Firehose, wall: &VecDeque<LiveLine>, names
     let list = List::new(items)
         .highlight_symbol(super::ui::cursor_bar(theme, !view.following()))
         .highlight_spacing(HighlightSpacing::Always)
-        .highlight_style(if view.following() { Style::new() } else { Style::new().bg(theme.surface).add_modifier(Modifier::BOLD) });
+        .highlight_style(if view.following() { Style::new() } else { super::ui::row_highlight(theme, true).bold() });
     view.view.select(selected);
     f.render_stateful_widget(list, inner, &mut view.view);
     if wall.is_empty() {

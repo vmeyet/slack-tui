@@ -102,7 +102,7 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
     let title = if app.filter.is_empty() { "channels".to_owned() } else { format!("channels /{}", app.filter) };
     let list = List::new(items)
         .block(pane(&app.theme, &title, focused))
-        .highlight_style(highlight(app, focused))
+        .highlight_style(row_highlight(&app.theme, focused))
         .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
@@ -143,8 +143,9 @@ fn channel_row(app: &App, c: &app::ChannelRow, width: usize) -> ListItem<'static
     ]))
 }
 
-fn highlight(app: &App, focused: bool) -> Style {
-    if focused { Style::new().bg(app.theme.surface).add_modifier(Modifier::BOLD) } else { Style::new().bg(app.theme.surface_soft) }
+/// The selected row carries no fill unless the user asked for one with `highlight`.
+pub fn row_highlight(theme: &Theme, focused: bool) -> Style {
+    theme.highlight.filter(|_| focused).map(|c| Style::new().bg(c)).unwrap_or_default()
 }
 
 /// Reading mode: one centered column with the thread when open, the conversation otherwise.
@@ -193,12 +194,12 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
     let items: Vec<ListItem> = match &app.search {
         Some(results) => results.iter().map(|m| search_item(&app.theme, m, width)).collect(),
-        None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.zen.then_some(app.message_selected)),
+        None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.message_selected, app.zen),
     };
     let empty = items.is_empty();
     let list = List::new(items)
         .block(frame(app, &title, focused))
-        .highlight_style(highlight(app, focused))
+        .highlight_style(row_highlight(&app.theme, focused))
         .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
@@ -214,11 +215,11 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Thread;
     let Some(thread) = &app.thread else { return };
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
-    let items: Vec<ListItem> = grouped_items(&viewer(app), &thread.messages, width, 8, false, app.zen.then_some(thread.selected));
+    let items: Vec<ListItem> = grouped_items(&viewer(app), &thread.messages, width, 8, false, thread.selected, app.zen);
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
     let list = List::new(items)
         .block(frame(app, &title, focused))
-        .highlight_style(highlight(app, focused))
+        .highlight_style(row_highlight(&app.theme, focused))
         .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
@@ -238,16 +239,28 @@ fn viewer(app: &App) -> Viewer<'_> {
     Viewer { names: &app.names, me: &app.me, theme: &app.theme }
 }
 
+/// How one message sits in its list.
+struct Row {
+    /// Time and author on the first line; continuations drop it, the selected row always shows it.
+    header: bool,
+    new_day: bool,
+    gap: bool,
+    show_time: bool,
+    selected: bool,
+}
+
 /// One list item per message, with a dim day line on the first message of each day and
-/// no header on messages that continue the previous one.
-/// `time_only_on`: reading mode shows the time on that row alone, like a hover.
+/// no header on messages that continue the previous one. The selected message always shows
+/// its header, with the time in accent, so the cursor bar is never the only mark.
+/// `zen`: reading mode shows the time on the selected row alone, like a hover.
 fn grouped_items(
     viewer: &Viewer,
     messages: &[Message],
     width: usize,
     name_w: usize,
     show_meta: bool,
-    time_only_on: Option<usize>,
+    selected: usize,
+    zen: bool,
 ) -> Vec<ListItem<'static>> {
     let mut items = Vec::with_capacity(messages.len());
     let mut prev: Option<&Message> = None;
@@ -258,43 +271,33 @@ fn grouped_items(
         last_day = day;
         let continued = render::continues(prev, m);
         let gap = prev.is_some_and(|p| !ends_with_code_block(viewer.names, p)) && (new_day || !continued);
-        let show_time = time_only_on.is_none_or(|sel| sel == i);
-        items.push(message_item(viewer, m, width, name_w, show_meta, continued && !(time_only_on == Some(i)), new_day, gap, show_time));
+        let row = Row { header: !continued || i == selected, new_day, gap, show_time: !zen || i == selected, selected: i == selected };
+        items.push(message_item(viewer, m, width, name_w, show_meta, row));
         prev = Some(m);
     }
     items
 }
 
-#[allow(clippy::too_many_arguments)]
-fn message_item(
-    viewer: &Viewer,
-    m: &Message,
-    width: usize,
-    name_w: usize,
-    show_meta: bool,
-    continued: bool,
-    new_day: bool,
-    gap: bool,
-    show_time: bool,
-) -> ListItem<'static> {
+fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_meta: bool, row: Row) -> ListItem<'static> {
     let names = viewer.names;
     let theme = viewer.theme;
     let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
     let indent = TIME_W + 1 + name_w + 1;
     let styled = body(names, m);
     let mut lines: Vec<Line> = Vec::new();
-    if gap {
+    if row.gap {
         lines.push(Line::raw(""));
     }
-    if new_day {
+    if row.new_day {
         let label = time::day_label(&m.ts);
         let dashes = "─".repeat(width.saturating_sub(label.len() + 4));
         lines.push(Line::from(Span::styled(format!("── {label} {dashes}"), Style::new().fg(theme.muted))));
     }
+    let time_style = if row.selected { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
     for (i, chunks) in styled.wrap_styled(width.saturating_sub(indent).max(10)).iter().enumerate() {
-        let mut spans = if i == 0 && !continued {
+        let mut spans = if i == 0 && row.header {
             vec![
-                Span::styled(if show_time { time::hhmm(&m.ts) } else { " ".repeat(TIME_W) }, Style::new().fg(theme.muted)),
+                Span::styled(if row.show_time { time::hhmm(&m.ts) } else { " ".repeat(TIME_W) }, time_style),
                 Span::raw(" "),
                 Span::styled(render::fit_right(&author, name_w), user_style(theme, &author)),
                 Span::raw(" "),
@@ -477,9 +480,9 @@ pub fn body_spans(theme: &Theme, chunks: &[text::Piece], width: usize) -> Vec<Sp
     {
         let fill = " ".repeat(width.saturating_sub(text::BLOCK_BAR_W + code.text.width()));
         return vec![
-            Span::styled("▎ ", Style::new().fg(theme.faded).bg(theme.surface_soft)),
-            Span::styled(code.text.clone(), Style::new().bg(theme.surface_soft)),
-            Span::styled(fill, Style::new().bg(theme.surface_soft)),
+            Span::styled("▎ ", Style::new().fg(theme.faded).bg(theme.surface)),
+            Span::styled(code.text.clone(), Style::new().bg(theme.surface)),
+            Span::styled(fill, Style::new().bg(theme.surface)),
         ];
     }
     chunks.iter().map(|p| Span::styled(p.text.clone(), style_of(theme, p.style))).collect()
@@ -492,8 +495,8 @@ pub fn style_of(theme: &Theme, s: TextStyle) -> Style {
         TextStyle::Bold => Style::new().bold(),
         TextStyle::Italic => Style::new().italic(),
         TextStyle::Strike => Style::new().crossed_out(),
-        TextStyle::Code => Style::new().fg(theme.code).bg(theme.surface_soft),
-        TextStyle::Block => Style::new().bg(theme.surface_soft),
+        TextStyle::Code => Style::new().fg(theme.code).bg(theme.surface),
+        TextStyle::Block => Style::new().bg(theme.surface),
         TextStyle::Link => Style::new().fg(theme.link).underlined(),
         TextStyle::Mention => Style::new().fg(theme.mention),
     }
@@ -522,12 +525,12 @@ mod tests {
         let texts: Vec<&str> = block.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(texts, vec!["▎ ", "x", "     "]);
         assert_eq!(block[0].style.fg, Some(theme.faded));
-        assert!(block[1..].iter().all(|s| s.style.bg == Some(theme.surface_soft)));
+        assert!(block[1..].iter().all(|s| s.style.bg == Some(theme.surface)));
         let blank = body_spans(&theme, &[text::Piece::new("", TextStyle::Block)], 4);
         assert_eq!(blank.iter().map(|s| s.content.as_ref()).collect::<Vec<_>>(), vec!["▎ ", "", "  "]);
         let inline = body_spans(&theme, &[text::Piece::new("git", TextStyle::Code)], 8);
         assert_eq!(inline.len(), 1);
-        assert_eq!((inline[0].style.fg, inline[0].style.bg), (Some(theme.code), Some(theme.surface_soft)));
+        assert_eq!((inline[0].style.fg, inline[0].style.bg), (Some(theme.code), Some(theme.surface)));
     }
 
     #[test]
@@ -592,6 +595,24 @@ mod tests {
         assert_eq!(pills[2].style.fg, Some(theme.muted));
         assert!(pills.iter().all(|s| s.style.bg.is_none()));
         assert!(reaction_pills(&theme, &reactions, "").iter().all(|s| !s.style.add_modifier.contains(Modifier::BOLD)));
+    }
+
+    #[test]
+    fn selected_message_shows_its_header_even_when_it_continues_the_previous_one() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        app.focus = Focus::Messages;
+        let messages = vec![message("1694700000.000100", "U1", "first"), message("1694700010.000100", "U1", "second")];
+        app.apply(Incoming::History { channel: "C1".into(), messages, names: NameBook::default() });
+        let render = |app: &mut App| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+            terminal.draw(|f| draw(f, app)).unwrap();
+            terminal.backend().to_string()
+        };
+        app.message_selected = 0;
+        assert_eq!(render(&mut app).matches("U1").count(), 1);
+        app.message_selected = 1;
+        assert_eq!(render(&mut app).matches("U1").count(), 2);
     }
 
     #[test]

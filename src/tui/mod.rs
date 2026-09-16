@@ -28,17 +28,18 @@ pub async fn run_inbox(ctx: Ctx) -> Result<()> {
     run_with(ctx, true).await
 }
 
-/// `tui.theme` picks the palette, `tui.highlight` then overrides its selected-row surface.
+/// `tui.theme` picks the palette, `tui.highlight` adds a fill under the selected row.
 fn theme_from(config: &crate::config::Tui) -> Result<theme::Theme> {
     let mut theme = match config.theme.as_deref() {
         Some(name) => theme::Theme::named(name)
             .ok_or_else(|| anyhow::anyhow!("config `tui.theme = \"{name}\"` is not a theme (try {})", theme::Theme::NAMES.join(", ")))?,
         None => theme::Theme::default(),
     };
-    if let Some(color) = config.highlight.as_deref() {
-        theme.surface = color
-            .parse()
-            .map_err(|_| anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a` or `236`)"))?;
+    if let Some(color) = config.highlight.as_deref().filter(|c| *c != "none") {
+        let parsed = color.parse().map_err(|_| {
+            anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a`, `236` or `none`)")
+        })?;
+        theme.highlight = Some(parsed);
     }
     Ok(theme)
 }
@@ -261,6 +262,12 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
         }
         Action::SaveInbox { workspace, state } => {
             state.save(&workspace)?;
+            Ok(Incoming::Status(String::new()))
+        }
+        Action::SaveSetting { key, value } => {
+            let mut config = crate::config::Config::load()?;
+            config.tui = config.tui.with(&key, &value);
+            config.save()?;
             Ok(Incoming::Status(String::new()))
         }
         Action::Yank { channel, ts } => {

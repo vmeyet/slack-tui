@@ -48,7 +48,7 @@ pub struct Tui {
     /// Palette: `dracula`, `catppuccin`, `catppuccin-latte`, `rosepine`, `rosepine-dawn`, `nord`, `tokyonight`, `monokai`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
-    /// Background of the selected row, on top of the theme: a name (`darkgray`), `#rrggbb`, or a 0-255 index.
+    /// Fill under the selected row; by default only the `▎` bar marks it. A name (`darkgray`), `#rrggbb`, or a 0-255 index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<String>,
 }
@@ -56,6 +56,16 @@ pub struct Tui {
 impl Tui {
     fn is_default(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Picking a theme drops any `highlight` tweak, which was made for the previous palette.
+    pub fn with(self, key: &str, value: &str) -> Self {
+        match key {
+            "theme" => Self { theme: Some(value.to_owned()), highlight: None },
+            "highlight" if value == "none" => Self { highlight: None, ..self },
+            "highlight" => Self { highlight: Some(value.to_owned()), ..self },
+            _ => self,
+        }
     }
 }
 
@@ -156,6 +166,11 @@ mod tests {
         let config: Config = toml::from_str("default = \"acme\"\n\n[tui]\ntheme = \"nord\"\nhighlight = \"#2a2a2a\"\n").unwrap();
         assert_eq!(config.tui.theme.as_deref(), Some("nord"));
         assert_eq!(config.tui.highlight.as_deref(), Some("#2a2a2a"));
+        let tui = config.tui.clone().with("theme", "dracula");
+        assert_eq!((tui.theme.as_deref(), tui.highlight.as_deref()), (Some("dracula"), None));
+        let tui = tui.with("highlight", "236").with("bogus", "x");
+        assert_eq!((tui.theme.as_deref(), tui.highlight.as_deref()), (Some("dracula"), Some("236")));
+        assert_eq!(tui.with("highlight", "none").highlight, None);
         assert!(!config.links.show_url);
         let config: Config = toml::from_str("[links]\nshow_url = true\n\n[firehose]\nhighlight = [\"prod\", \"error|failed\"]\n").unwrap();
         assert!(config.links.show_url);

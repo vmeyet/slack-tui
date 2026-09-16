@@ -145,24 +145,60 @@ pub struct Thread {
 pub enum Action {
     LoadChannels,
     LoadHistory(String),
-    LoadReplies { channel: String, ts: String },
-    Send { channel: String, thread_ts: Option<String>, text: String },
-    React { channel: String, ts: String, name: String },
+    LoadReplies {
+        channel: String,
+        ts: String,
+    },
+    Send {
+        channel: String,
+        thread_ts: Option<String>,
+        text: String,
+    },
+    React {
+        channel: String,
+        ts: String,
+        name: String,
+    },
     Search(String),
-    Open { channel: String, ts: String },
+    Open {
+        channel: String,
+        ts: String,
+    },
     OpenUrl(String),
-    Yank { channel: String, ts: String },
+    Yank {
+        channel: String,
+        ts: String,
+    },
     LoadInbox,
     LoadThreads,
     Join(String),
     Leave(String),
-    SendTo { target: String, text: String },
-    MarkChannelRead { channel: String, ts: String },
-    Export { path: PathBuf, label: String, messages: Vec<Message>, format: palette::Format },
+    SendTo {
+        target: String,
+        text: String,
+    },
+    MarkChannelRead {
+        channel: String,
+        ts: String,
+    },
+    Export {
+        path: PathBuf,
+        label: String,
+        messages: Vec<Message>,
+        format: palette::Format,
+    },
     LearnUsers(Vec<String>),
     OpenDm(String),
     MarkRead(Item),
-    SaveInbox { workspace: String, state: State },
+    SaveInbox {
+        workspace: String,
+        state: State,
+    },
+    /// A `[tui]` key already validated by the app, written to the config file.
+    SaveSetting {
+        key: String,
+        value: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -700,26 +736,41 @@ impl App {
                     vec![]
                 }
             },
-            Command::Set { key, value } => {
-                match key.as_str() {
-                    "highlight" => match value.parse() {
+            Command::Set { key, value } => match key.as_str() {
+                "highlight" => match value.as_str() {
+                    "none" | "off" => {
+                        self.theme.highlight = None;
+                        self.status = "highlight = none".into();
+                        vec![Action::SaveSetting { key, value: "none".into() }]
+                    }
+                    _ => match value.parse() {
                         Ok(color) => {
-                            self.theme.surface = color;
-                            self.status = format!("highlight = {value} (this session)");
+                            self.theme.highlight = Some(color);
+                            self.status = format!("highlight = {value}");
+                            vec![Action::SaveSetting { key, value }]
                         }
-                        Err(_) => self.status = format!("✗ `{value}` is not a colour"),
-                    },
-                    "theme" => match Theme::named(&value) {
-                        Some(theme) => {
-                            self.theme = theme;
-                            self.status = format!("theme = {} (this session)", theme.name);
+                        Err(_) => {
+                            self.status = format!("✗ `{value}` is not a colour (try `#2a2a2a`, `236` or `none`)");
+                            vec![]
                         }
-                        None => self.status = format!("✗ unknown theme `{value}` (try {})", Theme::NAMES.join(", ")),
                     },
-                    other => self.status = format!("✗ unknown setting `{other}` (try theme, highlight)"),
+                },
+                "theme" => match Theme::named(&value) {
+                    Some(theme) => {
+                        self.theme = theme;
+                        self.status = format!("theme = {}", theme.name);
+                        vec![Action::SaveSetting { key, value: theme.name.to_owned() }]
+                    }
+                    None => {
+                        self.status = format!("✗ unknown theme `{value}` (try {})", Theme::NAMES.join(", "));
+                        vec![]
+                    }
+                },
+                other => {
+                    self.status = format!("✗ unknown setting `{other}` (try theme, highlight)");
+                    vec![]
                 }
-                vec![]
-            }
+            },
             Command::Help => {
                 self.help = true;
                 vec![]
@@ -1701,11 +1752,16 @@ mod tests {
             vec![Action::SendTo { target: "@vivien".into(), text: "hello there".into() }]
         );
         assert_eq!(palette_run(&mut app, "search deploy"), vec![Action::Search("deploy".into())]);
-        assert_eq!(palette_run(&mut app, "set highlight=#2a2a2a"), vec![]);
-        assert_eq!(app.theme.surface, "#2a2a2a".parse().unwrap());
-        assert_eq!(palette_run(&mut app, "set theme=nord"), vec![]);
+        let saved = |key: &str, value: &str| vec![Action::SaveSetting { key: key.into(), value: value.into() }];
+        assert_eq!(palette_run(&mut app, "set highlight=#2a2a2a"), saved("highlight", "#2a2a2a"));
+        assert_eq!(app.theme.highlight, Some("#2a2a2a".parse().unwrap()));
+        assert_eq!(palette_run(&mut app, "set highlight=nope"), vec![]);
+        assert_eq!(palette_run(&mut app, "set highlight=off"), saved("highlight", "none"));
+        assert_eq!(app.theme.highlight, None);
+        assert_eq!(palette_run(&mut app, "set theme=Tokyo Night"), saved("theme", "tokyonight"));
+        assert_eq!(palette_run(&mut app, "set theme=nord"), saved("theme", "nord"));
         assert_eq!(app.theme.name, "nord");
-        assert_eq!(app.theme.surface, Theme::named("nord").unwrap().surface);
+        assert_eq!(app.theme.highlight, None);
         palette_run(&mut app, "set theme=solarized");
         assert!(app.status.contains("unknown theme") && app.status.contains("dracula"));
         assert_eq!(app.theme.name, "nord");

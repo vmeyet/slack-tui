@@ -8,10 +8,11 @@ pub struct Theme {
     pub name: &'static str,
     /// The terminal background this palette was designed for; text drawn on a colored fill uses it.
     pub base: Color,
-    /// Selected row in the focused pane.
+    /// Inline code and code blocks: the ground nudged a few percent toward the text.
     pub surface: Color,
-    /// Selected row in a pane without focus.
-    pub surface_soft: Color,
+    /// Fill of the selected row. None by default: the `▎` bar alone marks it, which stays
+    /// invisible-proof on terminals whose background the theme cannot see.
+    pub highlight: Option<Color>,
     pub border: Color,
     /// Tertiary text: section headers, muted channels, receded panes.
     pub faded: Color,
@@ -31,6 +32,18 @@ pub struct Theme {
 const fn rgb(hex: u32) -> Color {
     Color::Rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
+
+/// `pct` percent of the way from `from` to `to`, per channel. Terminals have no alpha, so a
+/// "translucent" surface is the background nudged a few percent toward the text.
+const fn mix(from: u32, to: u32, pct: u32) -> Color {
+    const fn channel(from: u32, to: u32, pct: u32, shift: u32) -> u8 {
+        let (a, b) = ((from >> shift) & 0xff, (to >> shift) & 0xff);
+        ((a * (100 - pct) + b * pct) / 100) as u8
+    }
+    Color::Rgb(channel(from, to, pct, 16), channel(from, to, pct, 8), channel(from, to, pct, 0))
+}
+
+const SURFACE_PCT: u32 = 3;
 
 impl Default for Theme {
     fn default() -> Self {
@@ -69,8 +82,8 @@ impl Theme {
 const DEFAULT: Theme = Theme {
     name: "default",
     base: Color::Black,
-    surface: Color::Indexed(235),
-    surface_soft: Color::Indexed(234),
+    surface: Color::Indexed(234),
+    highlight: None,
     border: Color::Indexed(238),
     faded: Color::Indexed(240),
     muted: Color::Indexed(245),
@@ -86,8 +99,8 @@ const DEFAULT: Theme = Theme {
 const DRACULA: Theme = Theme {
     name: "dracula",
     base: rgb(0x282a36),
-    surface: rgb(0x343746),
-    surface_soft: rgb(0x2e3040),
+    surface: mix(0x282a36, 0xf8f8f2, SURFACE_PCT),
+    highlight: None,
     border: rgb(0x44475a),
     faded: rgb(0x6272a4),
     muted: rgb(0x9098bd),
@@ -103,8 +116,8 @@ const DRACULA: Theme = Theme {
 const CATPPUCCIN: Theme = Theme {
     name: "catppuccin",
     base: rgb(0x1e1e2e),
-    surface: rgb(0x313244),
-    surface_soft: rgb(0x28283c),
+    surface: mix(0x1e1e2e, 0xcdd6f4, SURFACE_PCT),
+    highlight: None,
     border: rgb(0x45475a),
     faded: rgb(0x6c7086),
     muted: rgb(0xa6adc8),
@@ -120,8 +133,8 @@ const CATPPUCCIN: Theme = Theme {
 const CATPPUCCIN_LATTE: Theme = Theme {
     name: "catppuccin-latte",
     base: rgb(0xeff1f5),
-    surface: rgb(0xdce0e8),
-    surface_soft: rgb(0xe6e9ef),
+    surface: mix(0xeff1f5, 0x4c4f69, SURFACE_PCT),
+    highlight: None,
     border: rgb(0xbcc0cc),
     faded: rgb(0x9ca0b0),
     muted: rgb(0x6c6f85),
@@ -137,8 +150,8 @@ const CATPPUCCIN_LATTE: Theme = Theme {
 const ROSEPINE: Theme = Theme {
     name: "rosepine",
     base: rgb(0x191724),
-    surface: rgb(0x26233a),
-    surface_soft: rgb(0x1f1d2e),
+    surface: mix(0x191724, 0xe0def4, SURFACE_PCT),
+    highlight: None,
     border: rgb(0x403d52),
     faded: rgb(0x6e6a86),
     muted: rgb(0x908caa),
@@ -154,8 +167,8 @@ const ROSEPINE: Theme = Theme {
 const ROSEPINE_DAWN: Theme = Theme {
     name: "rosepine-dawn",
     base: rgb(0xfaf4ed),
-    surface: rgb(0xf2e9e1),
-    surface_soft: rgb(0xfffaf3),
+    surface: mix(0xfaf4ed, 0x575279, SURFACE_PCT),
+    highlight: None,
     border: rgb(0xdfdad9),
     faded: rgb(0x9893a5),
     muted: rgb(0x797593),
@@ -171,8 +184,8 @@ const ROSEPINE_DAWN: Theme = Theme {
 const NORD: Theme = Theme {
     name: "nord",
     base: rgb(0x2e3440),
-    surface: rgb(0x3b4252),
-    surface_soft: rgb(0x353b49),
+    surface: mix(0x2e3440, 0xd8dee9, SURFACE_PCT),
+    highlight: None,
     border: rgb(0x434c5e),
     faded: rgb(0x4c566a),
     muted: rgb(0x7b88a1),
@@ -188,8 +201,8 @@ const NORD: Theme = Theme {
 const TOKYONIGHT: Theme = Theme {
     name: "tokyonight",
     base: rgb(0x1a1b26),
-    surface: rgb(0x292e42),
-    surface_soft: rgb(0x1f2335),
+    surface: mix(0x1a1b26, 0xc0caf5, SURFACE_PCT),
+    highlight: None,
     border: rgb(0x3b4261),
     faded: rgb(0x565f89),
     muted: rgb(0x737aa2),
@@ -205,8 +218,8 @@ const TOKYONIGHT: Theme = Theme {
 const MONOKAI: Theme = Theme {
     name: "monokai",
     base: rgb(0x272822),
-    surface: rgb(0x3e3d32),
-    surface_soft: rgb(0x33332b),
+    surface: mix(0x272822, 0xf8f8f2, SURFACE_PCT),
+    highlight: None,
     border: rgb(0x49483e),
     faded: rgb(0x75715e),
     muted: rgb(0xa59f85),
@@ -237,6 +250,14 @@ mod tests {
         assert_eq!(Theme::named("Rose-Pine Dawn").unwrap().name, "rosepine-dawn");
         assert_eq!(Theme::named("solarized"), None);
         assert_eq!(Theme::named(""), None);
+    }
+
+    #[test]
+    fn mix_walks_each_channel_toward_the_target() {
+        assert_eq!(mix(0x000000, 0xffffff, 50), Color::Rgb(127, 127, 127));
+        assert_eq!(mix(0x1e1e2e, 0xcdd6f4, 0), rgb(0x1e1e2e));
+        assert_eq!(mix(0x1e1e2e, 0xcdd6f4, 100), rgb(0xcdd6f4));
+        assert_eq!(mix(0x102030, 0x304050, 10), Color::Rgb(0x13, 0x23, 0x33));
     }
 
     #[test]

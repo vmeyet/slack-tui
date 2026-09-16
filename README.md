@@ -76,7 +76,7 @@ If the workspace refuses RTM the open conversation is polled every 10 seconds in
 ```toml
 [tui]
 theme = "catppuccin"    # dracula, catppuccin, catppuccin-latte, rosepine, rosepine-dawn, nord, tokyonight, monokai
-highlight = "#2a2a2a"   # selected row on top of the theme: a name, #rrggbb, or a 0-255 index
+highlight = "#2a2a2a"   # optional fill under the selected row (only the ▎ bar marks it by default)
 
 [links]
 show_url = false        # true prints `label (url)`; false keeps the label, clickable on OSC 8 terminals

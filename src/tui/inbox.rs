@@ -6,7 +6,7 @@ use crate::render::time;
 use crate::resolve::NameBook;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
@@ -98,7 +98,7 @@ pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, them
     let width = list_area.width as usize;
     let items: Vec<ListItem> = inbox.items.iter().map(|i| item_lines(theme, i, names, width)).collect();
     let list = List::new(items)
-        .highlight_style(Style::new().bg(theme.surface).add_modifier(Modifier::BOLD))
+        .highlight_style(super::ui::row_highlight(theme, true).bold())
         .highlight_symbol(super::ui::cursor_bar(theme, true))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);

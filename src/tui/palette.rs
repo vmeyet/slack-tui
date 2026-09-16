@@ -40,7 +40,7 @@ pub const VERBS: [(&str, &str); 15] = [
     ("export", "save the conversation: :export json | md"),
     ("read", "mark the conversation read"),
     ("snooze", "snooze the selected inbox item: :snooze 1h | 3h | tomorrow | monday"),
-    ("set", "change a setting for this session: :set theme=nord · :set highlight=#2a2a2a"),
+    ("set", "change and save a setting: :set theme=nord · :set highlight=#2a2a2a"),
     ("help", "show the keys"),
     ("quit", "leave"),
 ];
