@@ -1,0 +1,256 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Identity {
+    pub team_id: String,
+    pub team: String,
+    pub user_id: String,
+    pub user: String,
+    #[serde(default)]
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Channel {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub is_private: bool,
+    #[serde(default)]
+    pub is_im: bool,
+    #[serde(default)]
+    pub is_mpim: bool,
+    #[serde(default)]
+    pub is_archived: bool,
+    #[serde(default)]
+    pub is_member: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub num_members: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic: Option<Topic>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<Topic>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Topic {
+    #[serde(default)]
+    pub value: String,
+}
+
+impl Channel {
+    pub fn kind(&self) -> ChannelKind {
+        if self.is_im {
+            ChannelKind::Dm
+        } else if self.is_mpim {
+            ChannelKind::GroupDm
+        } else if self.is_private {
+            ChannelKind::Private
+        } else {
+            ChannelKind::Public
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChannelKind {
+    Public,
+    Private,
+    Dm,
+    GroupDm,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct User {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub real_name: String,
+    #[serde(default)]
+    pub deleted: bool,
+    #[serde(default)]
+    pub is_bot: bool,
+    #[serde(default)]
+    pub profile: Profile,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Profile {
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub real_name: String,
+    #[serde(default)]
+    pub title: String,
+}
+
+impl User {
+    pub fn handle(&self) -> &str {
+        if !self.profile.display_name.is_empty() {
+            &self.profile.display_name
+        } else if !self.name.is_empty() {
+            &self.name
+        } else {
+            &self.real_name
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Message {
+    pub ts: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_ts: Option<String>,
+    #[serde(default)]
+    pub reply_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_reply: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited: Option<Edited>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reactions: Vec<Reaction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<File>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permalink: Option<String>,
+}
+
+impl Message {
+    pub fn is_thread_root(&self) -> bool {
+        self.reply_count > 0 && self.thread_ts.as_deref().is_none_or(|t| t == self.ts)
+    }
+
+    pub fn is_reply(&self) -> bool {
+        self.thread_ts.as_deref().is_some_and(|t| t != self.ts)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Edited {
+    #[serde(default)]
+    pub ts: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Reaction {
+    pub name: String,
+    #[serde(default)]
+    pub count: u64,
+    #[serde(default)]
+    pub users: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct File {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub permalink: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Attachment {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub fallback: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SearchMatch {
+    pub ts: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub user: String,
+    #[serde(default)]
+    pub permalink: String,
+    #[serde(default)]
+    pub channel: SearchChannel,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SearchChannel {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub total: u64,
+    pub matches: Vec<SearchMatch>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Posted {
+    pub channel: String,
+    pub ts: String,
+    #[serde(default)]
+    pub permalink: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_thread_detection() {
+        let root = Message { ts: "1.0".into(), reply_count: 2, thread_ts: Some("1.0".into()), ..Default::default() };
+        assert!(root.is_thread_root());
+        assert!(!root.is_reply());
+        let reply = Message { ts: "2.0".into(), thread_ts: Some("1.0".into()), ..Default::default() };
+        assert!(reply.is_reply());
+        assert!(!reply.is_thread_root());
+        assert!(!Message { ts: "3.0".into(), ..Default::default() }.is_thread_root());
+    }
+
+    #[test]
+    fn user_handle_prefers_display_name() {
+        let mut u = User { name: "vmeyet".into(), real_name: "Vivien Meyet".into(), ..Default::default() };
+        assert_eq!(u.handle(), "vmeyet");
+        u.profile.display_name = "vivien".into();
+        assert_eq!(u.handle(), "vivien");
+    }
+
+    #[test]
+    fn channel_kind() {
+        assert_eq!(Channel { is_im: true, ..Default::default() }.kind(), ChannelKind::Dm);
+        assert_eq!(Channel { is_mpim: true, ..Default::default() }.kind(), ChannelKind::GroupDm);
+        assert_eq!(Channel { is_private: true, ..Default::default() }.kind(), ChannelKind::Private);
+        assert_eq!(Channel::default().kind(), ChannelKind::Public);
+    }
+
+    #[test]
+    fn tolerates_sparse_payloads() {
+        let m: Message = serde_json::from_str(r#"{"ts":"1.2","text":"hi","user":"U1"}"#).unwrap();
+        assert_eq!(m.user.as_deref(), Some("U1"));
+        let c: Channel = serde_json::from_str(r#"{"id":"C1"}"#).unwrap();
+        assert_eq!(c.name, "");
+    }
+}

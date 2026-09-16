@@ -1,0 +1,17 @@
+---
+source: tests/cli.rs
+expression: out
+---
+── #general ──────────────────────────────────────────────────────────────────────────── 4 messages
+                     ── 12 Sep 2023
+06:26  deploybot     build #12 passed                                              1694500000.000100
+                     📎 log.txt (https://acme.slack.com/files/log)
+                     ── 13 Sep 2023
+10:13  bob           joined the channel                                            1694600000.000100
+                     ── 14 Sep 2023
+14:00  vivien        Deploy v2.3 is out, see release notes                         1694700000.000100
+                     (https://acme.io/notes) and #general. This line is long
+                     enough to wrap around the terminal width for sure. (edited)
+                     :rocket: 3
+                     ↳ 2 replies · last 14 Sep
+14:01  bob           short reply @vivien :tada:                                    1694700100.000200

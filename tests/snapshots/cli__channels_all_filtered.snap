@@ -1,0 +1,6 @@
+---
+source: tests/cli.rs
+expression: "stdout(env.slack().args([\"channels\", \"ra\", \"--all\"]))"
+---
+#general     42          Company wide
+#random      40

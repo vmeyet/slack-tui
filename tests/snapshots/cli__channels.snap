@@ -1,0 +1,7 @@
+---
+source: tests/cli.rs
+expression: "stdout(env.slack().arg(\"channels\"))"
+---
+#general           42          Company wide
+🔒vivien-vault      1 private
+@bob                  dm

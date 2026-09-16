@@ -1,0 +1,8 @@
+---
+source: tests/cli.rs
+expression: by_link
+---
+── #general thread ──────────────────────────────────────────────────────────────────────── 1 reply
+14:00  vivien        root question?                                                1694700000.000100
+                     ↳ 1 reply
+    14:01  bob           answer                                                    1694700100.000200

@@ -1,0 +1,22 @@
+---
+source: src/tui/ui.rs
+expression: stable
+---
+"┌ channels ──────────────┐┌ C1 ──────────────────────────────────┐┌ thread · 1 replies ──────────────────────┐"
+"│▸ #general              ││HH:MM U1         Deploy v2 is out, see││HH:MM U1       Deploy v2 is out, see notes│"
+"│  🔒vault               ││                 notes                ││               (https://acme.io). A long  │" Hidden by multi-width symbols: [(4, " ")]
+"│  @bob                  ││                 (https://acme.io). A ││               line that needs wrapping   │"
+"│                        ││                 long line that needs ││               inside the pane for sure.  │"
+"│                        ││                 wrapping inside the  ││               :rocket: 3                 │"
+"│                        ││                 pane for sure.       ││HH:MM U2       reply                      │"
+"│                        ││                 :rocket: 3           ││                                          │"
+"│                        ││                 ↳ 2 replies          ││                                          │"
+"│                        ││HH:MM U2         ok                   ││                                          │"
+"│                        ││                                      ││                                          │"
+"│                        ││                                      ││                                          │"
+"│                        ││                                      ││                                          │"
+"│                        ││                                      ││                                          │"
+"│                        ││                                      ││                                          │"
+"└────────────────────────┘└──────────────────────────────────────┘└──────────────────────────────────────────┘"
+" reply to #general ▸ typing…▌                                                                                 "
+" #general                                                                             enter send · esc cancel "
