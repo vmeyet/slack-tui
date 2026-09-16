@@ -42,17 +42,18 @@ impl SecretStore for SecurityCli {
         Ok(Some(String::from_utf8(output.stdout)?.trim_end().to_owned()))
     }
 
+    /// Written through `security -i` with hex data: the secret never appears in argv,
+    /// and unlike a bare `-w` it is never read from the terminal.
     fn set(&self, account: &str, secret: &str) -> Result<()> {
-        let mut child = self
-            .command("add-generic-password", account)
-            .arg("-U")
-            .arg("-w")
+        let mut child = Command::new("/usr/bin/security")
+            .arg("-i")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
             .context("running security")?;
-        child.stdin.take().expect("piped stdin").write_all(format!("{secret}\n{secret}\n").as_bytes())?;
+        let line = format!("add-generic-password -a {account} -s {} -U -X {}\n", self.service, hex(secret));
+        child.stdin.take().expect("piped stdin").write_all(line.as_bytes())?;
         let output = child.wait_with_output()?;
         if !output.status.success() {
             bail!("keychain write failed: {}", String::from_utf8_lossy(&output.stderr).trim());
@@ -67,6 +68,10 @@ impl SecretStore for SecurityCli {
         }
         bail!("keychain delete failed: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
+}
+
+fn hex(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
 }
 
 #[derive(Default)]
@@ -104,6 +109,11 @@ mod tests {
         assert_eq!(s.get("a").unwrap().as_deref(), Some("2"));
         s.delete("a").unwrap();
         assert_eq!(s.get("a").unwrap(), None);
+    }
+
+    #[test]
+    fn hex_encodes_bytes() {
+        assert_eq!(hex("A{\"}"), "417b227d");
     }
 
     #[test]
