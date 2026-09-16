@@ -1,5 +1,6 @@
 pub mod api;
 pub mod channels;
+pub mod inbox;
 pub mod login;
 pub mod messages;
 pub mod react;

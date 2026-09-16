@@ -1,4 +1,5 @@
 pub mod app;
+pub mod inbox;
 pub mod ui;
 
 use crate::api::rtm;
@@ -14,6 +15,15 @@ use std::time::Duration;
 use tokio::sync::{Mutex, mpsc};
 
 pub async fn run(ctx: Ctx) -> Result<()> {
+    run_with(ctx, false).await
+}
+
+pub async fn run_inbox(ctx: Ctx) -> Result<()> {
+    run_with(ctx, true).await
+}
+
+async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
+    let workspace = ctx.workspace.clone().unwrap_or_else(|| "env".into());
     let slack = ctx.slack.clone();
     let dir = Arc::new(Mutex::new(ctx.dir));
     let (tx, mut rx) = mpsc::unbounded_channel();
@@ -23,8 +33,14 @@ pub async fn run(ctx: Ctx) -> Result<()> {
             .parse()
             .map_err(|_| anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a` or `236`)"))?;
     }
+    app.workspace = workspace;
     let mut terminal = ratatui::init();
     spawn(Action::LoadChannels, slack.clone(), dir.clone(), tx.clone());
+    if open_inbox {
+        for action in app.open_inbox() {
+            spawn(action, slack.clone(), dir.clone(), tx.clone());
+        }
+    }
     spawn_live(slack.clone(), tx.clone());
     let mut events = EventStream::new();
     let result = loop {
@@ -130,6 +146,20 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
         Action::OpenUrl(url) => {
             std::process::Command::new("open").arg(&url).spawn()?;
             Ok(Incoming::Status(format!("opened {url}")))
+        }
+        Action::LoadInbox => {
+            let me = slack.auth_test().await?.user_id;
+            let mut d = dir.lock().await;
+            let items = crate::inbox::fetch(slack, &mut d, &me).await?;
+            Ok(Incoming::Inbox { items, names: d.names() })
+        }
+        Action::MarkRead(item) => {
+            crate::inbox::mark_read(slack, &item).await?;
+            Ok(Incoming::Status(String::new()))
+        }
+        Action::SaveInbox { workspace, state } => {
+            state.save(&workspace)?;
+            Ok(Incoming::Status(String::new()))
         }
         Action::Yank { channel, ts } => {
             let url = slack.permalink(&channel, &ts).await?;

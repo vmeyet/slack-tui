@@ -1,5 +1,7 @@
+use super::inbox::Inbox;
 use crate::api::rtm;
 use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
+use crate::inbox::{Item, Snooze, State};
 use crate::resolve::NameBook;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
@@ -41,12 +43,13 @@ pub enum Focus {
     Thread,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     Reply { channel: String, thread_ts: Option<String>, label: String },
     React { channel: String, ts: String },
     Filter,
     Search,
+    InboxReply { item: Item },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -57,7 +60,7 @@ pub struct Thread {
     pub selected: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     LoadChannels,
     LoadHistory(String),
@@ -68,6 +71,9 @@ pub enum Action {
     Open { channel: String, ts: String },
     OpenUrl(String),
     Yank { channel: String, ts: String },
+    LoadInbox,
+    MarkRead(Item),
+    SaveInbox { workspace: String, state: State },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -82,6 +88,7 @@ pub enum Live {
 pub enum Incoming {
     Live(rtm::Event),
     Tick,
+    Inbox { items: Vec<Item>, names: NameBook },
     Channels(Vec<ChannelRow>, NameBook),
     History { channel: String, messages: Vec<Message>, names: NameBook },
     Replies { channel: String, ts: String, messages: Vec<Message>, names: NameBook },
@@ -112,6 +119,8 @@ pub struct App {
     pub live: Live,
     pub unread: HashSet<String>,
     pub highlight: Color,
+    pub inbox: Option<Inbox>,
+    pub workspace: String,
 }
 
 impl Default for App {
@@ -136,6 +145,8 @@ impl Default for App {
             live: Live::default(),
             unread: HashSet::new(),
             highlight: DEFAULT_HIGHLIGHT,
+            inbox: None,
+            workspace: "env".into(),
         }
     }
 }
@@ -165,11 +176,19 @@ impl App {
         match incoming {
             Incoming::Live(event) => return self.apply_live(event),
             Incoming::Tick => return self.poll(),
+            Incoming::Inbox { items, names } => {
+                self.names = names;
+                if let Some(inbox) = &mut self.inbox {
+                    inbox.set_items(items);
+                }
+                return vec![];
+            }
+            Incoming::Status(s) if s.is_empty() => return vec![],
             _ => {}
         }
         self.loading = false;
         match incoming {
-            Incoming::Live(_) | Incoming::Tick => unreachable!(),
+            Incoming::Live(_) | Incoming::Tick | Incoming::Inbox { .. } => unreachable!(),
             Incoming::Channels(rows, names) => {
                 self.channels = rows;
                 self.names = names;
@@ -194,6 +213,12 @@ impl App {
             }
             Incoming::Sent { channel, thread_ts } => {
                 self.status = "sent ✓".into();
+                if self.current_channel.as_deref() != Some(&channel) {
+                    if let Some(inbox) = &mut self.inbox {
+                        inbox.flash = "sent ✓".into();
+                    }
+                    return vec![];
+                }
                 self.loading = true;
                 return match thread_ts {
                     Some(ts) => vec![Action::LoadReplies { channel: channel.clone(), ts }, Action::LoadHistory(channel)],
@@ -315,7 +340,93 @@ impl App {
         if self.input.is_some() {
             return self.handle_input_key(key);
         }
+        if self.inbox.is_some() {
+            return self.handle_inbox_key(key);
+        }
         self.handle_browse_key(key)
+    }
+
+    pub fn open_inbox(&mut self) -> Vec<Action> {
+        self.inbox = Some(Inbox::new(State::load(&self.workspace)));
+        vec![Action::LoadInbox]
+    }
+
+    fn handle_inbox_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let inbox = self.inbox.as_mut().expect("inbox open");
+        inbox.flash.clear();
+        if inbox.picking_snooze {
+            return match key.code {
+                KeyCode::Char(c @ '1'..='4') => {
+                    let preset = Snooze::ALL[c as usize - '1' as usize];
+                    inbox.snooze_selected(preset);
+                    self.persist_inbox()
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    inbox.picking_snooze = false;
+                    vec![]
+                }
+                _ => vec![],
+            };
+        }
+        match key.code {
+            KeyCode::Esc => self.inbox = None,
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('j') | KeyCode::Down => inbox.move_by(1),
+            KeyCode::Char('k') | KeyCode::Up => inbox.move_by(-1),
+            KeyCode::Char('g') | KeyCode::Home => inbox.move_by(i64::MIN / 2),
+            KeyCode::Char('G') | KeyCode::End => inbox.move_by(i64::MAX / 2),
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('d') => {
+                if let Some(item) = inbox.read_selected() {
+                    let mut actions = vec![Action::MarkRead(item)];
+                    actions.extend(self.persist_inbox());
+                    return actions;
+                }
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('s') => {
+                if inbox.selected_item().is_some() {
+                    inbox.picking_snooze = true;
+                }
+            }
+            KeyCode::Char('a') => {
+                let mut actions: Vec<Action> = inbox.read_all().into_iter().map(Action::MarkRead).collect();
+                actions.extend(self.persist_inbox());
+                return actions;
+            }
+            KeyCode::Char('r') => {
+                if let Some(item) = inbox.selected_item().cloned() {
+                    self.start_input(Input::InboxReply { item }, String::new());
+                }
+            }
+            KeyCode::Char('o') => {
+                if let Some(item) = inbox.selected_item() {
+                    return vec![Action::Open { channel: item.channel.clone(), ts: item.ts.clone() }];
+                }
+            }
+            KeyCode::Char('R') => {
+                inbox.loading = true;
+                return vec![Action::LoadInbox];
+            }
+            KeyCode::Enter => {
+                if let Some(item) = inbox.selected_item().cloned() {
+                    self.inbox = None;
+                    let mut actions = self.open_channel(item.channel.clone());
+                    if let Some(root) = item.thread_ts.clone().or_else(|| (item.kind != crate::inbox::Kind::Dm).then(|| item.ts.clone())) {
+                        actions.push(Action::LoadReplies { channel: item.channel, ts: root });
+                    }
+                    return actions;
+                }
+            }
+            KeyCode::Char('?') => self.help = true,
+            _ => {}
+        }
+        vec![]
+    }
+
+    fn persist_inbox(&self) -> Vec<Action> {
+        match &self.inbox {
+            Some(inbox) => vec![Action::SaveInbox { workspace: self.workspace.clone(), state: inbox.state.clone() }],
+            None => vec![],
+        }
     }
 
     fn handle_browse_key(&mut self, key: KeyEvent) -> Vec<Action> {
@@ -358,6 +469,7 @@ impl App {
                 }
             }
             KeyCode::Char('R') => return self.refresh(),
+            KeyCode::Char('i') => return self.open_inbox(),
             _ => {}
         }
         vec![]
@@ -421,6 +533,20 @@ impl App {
             Input::React { channel, ts } => {
                 let name = text.trim().trim_matches(':').to_owned();
                 if name.is_empty() { vec![] } else { vec![Action::React { channel, ts, name }] }
+            }
+            Input::InboxReply { .. } if text.trim().is_empty() => vec![],
+            Input::InboxReply { item } => {
+                let mut actions = vec![Action::Send { channel: item.channel.clone(), thread_ts: item.reply_thread(), text }];
+                if let Some(inbox) = &mut self.inbox
+                    && let Some(read) = inbox.items.iter().position(|i| i.key == item.key).and_then(|i| {
+                        inbox.selected = i;
+                        inbox.read_selected()
+                    })
+                {
+                    actions.push(Action::MarkRead(read));
+                    actions.extend(self.persist_inbox());
+                }
+                actions
             }
         }
     }
@@ -897,6 +1023,58 @@ mod tests {
             names: NameBook::default(),
         });
         assert_eq!(app.message_selected, 1);
+    }
+
+    fn inbox_item(key: &str) -> Item {
+        Item {
+            key: key.into(),
+            kind: crate::inbox::Kind::Mention,
+            channel: "C2".into(),
+            label: "#random".into(),
+            thread_ts: Some("9".into()),
+            ts: "10".into(),
+            unread: vec![msg("10", "ping")],
+        }
+    }
+
+    #[test]
+    fn inbox_read_snooze_reply_and_open() {
+        let mut app = loaded();
+        assert_eq!(app.handle_key(key('i')), vec![Action::LoadInbox]);
+        app.apply(Incoming::Inbox { items: vec![inbox_item("a"), inbox_item("b")], names: NameBook::default() });
+        assert_eq!(app.inbox.as_ref().unwrap().items.len(), 2);
+        let actions = app.handle_key(code(KeyCode::Right));
+        assert!(matches!(&actions[0], Action::MarkRead(i) if i.key == "a"));
+        assert!(matches!(&actions[1], Action::SaveInbox { .. }));
+        app.handle_key(code(KeyCode::Left));
+        assert!(app.inbox.as_ref().unwrap().picking_snooze);
+        let actions = app.handle_key(key('3'));
+        assert!(matches!(&actions[0], Action::SaveInbox { state, .. } if state.snoozed.contains_key("b")));
+        assert!(app.inbox.as_ref().unwrap().items.is_empty());
+        app.apply(Incoming::Inbox { items: vec![inbox_item("c")], names: NameBook::default() });
+        app.handle_key(key('r'));
+        for c in "ok".chars() {
+            app.handle_key(key(c));
+        }
+        let actions = app.handle_key(code(KeyCode::Enter));
+        assert_eq!(actions[0], Action::Send { channel: "C2".into(), thread_ts: Some("9".into()), text: "ok".into() });
+        assert!(matches!(&actions[1], Action::MarkRead(i) if i.key == "c"));
+        app.apply(Incoming::Inbox { items: vec![inbox_item("d")], names: NameBook::default() });
+        let actions = app.handle_key(code(KeyCode::Enter));
+        assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "9".into() }]);
+        assert!(app.inbox.is_none());
+        assert_eq!(app.current_channel.as_deref(), Some("C2"));
+    }
+
+    #[test]
+    fn inbox_escape_closes_and_q_quits() {
+        let mut app = loaded();
+        app.handle_key(key('i'));
+        app.handle_key(code(KeyCode::Esc));
+        assert!(app.inbox.is_none());
+        app.handle_key(key('i'));
+        app.handle_key(key('q'));
+        assert!(app.should_quit);
     }
 
     #[test]

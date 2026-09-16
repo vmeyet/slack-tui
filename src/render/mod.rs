@@ -167,6 +167,39 @@ pub fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
     out
 }
 
+pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> String {
+    use crate::inbox::Kind;
+    let mut out = title_bar(t, "inbox", &plural(items.len() as u64, "item", "items"));
+    if items.is_empty() {
+        out.push_str(&format!("{}\n", t.dim("  nothing waiting for you")));
+        return out;
+    }
+    let label_width = items.iter().map(|i| i.label.width()).max().unwrap_or(10).min(24);
+    for item in items {
+        let (icon, what) = match item.kind {
+            Kind::Dm => ("✉", plural(item.unread.len() as u64, "new message", "new messages")),
+            Kind::Mention => ("@", "mention".to_owned()),
+            Kind::Thread => ("⤷", plural(item.unread.len() as u64, "new reply", "new replies")),
+        };
+        let when = time::relative(&item.ts);
+        out.push_str(&format!(
+            "{} {}  {}  {}\n",
+            t.accent(icon),
+            t.bold(&fit(&item.label, label_width)),
+            t.dim(&format!("{when:>8}")),
+            t.dim(&what)
+        ));
+        let indent = " ".repeat(4);
+        if let Some(m) = item.unread.last() {
+            let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
+            let lines = text::from_segments(&mrkdwn::parse(&m.text, names), t.show_urls)
+                .wrap_with(t.width.saturating_sub(8 + author.width()).max(20), t);
+            out.push_str(&format!("{indent}{} {}\n", t.mention(&format!("{author}:")), lines.first().cloned().unwrap_or_default()));
+        }
+    }
+    out
+}
+
 pub fn channels(t: &Theme, channels: &[(&Channel, String)]) -> String {
     let mut out = String::new();
     let name_width = channels.iter().map(|(_, n)| n.width()).max().unwrap_or(10).min(40);

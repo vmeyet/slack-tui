@@ -45,8 +45,12 @@ slack react <permalink> :tada:
 slack channels [filter] [--all]
 slack users [filter]
 slack api conversations.info channel=C0123          # any Web API method
+slack inbox                                          # unread DMs, mentions, thread replies
 slack tui
 ```
+
+`slack inbox` is a modal: `→` marks read, `←` snoozes (1h, 3h, tomorrow, monday), `r` replies in place, `enter` jumps into the conversation, `a` clears everything.
+Piped or with `--list`/`--json` it prints the list instead. `i` opens it from the TUI too.
 
 Every command takes `--json` for scripts and agents, and `-w <workspace>` to pick a workspace.
 

@@ -190,6 +190,26 @@ impl Slack {
         Ok(())
     }
 
+    /// Read state of every conversation, the web client's own endpoint.
+    pub async fn counts(&self) -> Result<Counts> {
+        self.call_as("client.counts", vec![], "").await
+    }
+
+    /// Threads the user follows, newest first, with their read state.
+    pub async fn thread_view(&self, limit: usize) -> Result<Vec<ThreadView>> {
+        self.call_as("subscriptions.thread.getView", params(&[("limit", &limit.to_string())]), "threads").await
+    }
+
+    pub async fn mark_read(&self, channel: &str, ts: &str) -> Result<()> {
+        self.call("conversations.mark", params(&[("channel", channel), ("ts", ts)])).await?;
+        Ok(())
+    }
+
+    pub async fn mark_thread_read(&self, channel: &str, thread_ts: &str, ts: &str) -> Result<()> {
+        self.call("subscriptions.thread.mark", params(&[("channel", channel), ("thread_ts", thread_ts), ("ts", ts)])).await?;
+        Ok(())
+    }
+
     pub async fn search(&self, query: &str, count: usize) -> Result<SearchResult> {
         let p = params(&[("query", query), ("count", &count.to_string()), ("sort", "timestamp"), ("sort_dir", "desc")]);
         self.call_as("search.messages", p, "messages").await

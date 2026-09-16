@@ -40,6 +40,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Users(args) => commands::users::run(&mut ctx, args).await,
         Command::Api(args) => commands::api::run(&mut ctx, args).await,
         Command::Tui => slack::tui::run(ctx).await,
+        Command::Inbox(args) => commands::inbox::run(ctx, args).await,
         Command::Login(_) | Command::Logout { .. } | Command::Completions { .. } => unreachable!(),
     }
 }

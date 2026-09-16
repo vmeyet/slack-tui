@@ -208,6 +208,53 @@ pub struct SearchResult {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Counts {
+    #[serde(default)]
+    pub channels: Vec<ReadState>,
+    #[serde(default)]
+    pub ims: Vec<ReadState>,
+    #[serde(default)]
+    pub mpims: Vec<ReadState>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReadState {
+    pub id: String,
+    #[serde(default)]
+    pub last_read: String,
+    #[serde(default)]
+    pub latest: String,
+    #[serde(default)]
+    pub mention_count: u64,
+    #[serde(default)]
+    pub has_unreads: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ThreadView {
+    pub root_msg: ThreadRoot,
+    #[serde(default)]
+    pub latest_replies: Vec<Message>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ThreadRoot {
+    #[serde(default)]
+    pub channel: String,
+    pub ts: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(default)]
+    pub last_read: String,
+    #[serde(default)]
+    pub latest_reply: String,
+    #[serde(default)]
+    pub reply_count: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Posted {
     pub channel: String,
     pub ts: String,

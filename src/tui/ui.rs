@@ -30,6 +30,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_input(f, app, input);
     }
     draw_status(f, app, status);
+    if let Some(inbox) = &app.inbox {
+        super::inbox::draw(f, inbox, &app.names, main, app.highlight);
+    }
     if app.help {
         draw_help(f, f.area());
     }
@@ -185,6 +188,7 @@ fn search_item(m: &SearchMatch, width: usize) -> ListItem<'static> {
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let label = match &app.input {
         Some(Input::Reply { label, .. }) => format!("reply to {label}"),
+        Some(Input::InboxReply { item }) => format!("reply to {}", item.label),
         Some(Input::React { .. }) => "react with".into(),
         Some(Input::Filter) => "filter".into(),
         Some(Input::Search) => "search".into(),
@@ -201,7 +205,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let hints = match (app.input.is_some(), app.focus) {
         (true, _) => "enter send · esc cancel",
-        (_, Focus::Channels) => "j/k move · enter open · / filter · s search · R refresh · ? help · q quit",
+        (_, Focus::Channels) => "j/k move · enter open · i inbox · / filter · s search · R refresh · ? help · q quit",
         (_, Focus::Messages) => {
             "j/k move · enter thread · r reply · t thread reply · e react · o open · u link · y copy · s search · ? help"
         }
@@ -240,6 +244,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "  o / y         open in Slack · copy permalink",
         "  u             open the message's link in the browser",
         "  s   /         search · filter channels",
+        "  i             inbox: unread DMs, mentions, thread replies",
         "  R             refresh",
         "  esc           close thread · clear search or filter",
         "  q             quit",

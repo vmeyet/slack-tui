@@ -41,6 +41,8 @@ pub enum Command {
     Api(ApiArgs),
     /// Interactive terminal client.
     Tui,
+    /// Unread DMs, mentions and thread replies. Interactive on a terminal, a list when piped.
+    Inbox(InboxArgs),
     /// Generate shell completions.
     Completions { shell: clap_complete::Shell },
 }
@@ -159,6 +161,13 @@ pub struct UsersArgs {
     pub query: Option<String>,
     #[arg(long)]
     pub refresh: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct InboxArgs {
+    /// Print the list instead of opening the interactive view.
+    #[arg(short, long)]
+    pub list: bool,
 }
 
 #[derive(Args, Debug)]
