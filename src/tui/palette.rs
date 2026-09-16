@@ -40,7 +40,7 @@ pub const VERBS: [(&str, &str); 15] = [
     ("export", "save the conversation: :export json | md"),
     ("read", "mark the conversation read"),
     ("snooze", "snooze the selected inbox item: :snooze 1h | 3h | tomorrow | monday"),
-    ("set", "change a setting for this session: :set highlight=#2a2a2a"),
+    ("set", "change a setting for this session: :set theme=nord · :set highlight=#2a2a2a"),
     ("help", "show the keys"),
     ("quit", "leave"),
 ];
@@ -125,7 +125,7 @@ pub fn slot(line: &str) -> Slot {
         ("react" | "r", 0) => Slot::Emoji,
         ("export" | "e", 0) => Slot::Literal(&["json", "md"]),
         ("snooze" | "z", 0) => Slot::Literal(&["1h", "3h", "tomorrow", "monday"]),
-        ("set", 0) => Slot::Literal(&["highlight=", "show_url="]),
+        ("set", 0) => Slot::Literal(&["theme=", "highlight=", "show_url="]),
         _ => Slot::Free,
     }
 }

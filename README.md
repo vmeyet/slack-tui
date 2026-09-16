@@ -75,7 +75,8 @@ If the workspace refuses RTM the open conversation is polled every 10 seconds in
 
 ```toml
 [tui]
-highlight = "#2a2a2a"   # selected row: a name, #rrggbb, or a 0-255 index
+theme = "catppuccin"    # dracula, catppuccin, catppuccin-latte, rosepine, rosepine-dawn, nord, tokyonight, monokai
+highlight = "#2a2a2a"   # selected row on top of the theme: a name, #rrggbb, or a 0-255 index
 
 [links]
 show_url = false        # true prints `label (url)`; false keeps the label, clickable on OSC 8 terminals
@@ -85,7 +86,7 @@ highlight = ["prod", "error|failed", "@vivien"]   # case-insensitive regexes lit
 ```
 
 `slack firehose` streams every message from every conversation as one ticker, colour-coded by channel, with `!` and a yellow mark on lines matching a highlight.
-`:` opens a command line: `:join #ops`, `:go @bob`, `:msg @bob on my way`, `:react rocket`, `:search deploy failed`, `:export md`, `:read`, `:snooze 1h`, `:set highlight=#2a2a2a`, `:help`, `:quit`. Tab completes verbs, channels, people and emoji with the same fuzzy matcher, `↑` recalls history.
+`:` opens a command line: `:join #ops`, `:go @bob`, `:msg @bob on my way`, `:react rocket`, `:search deploy failed`, `:export md`, `:read`, `:snooze 1h`, `:set theme=nord`, `:set highlight=#2a2a2a`, `:help`, `:quit`. Tab completes verbs, channels, people and emoji with the same fuzzy matcher, `↑` recalls history.
 `z` toggles reading mode: one centered frameless column, three quarters of the terminal, sidebar and thread hidden, timestamps only on the selected row.
 `f` opens the same wall inside the TUI, where scrolling up pauses it, `G` follows again and `enter` jumps into the conversation.
 

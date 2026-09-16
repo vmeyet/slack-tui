@@ -1,7 +1,8 @@
+use super::theme::Theme;
 use crate::fuzzy;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 
@@ -71,23 +72,23 @@ impl Jump {
     }
 }
 
-pub fn draw(f: &mut Frame, jump: &mut Jump, area: Rect, highlight: Color) {
+pub fn draw(f: &mut Frame, jump: &mut Jump, area: Rect, theme: &Theme) {
     let width = (area.width * 3 / 5).clamp(30.min(area.width), area.width);
     let height = (MAX_SHOWN as u16 + 3).min(area.height);
     let popup = Rect { x: area.x + (area.width - width) / 2, y: area.y + area.height.saturating_sub(height) / 3, width, height };
     f.render_widget(Clear, popup);
-    let block = super::ui::pane("jump · > to search", true);
+    let block = super::ui::pane(theme, "jump · > to search", true);
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let prompt = Line::from(vec![
-        Span::styled(" › ", Style::new().cyan().bold()),
+        Span::styled(" › ", Style::new().fg(theme.accent).bold()),
         Span::raw(jump.query.clone()),
-        Span::styled("▌", Style::new().cyan()),
+        Span::styled("▌", Style::new().fg(theme.accent)),
     ]);
     f.render_widget(Paragraph::new(prompt), Rect { height: 1, ..inner });
     let list_area = Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner };
     if jump.is_search() {
-        f.render_widget(Paragraph::new(format!("   enter searches Slack for “{}”", jump.query[1..].trim()).dim()), list_area);
+        f.render_widget(Paragraph::new(format!("   enter searches Slack for “{}”", jump.query[1..].trim()).fg(theme.muted)), list_area);
         return;
     }
     let items: Vec<ListItem> = jump
@@ -96,22 +97,22 @@ pub fn draw(f: &mut Frame, jump: &mut Jump, area: Rect, highlight: Color) {
         .map(|c| {
             let (icon, style) = match c.target {
                 Target::Channel(_) => ("#", Style::new()),
-                Target::Person(_) => ("@", Style::new().magenta()),
-                Target::Thread { .. } => ("⤷", Style::new().cyan()),
+                Target::Person(_) => ("@", Style::new().fg(theme.mention)),
+                Target::Thread { .. } => ("⤷", Style::new().fg(theme.accent)),
             };
             ListItem::new(Line::from(vec![Span::styled(format!(" {icon} "), style.bold()), Span::raw(c.label)]))
         })
         .collect();
     let empty = items.is_empty();
     let list = List::new(items)
-        .highlight_style(Style::new().bg(highlight).add_modifier(Modifier::BOLD))
-        .highlight_symbol(super::ui::cursor_bar(true))
+        .highlight_style(Style::new().bg(theme.surface).add_modifier(Modifier::BOLD))
+        .highlight_symbol(super::ui::cursor_bar(theme, true))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
     jump.view.select((!empty).then_some(jump.selected));
     f.render_stateful_widget(list, list_area, &mut jump.view);
     if empty {
-        f.render_widget(Paragraph::new("   no match".dim()), list_area);
+        f.render_widget(Paragraph::new("   no match".fg(theme.muted)), list_area);
     }
 }
 

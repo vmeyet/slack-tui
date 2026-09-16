@@ -45,7 +45,10 @@ impl Links {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Tui {
-    /// Background of the selected row: a name (`darkgray`), `#rrggbb`, or a 0-255 index.
+    /// Palette: `dracula`, `catppuccin`, `catppuccin-latte`, `rosepine`, `rosepine-dawn`, `nord`, `tokyonight`, `monokai`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    /// Background of the selected row, on top of the theme: a name (`darkgray`), `#rrggbb`, or a 0-255 index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<String>,
 }
@@ -150,7 +153,8 @@ mod tests {
 
     #[test]
     fn tui_section_is_optional() {
-        let config: Config = toml::from_str("default = \"acme\"\n\n[tui]\nhighlight = \"#2a2a2a\"\n").unwrap();
+        let config: Config = toml::from_str("default = \"acme\"\n\n[tui]\ntheme = \"nord\"\nhighlight = \"#2a2a2a\"\n").unwrap();
+        assert_eq!(config.tui.theme.as_deref(), Some("nord"));
         assert_eq!(config.tui.highlight.as_deref(), Some("#2a2a2a"));
         assert!(!config.links.show_url);
         let config: Config = toml::from_str("[links]\nshow_url = true\n\n[firehose]\nhighlight = [\"prod\", \"error|failed\"]\n").unwrap();

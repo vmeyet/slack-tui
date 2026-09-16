@@ -1,4 +1,5 @@
 use super::app::{self, App, Focus, Input, Kind, Live, SidebarRow};
+use super::theme::Theme;
 use crate::api::{Message, Reaction, SearchMatch};
 use crate::mrkdwn;
 use crate::render;
@@ -14,7 +15,6 @@ use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 5;
 const NAME_W: usize = 12;
-const USER_COLORS: [Color; 6] = [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::LightRed];
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let input_rows = u16::from(app.input.is_some() || app.palette.is_some());
@@ -24,7 +24,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.zen {
         draw_reading(f, app, main);
         if modal {
-            fade(f, main, FADED);
+            fade(f, main, app.theme.faded);
         }
     } else {
         let thread_w = if app.thread.is_some() { 40 } else { 0 };
@@ -36,13 +36,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             draw_thread(f, app, right);
         }
         if app.focus != Focus::Channels || modal {
-            fade(f, left, FADED);
+            fade(f, left, app.theme.faded);
         }
         if app.focus != Focus::Messages || modal {
-            fade(f, middle, if modal { FADED } else { FADED_SOFT });
+            fade(f, middle, if modal { app.theme.faded } else { app.theme.muted });
         }
         if app.thread.is_some() && (app.focus != Focus::Thread || modal) {
-            fade(f, right, FADED);
+            fade(f, right, app.theme.faded);
         }
     }
     if app.input.is_some() {
@@ -51,37 +51,35 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_palette(f, app, input);
     }
     draw_status(f, app, status);
-    let highlight = app.highlight;
+    let theme = app.theme;
     if let Some(inbox) = &mut app.inbox {
-        super::inbox::draw(f, inbox, &app.names, main, highlight);
+        super::inbox::draw(f, inbox, &app.names, main, &theme);
     }
     if let Some(view) = &mut app.firehose {
         f.render_widget(Clear, main);
-        super::firehose::draw(f, view, &app.wall, &app.names, &app.highlighter, main, highlight);
+        super::firehose::draw(f, view, &app.wall, &app.names, &app.highlighter, main, &theme);
     }
     if let Some(jump) = &mut app.jump {
-        super::jump::draw(f, jump, main, highlight);
+        super::jump::draw(f, jump, main, &theme);
     }
     if app.help {
-        draw_help(f, f.area());
+        draw_help(f, &theme, f.area());
     }
 }
 
-pub const BORDER: Color = Color::Indexed(238);
-
 /// Quiet rounded frame; focus is carried by the title alone.
-pub fn pane(title: &str, focused: bool) -> Block<'static> {
-    let title = if focused { format!(" {title} ").bold().cyan() } else { format!(" {title} ").dim() };
-    Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(BORDER)).title(title)
+pub fn pane(theme: &Theme, title: &str, focused: bool) -> Block<'static> {
+    let title = if focused { format!(" {title} ").bold().fg(theme.accent) } else { format!(" {title} ").fg(theme.muted) };
+    Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(theme.border)).title(title)
 }
 
 /// Reading mode has no frame: just the title, a breath of space, then the text.
-fn reading_pane(title: &str) -> Block<'static> {
-    Block::new().title(format!(" {title}").bold().cyan()).padding(Padding::new(1, 1, 1, 0))
+fn reading_pane(theme: &Theme, title: &str) -> Block<'static> {
+    Block::new().title(format!(" {title}").bold().fg(theme.accent)).padding(Padding::new(1, 1, 1, 0))
 }
 
 fn frame(app: &App, title: &str, focused: bool) -> Block<'static> {
-    if app.zen { reading_pane(title) } else { pane(title, focused) }
+    if app.zen { reading_pane(&app.theme, title) } else { pane(&app.theme, title, focused) }
 }
 
 fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
@@ -94,16 +92,16 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
         .map(|row| match row {
             SidebarRow::Spacer => ListItem::new(Line::raw("")),
             SidebarRow::Header(name) => {
-                ListItem::new(Line::from(Span::styled(format!(" {name}"), Style::new().fg(FADED).add_modifier(Modifier::BOLD))))
+                ListItem::new(Line::from(Span::styled(format!(" {name}"), Style::new().fg(app.theme.faded).add_modifier(Modifier::BOLD))))
             }
             SidebarRow::Channel(i) => channel_row(app, visible[*i], inner_w),
         })
         .collect();
     let title = if app.filter.is_empty() { "channels".to_owned() } else { format!("channels /{}", app.filter) };
     let list = List::new(items)
-        .block(pane(&title, focused))
+        .block(pane(&app.theme, &title, focused))
         .highlight_style(highlight(app, focused))
-        .highlight_symbol(cursor_bar(focused))
+        .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
     let list_index = rows.iter().position(|r| *r == SidebarRow::Channel(app.channel_selected));
@@ -120,21 +118,21 @@ fn channel_row(app: &App, c: &app::ChannelRow, width: usize) -> ListItem<'static
         0 => String::new(),
         n => format!("● {n}"),
     };
-    let color = match c.kind {
-        Kind::Public => Color::Reset,
-        Kind::Private => Color::Yellow,
-        Kind::Dm => Color::Magenta,
-        Kind::GroupDm => Color::Blue,
+    let theme = &app.theme;
+    let mut style = match c.kind {
+        Kind::Public => Style::new(),
+        Kind::Private => Style::new().fg(theme.warn),
+        Kind::Dm => Style::new().fg(theme.mention),
+        Kind::GroupDm => Style::new().fg(theme.link),
     };
-    let mut style = Style::new().fg(color);
     if c.muted {
-        style = Style::new().fg(FADED);
+        style = Style::new().fg(theme.faded);
     } else if current || unread {
         style = style.add_modifier(Modifier::BOLD);
     }
     let label_w = width.saturating_sub(badge_text.width() + if badge_text.is_empty() { 0 } else { 1 });
     let label = text::visible_fit(&c.label, label_w);
-    let badge_style = if badge.mentions > 0 { Style::new().cyan().bold() } else { Style::new().fg(FADED_SOFT) };
+    let badge_style = if badge.mentions > 0 { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
     ListItem::new(Line::from(vec![
         Span::raw(" "),
         Span::styled(label, style),
@@ -144,7 +142,7 @@ fn channel_row(app: &App, c: &app::ChannelRow, width: usize) -> ListItem<'static
 }
 
 fn highlight(app: &App, focused: bool) -> Style {
-    if focused { Style::new().bg(app.highlight).add_modifier(Modifier::BOLD) } else { Style::new().bg(Color::Indexed(234)) }
+    if focused { Style::new().bg(app.theme.surface).add_modifier(Modifier::BOLD) } else { Style::new().bg(app.theme.surface_soft) }
 }
 
 /// Reading mode: one centered column with the thread when open, the conversation otherwise.
@@ -159,14 +157,10 @@ fn draw_reading(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-pub const FADED: Color = Color::Indexed(240);
-pub const FADED_SOFT: Color = Color::Indexed(245);
-pub const ACCENT: Color = Color::Cyan;
-
 /// The selected row's ▎ bar, shown only in the focused pane; the column is always reserved so
 /// content never shifts when focus moves.
-pub fn cursor_bar(focused: bool) -> Line<'static> {
-    if focused { Line::from(Span::styled("▎", Style::new().cyan())) } else { Line::from(" ") }
+pub fn cursor_bar(theme: &Theme, focused: bool) -> Line<'static> {
+    if focused { Line::from(Span::styled("▎", Style::new().fg(theme.accent))) } else { Line::from(" ") }
 }
 
 /// Repaints an area in one quiet grey so a pane recedes when it is not the focus, or when a modal is up.
@@ -196,20 +190,20 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let width = area.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = match &app.search {
-        Some(results) => results.iter().map(|m| search_item(m, width)).collect(),
+        Some(results) => results.iter().map(|m| search_item(&app.theme, m, width)).collect(),
         None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.zen.then_some(app.message_selected)),
     };
     let empty = items.is_empty();
     let list = List::new(items)
         .block(frame(app, &title, focused))
         .highlight_style(highlight(app, focused))
-        .highlight_symbol(cursor_bar(focused))
+        .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
     app.messages_view.select((!empty).then_some(app.message_selected));
     f.render_stateful_widget(list, area, &mut app.messages_view);
     if empty && app.current_channel.is_none() {
-        let hint = Paragraph::new("pick a conversation on the left, enter to open".dim()).block(Block::default());
+        let hint = Paragraph::new("pick a conversation on the left, enter to open".fg(app.theme.muted)).block(Block::default());
         f.render_widget(hint, Rect { x: area.x + 2, y: area.y + 2, width: area.width.saturating_sub(4), height: 1 });
     }
 }
@@ -223,7 +217,7 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let list = List::new(items)
         .block(frame(app, &title, focused))
         .highlight_style(highlight(app, focused))
-        .highlight_symbol(cursor_bar(focused))
+        .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
     let selected = (!thread.messages.is_empty()).then_some(thread.selected);
@@ -235,10 +229,11 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
 struct Viewer<'a> {
     names: &'a NameBook,
     me: &'a str,
+    theme: &'a Theme,
 }
 
 fn viewer(app: &App) -> Viewer<'_> {
-    Viewer { names: &app.names, me: &app.me }
+    Viewer { names: &app.names, me: &app.me, theme: &app.theme }
 }
 
 /// One list item per message, with a dim day line on the first message of each day and
@@ -281,6 +276,7 @@ fn message_item(
     show_time: bool,
 ) -> ListItem<'static> {
     let names = viewer.names;
+    let theme = viewer.theme;
     let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
     let indent = TIME_W + 1 + name_w + 1;
     let styled = body(names, m);
@@ -291,31 +287,31 @@ fn message_item(
     if new_day {
         let label = time::day_label(&m.ts);
         let dashes = "─".repeat(width.saturating_sub(label.len() + 4));
-        lines.push(Line::from(Span::styled(format!("── {label} {dashes}"), Style::new().dim())));
+        lines.push(Line::from(Span::styled(format!("── {label} {dashes}"), Style::new().fg(theme.muted))));
     }
     for (i, chunks) in styled.wrap_styled(width.saturating_sub(indent).max(10)).iter().enumerate() {
         let mut spans = if i == 0 && !continued {
             vec![
-                Span::styled(if show_time { time::hhmm(&m.ts) } else { " ".repeat(TIME_W) }, Style::new().dim()),
+                Span::styled(if show_time { time::hhmm(&m.ts) } else { " ".repeat(TIME_W) }, Style::new().fg(theme.muted)),
                 Span::raw(" "),
-                Span::styled(render::fit_right(&author, name_w), user_style(&author)),
+                Span::styled(render::fit_right(&author, name_w), user_style(theme, &author)),
                 Span::raw(" "),
             ]
         } else {
             vec![Span::raw(" ".repeat(indent))]
         };
-        spans.extend(chunks.iter().map(|p| Span::styled(p.text.clone(), style_of(p.style))));
+        spans.extend(chunks.iter().map(|p| Span::styled(p.text.clone(), style_of(theme, p.style))));
         lines.push(Line::from(spans));
     }
     if !m.reactions.is_empty() {
         let mut spans = vec![Span::raw(" ".repeat(indent))];
-        spans.extend(reaction_pills(&m.reactions, viewer.me));
+        spans.extend(reaction_pills(theme, &m.reactions, viewer.me));
         lines.push(Line::from(spans));
     }
     if show_meta && m.is_thread_root() {
         lines.push(Line::from(vec![
             Span::raw(" ".repeat(indent)),
-            Span::styled(format!("↳ {} replies", m.reply_count), Style::new().cyan()),
+            Span::styled(format!("↳ {} replies", m.reply_count), Style::new().fg(theme.accent)),
         ]));
     }
     ListItem::new(lines)
@@ -323,10 +319,10 @@ fn message_item(
 
 /// Reactions as a quiet dim row; the ones you joined stand out in bold accent.
 /// Custom emoji have no glyph and show their bare name.
-fn reaction_pills(reactions: &[Reaction], me: &str) -> Vec<Span<'static>> {
+fn reaction_pills(theme: &Theme, reactions: &[Reaction], me: &str) -> Vec<Span<'static>> {
     let pill = |r: &Reaction| {
         let mine = !me.is_empty() && r.users.iter().any(|u| u == me);
-        let style = if mine { Style::new().fg(ACCENT).bold() } else { Style::new().fg(FADED_SOFT) };
+        let style = if mine { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
         let glyph = crate::emoji::glyph(&r.name).map(str::to_owned).unwrap_or_else(|| r.name.clone());
         Span::styled(format!("{glyph} {}", r.count), style)
     };
@@ -353,19 +349,19 @@ fn body(names: &NameBook, m: &Message) -> Styled {
     styled
 }
 
-fn search_item(m: &SearchMatch, width: usize) -> ListItem<'static> {
+fn search_item(theme: &Theme, m: &SearchMatch, width: usize) -> ListItem<'static> {
     let head = Line::from(vec![
-        Span::styled(format!("#{}", m.channel.name), Style::new().cyan()),
+        Span::styled(format!("#{}", m.channel.name), Style::new().fg(theme.accent)),
         Span::raw(" · "),
-        Span::styled(format!("{} {}", time::day_label(&m.ts), time::hhmm(&m.ts)), Style::new().dim()),
+        Span::styled(format!("{} {}", time::day_label(&m.ts), time::hhmm(&m.ts)), Style::new().fg(theme.muted)),
         Span::raw("  "),
-        Span::styled(m.username.clone(), user_style(&m.username)),
+        Span::styled(m.username.clone(), user_style(theme, &m.username)),
     ]);
     let mut lines = vec![head];
     let styled = text::from_segments(&mrkdwn::parse(&m.text, &mrkdwn::NoNames), false);
     for chunks in styled.wrap_styled(width.saturating_sub(4).max(10)).into_iter().take(3) {
         let mut spans = vec![Span::raw("    ")];
-        spans.extend(chunks.into_iter().map(|p| Span::styled(p.text, style_of(p.style))));
+        spans.extend(chunks.into_iter().map(|p| Span::styled(p.text, style_of(theme, p.style))));
         lines.push(Line::from(spans));
     }
     ListItem::new(lines)
@@ -381,9 +377,9 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
         None => return,
     };
     let line = Line::from(vec![
-        Span::styled(format!(" {label} ▸ "), Style::new().cyan().bold()),
+        Span::styled(format!(" {label} ▸ "), Style::new().fg(app.theme.accent).bold()),
         Span::raw(app.buffer.clone()),
-        Span::styled("▌", Style::new().cyan()),
+        Span::styled("▌", Style::new().fg(app.theme.accent)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -391,9 +387,9 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
 fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
     let Some(palette) = &app.palette else { return };
     let line = Line::from(vec![
-        Span::styled(" : ", Style::new().cyan().bold()),
+        Span::styled(" : ", Style::new().fg(app.theme.accent).bold()),
         Span::raw(palette.input.clone()),
-        Span::styled("▌", Style::new().cyan()),
+        Span::styled("▌", Style::new().fg(app.theme.accent)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -410,9 +406,9 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         (_, Focus::Thread) => "j/k move · r reply · e react · o open · u link · y copy · esc close · ? help",
     };
     let (dot, dot_style) = match &app.live {
-        Live::Live => ("● ", Style::new().green()),
-        Live::Connecting => ("○ ", Style::new().dim()),
-        Live::Polling(_) => ("↻ ", Style::new().yellow()),
+        Live::Live => ("● ", Style::new().fg(app.theme.success)),
+        Live::Connecting => ("○ ", Style::new().fg(app.theme.muted)),
+        Live::Polling(_) => ("↻ ", Style::new().fg(app.theme.warn)),
     };
     let status = format!("{} ", app.status);
     let room = area.width as usize;
@@ -424,12 +420,12 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(dot, dot_style),
         Span::styled(status, Style::new().bold()),
         Span::raw(" ".repeat(pad)),
-        Span::styled(right, Style::new().dim()),
+        Span::styled(right, Style::new().fg(app.theme.muted)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
 
-fn draw_help(f: &mut Frame, area: Rect) {
+fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
     let lines = [
         "  tab           cycle panes",
         "  → / l         open channel · open the message's thread",
@@ -463,25 +459,24 @@ fn draw_help(f: &mut Frame, area: Rect) {
     };
     f.render_widget(Clear, popup);
     let text: Vec<Line> = lines.iter().map(|l| Line::raw(*l)).collect();
-    f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(pane("keys", true)), popup);
+    f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(pane(theme, "keys", true)), popup);
 }
 
-fn style_of(s: TextStyle) -> Style {
+pub fn style_of(theme: &Theme, s: TextStyle) -> Style {
     match s {
         TextStyle::Plain => Style::new(),
-        TextStyle::Dim => Style::new().dim(),
+        TextStyle::Dim => Style::new().fg(theme.muted),
         TextStyle::Bold => Style::new().bold(),
         TextStyle::Italic => Style::new().italic(),
         TextStyle::Strike => Style::new().crossed_out(),
-        TextStyle::Code => Style::new().yellow(),
-        TextStyle::Link => Style::new().blue().underlined(),
-        TextStyle::Mention => Style::new().magenta(),
+        TextStyle::Code => Style::new().fg(theme.code),
+        TextStyle::Link => Style::new().fg(theme.link).underlined(),
+        TextStyle::Mention => Style::new().fg(theme.mention),
     }
 }
 
-pub fn user_style(name: &str) -> Style {
-    let idx = name.trim().bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)) % USER_COLORS.len();
-    Style::new().fg(USER_COLORS[idx]).bold()
+pub fn user_style(theme: &Theme, name: &str) -> Style {
+    Style::new().fg(theme.user(name)).bold()
 }
 
 #[cfg(test)]
@@ -548,15 +543,16 @@ mod tests {
             Reaction { name: "rocket".into(), count: 3, users: vec!["U1".into(), "U2".into()] },
             Reaction { name: "merged".into(), count: 1, users: vec!["U2".into()] },
         ];
-        let pills = reaction_pills(&reactions, "U1");
+        let theme = Theme::default();
+        let pills = reaction_pills(&theme, &reactions, "U1");
         let texts: Vec<&str> = pills.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(texts, vec!["🚀 3", "   ", "merged 1"]);
         assert!(pills[0].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(pills[0].style.fg, Some(ACCENT));
+        assert_eq!(pills[0].style.fg, Some(theme.accent));
         assert!(!pills[2].style.add_modifier.contains(Modifier::BOLD));
-        assert_eq!(pills[2].style.fg, Some(FADED_SOFT));
+        assert_eq!(pills[2].style.fg, Some(theme.muted));
         assert!(pills.iter().all(|s| s.style.bg.is_none()));
-        assert!(reaction_pills(&reactions, "").iter().all(|s| !s.style.add_modifier.contains(Modifier::BOLD)));
+        assert!(reaction_pills(&theme, &reactions, "").iter().all(|s| !s.style.add_modifier.contains(Modifier::BOLD)));
     }
 
     #[test]

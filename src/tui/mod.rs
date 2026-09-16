@@ -3,6 +3,7 @@ pub mod firehose;
 pub mod inbox;
 pub mod jump;
 pub mod palette;
+pub mod theme;
 pub mod ui;
 
 use crate::api::rtm;
@@ -27,17 +28,28 @@ pub async fn run_inbox(ctx: Ctx) -> Result<()> {
     run_with(ctx, true).await
 }
 
+/// `tui.theme` picks the palette, `tui.highlight` then overrides its selected-row surface.
+fn theme_from(config: &crate::config::Tui) -> Result<theme::Theme> {
+    let mut theme = match config.theme.as_deref() {
+        Some(name) => theme::Theme::named(name)
+            .ok_or_else(|| anyhow::anyhow!("config `tui.theme = \"{name}\"` is not a theme (try {})", theme::Theme::NAMES.join(", ")))?,
+        None => theme::Theme::default(),
+    };
+    if let Some(color) = config.highlight.as_deref() {
+        theme.surface = color
+            .parse()
+            .map_err(|_| anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a` or `236`)"))?;
+    }
+    Ok(theme)
+}
+
 async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let workspace = ctx.workspace.clone().unwrap_or_else(|| "env".into());
     let slack = ctx.slack.clone();
     let dir = Arc::new(Mutex::new(ctx.dir));
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut app = App::new();
-    if let Some(color) = ctx.config.tui.highlight.as_deref() {
-        app.highlight = color
-            .parse()
-            .map_err(|_| anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a` or `236`)"))?;
-    }
+    app.theme = theme_from(&ctx.config.tui)?;
     app.workspace = workspace;
     app.highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
     let mut terminal = ratatui::init();

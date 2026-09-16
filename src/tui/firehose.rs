@@ -1,16 +1,16 @@
+use super::theme::Theme;
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::render::text;
 use crate::render::time;
 use crate::resolve::NameBook;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState};
 use std::collections::VecDeque;
 
 pub const CAPACITY: usize = 1000;
-const CHANNEL_COLORS: [Color; 6] = [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::LightRed];
 
 /// The wall view: follows the newest line unless the user scrolled up.
 #[derive(Debug, Default)]
@@ -46,34 +46,27 @@ pub fn push(wall: &mut VecDeque<LiveLine>, line: LiveLine) {
     wall.push_back(line);
 }
 
-pub fn draw(
-    f: &mut Frame,
-    view: &mut Firehose,
-    wall: &VecDeque<LiveLine>,
-    names: &NameBook,
-    hl: &Highlighter,
-    area: Rect,
-    highlight: Color,
-) {
+pub fn draw(f: &mut Frame, view: &mut Firehose, wall: &VecDeque<LiveLine>, names: &NameBook, hl: &Highlighter, area: Rect, theme: &Theme) {
     let status = if view.following() { "live" } else { "paused · G to follow" };
-    let block = super::ui::pane(&format!("firehose · {} · {status}", wall.len()), true);
+    let block = super::ui::pane(theme, &format!("firehose · {} · {status}", wall.len()), true);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
-    let items: Vec<ListItem> = wall.iter().map(|l| row(l, names, hl, width)).collect();
+    let items: Vec<ListItem> = wall.iter().map(|l| row(theme, l, names, hl, width)).collect();
     let selected = if wall.is_empty() { None } else { Some(view.selected.unwrap_or(wall.len() - 1)) };
     let list = List::new(items)
-        .highlight_symbol(super::ui::cursor_bar(!view.following()))
+        .highlight_symbol(super::ui::cursor_bar(theme, !view.following()))
         .highlight_spacing(HighlightSpacing::Always)
-        .highlight_style(if view.following() { Style::new() } else { Style::new().bg(highlight).add_modifier(Modifier::BOLD) });
+        .highlight_style(if view.following() { Style::new() } else { Style::new().bg(theme.surface).add_modifier(Modifier::BOLD) });
     view.view.select(selected);
     f.render_stateful_widget(list, inner, &mut view.view);
     if wall.is_empty() {
-        f.render_widget(ratatui::widgets::Paragraph::new("  waiting for messages…".dim()), Rect { y: inner.y + 1, ..inner });
+        f.render_widget(ratatui::widgets::Paragraph::new("  waiting for messages…".fg(theme.muted)), Rect { y: inner.y + 1, ..inner });
     }
 }
 
-fn row(l: &LiveLine, names: &NameBook, hl: &Highlighter, width: usize) -> ListItem<'static> {
+fn row(theme: &Theme, l: &LiveLine, names: &NameBook, hl: &Highlighter, width: usize) -> ListItem<'static> {
+    let hit_style = Style::new().fg(theme.base).bg(theme.warn).bold();
     let label = names.channel_label(&l.channel);
     let author = l.user.as_deref().map(|u| names.user_label(u)).or_else(|| l.username.clone()).unwrap_or_else(|| "bot".into());
     let text = l.flat_text(names);
@@ -81,29 +74,24 @@ fn row(l: &LiveLine, names: &NameBook, hl: &Highlighter, width: usize) -> ListIt
     let head_width = 2 + 5 + 1 + 16 + 1 + 10 + 1 + if l.in_thread { 2 } else { 0 };
     let body = text::truncate(&text, width.saturating_sub(head_width).max(10));
     let mut spans = vec![
-        Span::styled(if hit { "! " } else { "  " }, Style::new().black().on_yellow().bold()),
-        Span::styled(time::hhmm(&l.ts), Style::new().dim()),
+        Span::styled(if hit { "! " } else { "  " }, hit_style),
+        Span::styled(time::hhmm(&l.ts), Style::new().fg(theme.muted)),
         Span::raw(" "),
-        Span::styled(text::visible_fit(&label, 16), channel_style(&label)),
+        Span::styled(text::visible_fit(&label, 16), Style::new().fg(theme.user(&label))),
         Span::raw(" "),
-        Span::styled(text::visible_fit(&author, 10), super::ui::user_style(&author)),
+        Span::styled(text::visible_fit(&author, 10), super::ui::user_style(theme, &author)),
         Span::raw(" "),
     ];
     if l.in_thread {
-        spans.push(Span::styled("↳ ", Style::new().dim()));
+        spans.push(Span::styled("↳ ", Style::new().fg(theme.muted)));
     }
     for (piece, h) in hl.split(&body) {
-        spans.push(if h { Span::styled(piece, Style::new().black().on_yellow().bold()) } else { Span::raw(piece) });
+        spans.push(if h { Span::styled(piece, hit_style) } else { Span::raw(piece) });
     }
     if !hit {
         spans[0] = Span::raw("  ");
     }
     ListItem::new(Line::from(spans))
-}
-
-fn channel_style(label: &str) -> Style {
-    let idx = label.trim().bytes().fold(7usize, |h, b| h.wrapping_mul(33).wrapping_add(b as usize)) % CHANNEL_COLORS.len();
-    Style::new().fg(CHANNEL_COLORS[idx])
 }
 
 #[cfg(test)]
@@ -152,7 +140,7 @@ mod tests {
         let hl = Highlighter::new(&["prod".into()]).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
         let mut view = Firehose::default();
-        terminal.draw(|f| draw(f, &mut view, &wall, &NameBook::default(), &hl, f.area(), Color::Indexed(236))).unwrap();
+        terminal.draw(|f| draw(f, &mut view, &wall, &NameBook::default(), &hl, f.area(), &Theme::default())).unwrap();
         let out = terminal.backend().to_string();
         assert!(out.contains("firehose · 2 · live"));
         assert!(out.contains("! "));

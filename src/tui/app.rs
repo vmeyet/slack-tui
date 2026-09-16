@@ -2,18 +2,17 @@ use super::firehose::{self, Firehose};
 use super::inbox::Inbox;
 use super::jump::{Candidate, Jump, Target};
 use super::palette::{self, Command, Palette};
+use super::theme::Theme;
 use crate::api::rtm;
 use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::{Item, Snooze, State};
 use crate::resolve::NameBook;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::style::Color;
 use ratatui::widgets::ListState;
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
-pub const DEFAULT_HIGHLIGHT: Color = Color::Indexed(236);
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,7 +214,7 @@ pub struct App {
     pub unread: HashSet<String>,
     pub badges: HashMap<String, Badge>,
     pub me: String,
-    pub highlight: Color,
+    pub theme: Theme,
     pub inbox: Option<Inbox>,
     pub workspace: String,
     pub jump: Option<Jump>,
@@ -256,7 +255,7 @@ impl Default for App {
             unread: HashSet::new(),
             badges: HashMap::new(),
             me: String::new(),
-            highlight: DEFAULT_HIGHLIGHT,
+            theme: Theme::default(),
             inbox: None,
             workspace: "env".into(),
             jump: None,
@@ -703,14 +702,21 @@ impl App {
             },
             Command::Set { key, value } => {
                 match key.as_str() {
-                    "highlight" => match value.parse::<Color>() {
+                    "highlight" => match value.parse() {
                         Ok(color) => {
-                            self.highlight = color;
+                            self.theme.surface = color;
                             self.status = format!("highlight = {value} (this session)");
                         }
                         Err(_) => self.status = format!("✗ `{value}` is not a colour"),
                     },
-                    other => self.status = format!("✗ unknown setting `{other}` (try highlight)"),
+                    "theme" => match Theme::named(&value) {
+                        Some(theme) => {
+                            self.theme = theme;
+                            self.status = format!("theme = {} (this session)", theme.name);
+                        }
+                        None => self.status = format!("✗ unknown theme `{value}` (try {})", Theme::NAMES.join(", ")),
+                    },
+                    other => self.status = format!("✗ unknown setting `{other}` (try theme, highlight)"),
                 }
                 vec![]
             }
@@ -1696,7 +1702,13 @@ mod tests {
         );
         assert_eq!(palette_run(&mut app, "search deploy"), vec![Action::Search("deploy".into())]);
         assert_eq!(palette_run(&mut app, "set highlight=#2a2a2a"), vec![]);
-        assert_eq!(app.highlight, Color::Rgb(0x2a, 0x2a, 0x2a));
+        assert_eq!(app.theme.surface, "#2a2a2a".parse().unwrap());
+        assert_eq!(palette_run(&mut app, "set theme=nord"), vec![]);
+        assert_eq!(app.theme.name, "nord");
+        assert_eq!(app.theme.surface, Theme::named("nord").unwrap().surface);
+        palette_run(&mut app, "set theme=solarized");
+        assert!(app.status.contains("unknown theme") && app.status.contains("dracula"));
+        assert_eq!(app.theme.name, "nord");
         palette_run(&mut app, "jion #x");
         assert!(app.status.contains("did you mean :join"));
         assert_eq!(palette_run(&mut app, "leave"), vec![Action::Leave("C2".into())]);
