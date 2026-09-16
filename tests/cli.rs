@@ -362,6 +362,6 @@ async fn messages_follow_prints_live_events() {
     let out = env.slack().args(["messages", "#general", "--follow"]).timeout(std::time::Duration::from_secs(2)).output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("before"), "{stdout}");
-    assert!(stdout.contains("bob           live one"), "{stdout}");
+    assert!(stdout.contains("bob  live one"), "{stdout}");
     assert!(!stdout.contains("other channel"), "{stdout}");
 }

@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Wrap};
 
 const TIME_W: usize = 5;
-const NAME_W: usize = 10;
+const NAME_W: usize = 12;
 const USER_COLORS: [Color; 6] = [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::LightRed];
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -144,12 +144,15 @@ fn grouped_items(names: &NameBook, messages: &[Message], width: usize, name_w: u
         let day = time::day_label(&m.ts);
         let new_day = day != last_day;
         last_day = day;
-        items.push(message_item(names, m, width, name_w, show_meta, render::continues(prev, m), new_day));
+        let continued = render::continues(prev, m);
+        let gap = prev.is_some() && (new_day || !continued);
+        items.push(message_item(names, m, width, name_w, show_meta, continued, new_day, gap));
         prev = Some(m);
     }
     items
 }
 
+#[allow(clippy::too_many_arguments)]
 fn message_item(
     names: &NameBook,
     m: &Message,
@@ -158,11 +161,15 @@ fn message_item(
     show_meta: bool,
     continued: bool,
     new_day: bool,
+    gap: bool,
 ) -> ListItem<'static> {
     let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
     let indent = TIME_W + 1 + name_w + 1;
     let styled = body(names, m);
     let mut lines: Vec<Line> = Vec::new();
+    if gap {
+        lines.push(Line::raw(""));
+    }
     if new_day {
         let label = time::day_label(&m.ts);
         let dashes = "─".repeat(width.saturating_sub(label.len() + 4));
@@ -173,7 +180,7 @@ fn message_item(
             vec![
                 Span::styled(time::hhmm(&m.ts), Style::new().dim()),
                 Span::raw(" "),
-                Span::styled(text::visible_fit(&author, name_w), user_style(&author)),
+                Span::styled(render::fit_right(&author, name_w), user_style(&author)),
                 Span::raw(" "),
             ]
         } else {

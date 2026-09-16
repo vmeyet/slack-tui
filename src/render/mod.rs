@@ -67,11 +67,17 @@ pub fn messages(t: &Theme, names: &NameBook, title: &str, messages: &[Message], 
     let mut prev: Option<&Message> = None;
     for m in messages {
         let day = time::day_label(&m.ts);
+        let continued = continues(prev, m);
         if day != last_day {
+            if prev.is_some() {
+                out.push('\n');
+            }
             out.push_str(&format!("{}{}\n", " ".repeat(TEXT_START), day_separator(t, &m.ts, 30)));
             last_day = day;
+        } else if !continued && prev.is_some() {
+            out.push('\n');
         }
-        out.push_str(&message_line(t, names, m, 0, continues(prev, m)));
+        out.push_str(&message_line(t, names, m, 0, continued));
         prev = Some(m);
         if let Some(thread) = replies.get(&m.ts) {
             let mut prev_reply: Option<&Message> = None;
@@ -102,7 +108,7 @@ pub fn message(t: &Theme, names: &NameBook, m: &Message, indent: usize) -> Strin
 
 fn message_line(t: &Theme, names: &NameBook, m: &Message, indent: usize, continued: bool) -> String {
     let author = author(names, m);
-    let name = fit(&author, NAME_COL);
+    let name = fit_right(&author, NAME_COL);
     let head = if continued {
         " ".repeat(indent + TEXT_START)
     } else {
@@ -298,6 +304,12 @@ pub fn users(t: &Theme, users: &[User]) -> String {
     out
 }
 
+/// Truncates or left-pads to exactly `width` columns, for a right-aligned gutter.
+pub fn fit_right(s: &str, width: usize) -> String {
+    let text = if s.width() > width { fit(s, width) } else { s.to_owned() };
+    format!("{}{text}", " ".repeat(width.saturating_sub(text.width())))
+}
+
 pub fn plural(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
@@ -347,6 +359,13 @@ mod tests {
         assert!(out.ends_with("deploybot  ↳ deploy to prod done\n"), "{out}");
         let quiet = Line { text: "all good".into(), in_thread: false, ..line };
         assert!(firehose_line(&t, &NameBook::default(), &quiet, &hl).starts_with(' '));
+    }
+
+    #[test]
+    fn fit_right_aligns_and_truncates() {
+        assert_eq!(fit_right("bob", 6), "   bob");
+        assert_eq!(fit_right("longername", 6), "longe…");
+        assert_eq!(fit_right("exact6", 6), "exact6");
     }
 
     #[test]
