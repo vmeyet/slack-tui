@@ -14,6 +14,8 @@ use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListIte
 use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 5;
+/// Two border columns plus the always-reserved cursor-bar column.
+const BORDERS_AND_CURSOR_W: u16 = 3;
 const NAME_W: usize = 12;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -188,7 +190,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     if app.loading {
         title.push_str(" · loading…");
     }
-    let width = area.width.saturating_sub(2) as usize;
+    let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
     let items: Vec<ListItem> = match &app.search {
         Some(results) => results.iter().map(|m| search_item(&app.theme, m, width)).collect(),
         None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.zen.then_some(app.message_selected)),
@@ -211,7 +213,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
 fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Thread;
     let Some(thread) = &app.thread else { return };
-    let width = area.width.saturating_sub(2) as usize;
+    let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
     let items: Vec<ListItem> = grouped_items(&viewer(app), &thread.messages, width, 8, false, app.zen.then_some(thread.selected));
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
     let list = List::new(items)
@@ -255,7 +257,7 @@ fn grouped_items(
         let new_day = day != last_day;
         last_day = day;
         let continued = render::continues(prev, m);
-        let gap = prev.is_some() && (new_day || !continued);
+        let gap = prev.is_some_and(|p| !ends_with_code_block(viewer.names, p)) && (new_day || !continued);
         let show_time = time_only_on.is_none_or(|sel| sel == i);
         items.push(message_item(viewer, m, width, name_w, show_meta, continued && !(time_only_on == Some(i)), new_day, gap, show_time));
         prev = Some(m);
@@ -300,7 +302,7 @@ fn message_item(
         } else {
             vec![Span::raw(" ".repeat(indent))]
         };
-        spans.extend(chunks.iter().map(|p| Span::styled(p.text.clone(), style_of(theme, p.style))));
+        spans.extend(body_spans(theme, chunks, width.saturating_sub(indent)));
         lines.push(Line::from(spans));
     }
     if !m.reactions.is_empty() {
@@ -336,6 +338,11 @@ fn reaction_pills(theme: &Theme, reactions: &[Reaction], me: &str) -> Vec<Span<'
     spans
 }
 
+/// A block already leaves its own blank line behind, so the next message needs no gap.
+fn ends_with_code_block(names: &NameBook, m: &Message) -> bool {
+    body(names, m).spans.last().is_some_and(|p| p.style == TextStyle::Block)
+}
+
 fn body(names: &NameBook, m: &Message) -> Styled {
     let text =
         if m.text.is_empty() { m.attachments.iter().map(|a| a.fallback.clone()).collect::<Vec<_>>().join("\n") } else { m.text.clone() };
@@ -361,7 +368,7 @@ fn search_item(theme: &Theme, m: &SearchMatch, width: usize) -> ListItem<'static
     let styled = text::from_segments(&mrkdwn::parse(&m.text, &mrkdwn::NoNames), false);
     for chunks in styled.wrap_styled(width.saturating_sub(4).max(10)).into_iter().take(3) {
         let mut spans = vec![Span::raw("    ")];
-        spans.extend(chunks.into_iter().map(|p| Span::styled(p.text, style_of(theme, p.style))));
+        spans.extend(body_spans(theme, &chunks, width.saturating_sub(4)));
         lines.push(Line::from(spans));
     }
     ListItem::new(lines)
@@ -462,6 +469,22 @@ fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
     f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(pane(theme, "keys", true)), popup);
 }
 
+/// One wrapped line of message text as spans. A code line gets its bar and a fill to `width`
+/// so the block reads as one surface.
+pub fn body_spans(theme: &Theme, chunks: &[text::Piece], width: usize) -> Vec<Span<'static>> {
+    if let [code] = chunks
+        && code.style == TextStyle::Block
+    {
+        let fill = " ".repeat(width.saturating_sub(text::BLOCK_BAR_W + code.text.width()));
+        return vec![
+            Span::styled("▎ ", Style::new().fg(theme.faded).bg(theme.surface_soft)),
+            Span::styled(code.text.clone(), Style::new().bg(theme.surface_soft)),
+            Span::styled(fill, Style::new().bg(theme.surface_soft)),
+        ];
+    }
+    chunks.iter().map(|p| Span::styled(p.text.clone(), style_of(theme, p.style))).collect()
+}
+
 pub fn style_of(theme: &Theme, s: TextStyle) -> Style {
     match s {
         TextStyle::Plain => Style::new(),
@@ -469,7 +492,8 @@ pub fn style_of(theme: &Theme, s: TextStyle) -> Style {
         TextStyle::Bold => Style::new().bold(),
         TextStyle::Italic => Style::new().italic(),
         TextStyle::Strike => Style::new().crossed_out(),
-        TextStyle::Code => Style::new().fg(theme.code),
+        TextStyle::Code => Style::new().fg(theme.code).bg(theme.surface_soft),
+        TextStyle::Block => Style::new().bg(theme.surface_soft),
         TextStyle::Link => Style::new().fg(theme.link).underlined(),
         TextStyle::Mention => Style::new().fg(theme.mention),
     }
@@ -489,6 +513,21 @@ mod tests {
 
     fn message(ts: &str, user: &str, text: &str) -> Message {
         Message { ts: ts.into(), user: Some(user.into()), text: text.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn code_rows_get_a_bar_and_a_full_width_fill() {
+        let theme = Theme::default();
+        let block = body_spans(&theme, &[text::Piece::new("x", TextStyle::Block)], 8);
+        let texts: Vec<&str> = block.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(texts, vec!["▎ ", "x", "     "]);
+        assert_eq!(block[0].style.fg, Some(theme.faded));
+        assert!(block[1..].iter().all(|s| s.style.bg == Some(theme.surface_soft)));
+        let blank = body_spans(&theme, &[text::Piece::new("", TextStyle::Block)], 4);
+        assert_eq!(blank.iter().map(|s| s.content.as_ref()).collect::<Vec<_>>(), vec!["▎ ", "", "  "]);
+        let inline = body_spans(&theme, &[text::Piece::new("git", TextStyle::Code)], 8);
+        assert_eq!(inline.len(), 1);
+        assert_eq!((inline[0].style.fg, inline[0].style.bg), (Some(theme.code), Some(theme.surface_soft)));
     }
 
     #[test]

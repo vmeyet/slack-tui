@@ -136,7 +136,7 @@ fn item_lines(theme: &Theme, item: &Item, names: &NameBook, width: usize) -> Lis
         let mut pieces = styled.wrap_styled(width.saturating_sub(6 + author.len()).max(10));
         let first = pieces.drain(..1).next().unwrap_or_default();
         let mut spans = vec![Span::raw("   "), Span::styled(format!("{author}: "), Style::new().fg(theme.mention))];
-        spans.extend(first.into_iter().map(|p| Span::styled(p.text, super::ui::style_of(theme, p.style))));
+        spans.extend(super::ui::body_spans(theme, &first, width.saturating_sub(6 + author.len())));
         if !pieces.is_empty() {
             spans.push(Span::styled("…", Style::new().fg(theme.muted)));
         }

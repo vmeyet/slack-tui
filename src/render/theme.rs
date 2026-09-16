@@ -68,6 +68,9 @@ impl Theme {
     pub fn code(&self, s: &str) -> String {
         self.paint(s, |s| s.yellow().to_string())
     }
+    pub fn block(&self, s: &str) -> String {
+        if s.is_empty() { self.dim("▎") } else { format!("{}{s}", self.dim("▎ ")) }
+    }
     pub fn link(&self, s: &str) -> String {
         self.paint(s, |s| s.blue().underline().to_string())
     }

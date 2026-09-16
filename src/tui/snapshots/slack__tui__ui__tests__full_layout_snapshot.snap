@@ -7,8 +7,8 @@ expression: stable
 "│  #general              ││ HH:MM           U1 Deploy v2 is out, ││ HH:MM       U1 Deploy v2 is out, see     │"
 "│  🔒vault               ││                    see notes. A long ││                notes. A long line that   │" Hidden by multi-width symbols: [(4, " ")]
 "│                        ││                    line that needs   ││                needs wrapping inside the │"
-"│  DIRECT                ││                    wrapping inside th││                pane for sure.            │"
-"│  @bob              ● 3 ││                    pane for sure.    ││                🚀 3                      │" Hidden by multi-width symbols: [(84, " ")]
+"│  DIRECT                ││                    wrapping inside   ││                pane for sure.            │"
+"│  @bob              ● 3 ││                    the pane for sure.││                🚀 3                      │" Hidden by multi-width symbols: [(84, " ")]
 "│                        ││                    🚀 3              ││▎                                         │" Hidden by multi-width symbols: [(48, " ")]
 "│                        ││                    ↳ 2 replies       ││▎HH:MM       U2 reply                     │"
 "│                        ││                                      ││                                          │"

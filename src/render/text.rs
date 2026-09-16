@@ -10,6 +10,8 @@ pub enum Style {
     Italic,
     Strike,
     Code,
+    /// One line of a fenced code block: never wrapped, blank lines kept.
+    Block,
     Link,
     Mention,
 }
@@ -78,7 +80,7 @@ pub fn from_segments(segments: &[Segment], show_urls: bool) -> Styled {
             Segment::Italic(t) => Piece::new(t.clone(), Style::Italic),
             Segment::Strike(t) => Piece::new(t.clone(), Style::Strike),
             Segment::Code(t) => Piece::new(t.clone(), Style::Code),
-            Segment::Pre(t) => Piece::new(format!("\n{t}\n"), Style::Code),
+            Segment::Pre(t) => Piece::new(t.replace('\t', "    "), Style::Block),
             Segment::Link { label, url } if label == url => Piece::link(url.clone(), url.clone()),
             Segment::Link { label, url } if show_urls => Piece::link(format!("{label} ({url})"), url.clone()),
             Segment::Link { label, url } => Piece::link(label.clone(), url.clone()),
@@ -99,6 +101,7 @@ pub fn paint(theme: &Theme, piece: &Piece) -> String {
         Style::Italic => theme.italic(text),
         Style::Strike => theme.strike(text),
         Style::Code => theme.code(text),
+        Style::Block => theme.block(text),
         Style::Link => theme.hyperlink(text, piece.url.as_deref().unwrap_or("")),
         Style::Mention => theme.mention(text),
     }
@@ -145,9 +148,18 @@ struct Word {
     blank: bool,
 }
 
+/// Columns a code line gives up to its `▎ ` bar.
+pub const BLOCK_BAR_W: usize = 2;
+
 fn wrap_spans(spans: &[Piece], width: usize) -> Vec<Chunks> {
     let mut lines: Vec<Chunks> = Vec::new();
     for paragraph in paragraphs(spans) {
+        if let [code] = paragraph.as_slice()
+            && code.style == Style::Block
+        {
+            lines.push(vec![Piece::new(truncate(&code.text, width.saturating_sub(BLOCK_BAR_W)), Style::Block)]);
+            continue;
+        }
         let mut line: Chunks = Vec::new();
         let mut used = 0;
         for word in words(&paragraph) {
@@ -171,10 +183,37 @@ fn wrap_spans(spans: &[Piece], width: usize) -> Vec<Chunks> {
     lines
 }
 
+/// Splits on newlines; a code block always owns whole lines, one paragraph per line,
+/// with one padded row inside the surface and one blank line of margin outside, on both
+/// sides. The margin below is kept even at the end so whatever follows never touches the block.
 fn paragraphs(spans: &[Piece]) -> Vec<Chunks> {
     let mut out: Vec<Chunks> = vec![Vec::new()];
+    let mut after_block = false;
     for piece in spans {
-        for (i, part) in piece.text.split('\n').enumerate() {
+        if piece.style == Style::Block {
+            while out.len() > 1 && out.last().is_some_and(Vec::is_empty) {
+                out.pop();
+            }
+            if out.last().is_some_and(|p| !p.is_empty()) {
+                out.extend([Vec::new(), Vec::new()]);
+            }
+            let padding = vec![Piece::new("", Style::Block)];
+            *out.last_mut().expect("one paragraph") = padding.clone();
+            out.extend(piece.text.split('\n').map(|part| vec![Piece::new(part, Style::Block)]));
+            out.push(padding);
+            out.push(Vec::new());
+            after_block = true;
+            continue;
+        }
+        let text = if after_block { piece.text.trim_start_matches('\n') } else { piece.text.as_str() };
+        if text.is_empty() {
+            continue;
+        }
+        if after_block {
+            out.push(Vec::new());
+            after_block = false;
+        }
+        for (i, part) in text.split('\n').enumerate() {
             if i > 0 {
                 out.push(Vec::new());
             }
@@ -280,6 +319,42 @@ mod tests {
         assert_eq!(from_segments(&segs, false).plain_text(), "docs");
         assert_eq!(from_segments(&segs, true).plain_text(), "docs (https://a.io)");
         assert_eq!(from_segments(&segs, false).urls(), vec!["https://a.io"]);
+    }
+
+    fn segs(parts: &[Segment]) -> Styled {
+        from_segments(parts, false)
+    }
+
+    #[test]
+    fn code_block_lines_are_never_wrapped_only_clipped() {
+        let s = segs(&[Segment::Text("run\n".into()), Segment::Pre("ls -la --color=always /a/very/long/path".into())]);
+        assert_eq!(s.wrap(20), vec!["run", "", "▎", "▎ ls -la --color=al…", "▎", ""]);
+        let rows = s.wrap_styled(20);
+        assert_eq!(rows[3], vec![Piece::new("ls -la --color=al…", Style::Block)]);
+    }
+
+    #[test]
+    fn code_block_keeps_blank_lines_and_indent() {
+        let s = segs(&[Segment::Pre("fn a() {\n\n\tx\n}".into())]);
+        let rows = s.wrap_styled(40);
+        let block = &rows[..rows.len() - 1];
+        let texts: Vec<&str> = block.iter().map(|r| r[0].text.as_str()).collect();
+        assert_eq!(texts, vec!["", "fn a() {", "", "    x", "}", ""]);
+        assert!(block.iter().all(|r| r.len() == 1 && r[0].style == Style::Block));
+        assert!(rows.last().unwrap().is_empty());
+    }
+
+    #[test]
+    fn code_block_has_one_row_of_padding_inside_and_one_of_margin_outside() {
+        let expected = vec!["run", "", "▎", "▎ x", "▎", "", "done"];
+        let s = segs(&[Segment::Text("run\n".into()), Segment::Pre("x".into()), Segment::Text("\ndone".into())]);
+        assert_eq!(s.wrap(40), expected);
+        let glued = segs(&[Segment::Text("run".into()), Segment::Pre("x".into()), Segment::Text("done".into())]);
+        assert_eq!(glued.wrap(40), expected);
+        let spaced = segs(&[Segment::Text("run\n\n".into()), Segment::Pre("x".into()), Segment::Text("\n\n\ndone".into())]);
+        assert_eq!(spaced.wrap(40), expected);
+        let trailing = segs(&[Segment::Pre("x".into()), Segment::Text("\n".into())]);
+        assert_eq!(trailing.wrap(40), vec!["▎", "▎ x", "▎", ""]);
     }
 
     #[test]
