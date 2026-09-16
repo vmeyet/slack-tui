@@ -138,6 +138,8 @@ pub struct App {
     pub firehose: Option<Firehose>,
     pub highlighter: Highlighter,
     /// Scroll offsets survive between frames so the viewport only moves when the selection leaves it.
+    /// Reading mode: only the conversation, centered, times shown on the selected row.
+    pub zen: bool,
     pub channels_view: ListState,
     pub messages_view: ListState,
     pub thread_view: ListState,
@@ -172,6 +174,7 @@ impl Default for App {
             wall: VecDeque::new(),
             firehose: None,
             highlighter: Highlighter::default(),
+            zen: false,
             channels_view: ListState::default(),
             messages_view: ListState::default(),
             thread_view: ListState::default(),
@@ -407,7 +410,19 @@ impl App {
         if self.inbox.is_some() {
             return self.handle_inbox_key(key);
         }
-        self.handle_browse_key(key)
+        let actions = self.handle_browse_key(key);
+        if self.zen && self.focus == Focus::Channels {
+            self.focus = Focus::Messages;
+        }
+        actions
+    }
+
+    fn toggle_reading(&mut self) {
+        self.zen = !self.zen;
+        if self.zen && self.current_channel.is_none() {
+            self.zen = false;
+            self.status = "open a conversation first".into();
+        }
     }
 
     fn handle_firehose_key(&mut self, key: KeyEvent) -> Vec<Action> {
@@ -615,6 +630,7 @@ impl App {
             KeyCode::Char('R') => return self.refresh(),
             KeyCode::Char('i') => return self.open_inbox(),
             KeyCode::Char('f') => self.firehose = Some(Firehose::default()),
+            KeyCode::Char('z') => self.toggle_reading(),
             _ => {}
         }
         vec![]
@@ -1291,6 +1307,29 @@ mod tests {
         let actions =
             live(&mut app, rtm::Event::Message { channel: "C1".into(), message: Message { user: Some("U77".into()), ..msg("1", "x") } });
         assert_eq!(actions, vec![Action::LearnUsers(vec!["U77".into()])]);
+    }
+
+    #[test]
+    fn reading_mode_keeps_focus_on_the_conversation() {
+        let mut app = loaded();
+        app.handle_key(key('z'));
+        assert!(!app.zen);
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+        app.handle_key(key('z'));
+        assert!(app.zen);
+        app.handle_key(code(KeyCode::Left));
+        assert_eq!(app.focus, Focus::Messages);
+        app.handle_key(code(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Messages);
+        app.handle_key(code(KeyCode::Enter));
+        app.apply(Incoming::Replies { channel: "C1".into(), ts: "1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+        assert_eq!(app.focus, Focus::Thread);
+        app.handle_key(code(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::Messages);
+        assert!(app.thread.is_none());
+        app.handle_key(key('z'));
+        assert!(!app.zen);
     }
 
     #[test]

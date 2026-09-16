@@ -85,6 +85,7 @@ highlight = ["prod", "error|failed", "@vivien"]   # case-insensitive regexes lit
 ```
 
 `slack firehose` streams every message from every conversation as one ticker, colour-coded by channel, with `!` and a yellow mark on lines matching a highlight.
+`z` toggles reading mode: one centered frameless column, three quarters of the terminal, sidebar and thread hidden, timestamps only on the selected row.
 `f` opens the same wall inside the TUI, where scrolling up pauses it, `G` follows again and `enter` jumps into the conversation.
 
 ## Development

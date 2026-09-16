@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Wrap};
 
 const TIME_W: usize = 5;
 const NAME_W: usize = 12;
@@ -19,23 +19,30 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let input_rows = u16::from(app.input.is_some());
     let [main, input, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(input_rows), Constraint::Length(1)]).areas(f.area());
-    let thread_w = if app.thread.is_some() { 40 } else { 0 };
-    let [left, middle, right] =
-        Layout::horizontal([Constraint::Length(26), Constraint::Min(30), Constraint::Percentage(thread_w)]).areas(main);
-    draw_channels(f, app, left);
-    draw_messages(f, app, middle);
-    if app.thread.is_some() {
-        draw_thread(f, app, right);
-    }
     let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help;
-    if app.focus != Focus::Channels || modal {
-        fade(f, left, FADED);
-    }
-    if app.focus != Focus::Messages || modal {
-        fade(f, middle, if modal { FADED } else { FADED_SOFT });
-    }
-    if app.thread.is_some() && (app.focus != Focus::Thread || modal) {
-        fade(f, right, FADED);
+    if app.zen {
+        draw_reading(f, app, main);
+        if modal {
+            fade(f, main, FADED);
+        }
+    } else {
+        let thread_w = if app.thread.is_some() { 40 } else { 0 };
+        let [left, middle, right] =
+            Layout::horizontal([Constraint::Length(26), Constraint::Min(30), Constraint::Percentage(thread_w)]).areas(main);
+        draw_channels(f, app, left);
+        draw_messages(f, app, middle);
+        if app.thread.is_some() {
+            draw_thread(f, app, right);
+        }
+        if app.focus != Focus::Channels || modal {
+            fade(f, left, FADED);
+        }
+        if app.focus != Focus::Messages || modal {
+            fade(f, middle, if modal { FADED } else { FADED_SOFT });
+        }
+        if app.thread.is_some() && (app.focus != Focus::Thread || modal) {
+            fade(f, right, FADED);
+        }
     }
     if app.input.is_some() {
         draw_input(f, app, input);
@@ -63,6 +70,15 @@ pub const BORDER: Color = Color::Indexed(238);
 pub fn pane(title: &str, focused: bool) -> Block<'static> {
     let title = if focused { format!(" {title} ").bold().cyan() } else { format!(" {title} ").dim() };
     Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(BORDER)).title(title)
+}
+
+/// Reading mode has no frame: just the title, a breath of space, then the text.
+fn reading_pane(title: &str) -> Block<'static> {
+    Block::new().title(format!(" {title}").bold().cyan()).padding(Padding::new(1, 1, 1, 0))
+}
+
+fn frame(app: &App, title: &str, focused: bool) -> Block<'static> {
+    if app.zen { reading_pane(title) } else { pane(title, focused) }
 }
 
 fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
@@ -110,6 +126,18 @@ fn highlight(app: &App, focused: bool) -> Style {
     if focused { Style::new().bg(app.highlight).add_modifier(Modifier::BOLD) } else { Style::new().bg(Color::Indexed(234)) }
 }
 
+/// Reading mode: one centered column with the thread when open, the conversation otherwise.
+/// Three quarters of the terminal, never narrower than 80 columns nor wider than 110.
+fn draw_reading(f: &mut Frame, app: &mut App, area: Rect) {
+    let width = (area.width * 3 / 4).clamp(80, 110).min(area.width);
+    let column = Rect { x: area.x + (area.width - width) / 2, width, ..area };
+    if app.thread.is_some() {
+        draw_thread(f, app, column);
+    } else {
+        draw_messages(f, app, column);
+    }
+}
+
 pub const FADED: Color = Color::Indexed(240);
 pub const FADED_SOFT: Color = Color::Indexed(245);
 
@@ -147,11 +175,11 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = match &app.search {
         Some(results) => results.iter().map(|m| search_item(m, width)).collect(),
-        None => grouped_items(&app.names, &app.messages, width, NAME_W, true),
+        None => grouped_items(&app.names, &app.messages, width, NAME_W, true, app.zen.then_some(app.message_selected)),
     };
     let empty = items.is_empty();
     let list = List::new(items)
-        .block(pane(&title, focused))
+        .block(frame(app, &title, focused))
         .highlight_style(highlight(app, focused))
         .highlight_symbol(cursor_bar(focused))
         .repeat_highlight_symbol(true)
@@ -168,10 +196,10 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Thread;
     let Some(thread) = &app.thread else { return };
     let width = area.width.saturating_sub(2) as usize;
-    let items: Vec<ListItem> = grouped_items(&app.names, &thread.messages, width, 8, false);
+    let items: Vec<ListItem> = grouped_items(&app.names, &thread.messages, width, 8, false, app.zen.then_some(thread.selected));
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
     let list = List::new(items)
-        .block(pane(&title, focused))
+        .block(frame(app, &title, focused))
         .highlight_style(highlight(app, focused))
         .highlight_symbol(cursor_bar(focused))
         .repeat_highlight_symbol(true)
@@ -183,17 +211,26 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
 
 /// One list item per message, with a dim day line on the first message of each day and
 /// no header on messages that continue the previous one.
-fn grouped_items(names: &NameBook, messages: &[Message], width: usize, name_w: usize, show_meta: bool) -> Vec<ListItem<'static>> {
+/// `time_only_on`: reading mode shows the time on that row alone, like a hover.
+fn grouped_items(
+    names: &NameBook,
+    messages: &[Message],
+    width: usize,
+    name_w: usize,
+    show_meta: bool,
+    time_only_on: Option<usize>,
+) -> Vec<ListItem<'static>> {
     let mut items = Vec::with_capacity(messages.len());
     let mut prev: Option<&Message> = None;
     let mut last_day = String::new();
-    for m in messages {
+    for (i, m) in messages.iter().enumerate() {
         let day = time::day_label(&m.ts);
         let new_day = day != last_day;
         last_day = day;
         let continued = render::continues(prev, m);
         let gap = prev.is_some() && (new_day || !continued);
-        items.push(message_item(names, m, width, name_w, show_meta, continued, new_day, gap));
+        let show_time = time_only_on.is_none_or(|sel| sel == i);
+        items.push(message_item(names, m, width, name_w, show_meta, continued && !(time_only_on == Some(i)), new_day, gap, show_time));
         prev = Some(m);
     }
     items
@@ -209,6 +246,7 @@ fn message_item(
     continued: bool,
     new_day: bool,
     gap: bool,
+    show_time: bool,
 ) -> ListItem<'static> {
     let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
     let indent = TIME_W + 1 + name_w + 1;
@@ -225,7 +263,7 @@ fn message_item(
     for (i, chunks) in styled.wrap_styled(width.saturating_sub(indent).max(10)).iter().enumerate() {
         let mut spans = if i == 0 && !continued {
             vec![
-                Span::styled(time::hhmm(&m.ts), Style::new().dim()),
+                Span::styled(if show_time { time::hhmm(&m.ts) } else { " ".repeat(TIME_W) }, Style::new().dim()),
                 Span::raw(" "),
                 Span::styled(render::fit_right(&author, name_w), user_style(&author)),
                 Span::raw(" "),
@@ -341,6 +379,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "  s   /         search · filter channels",
         "  i             inbox: unread DMs, mentions, thread replies",
         "  f             firehose: every channel as one live ticker",
+        "  z             reading mode: one centered conversation, nothing else",
         "  ⌘k / ctrl-k   jump to a channel, person or thread · > searches",
         "  R             refresh",
         "  esc           close thread · clear search or filter",
