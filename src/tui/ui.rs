@@ -227,7 +227,9 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_help(f: &mut Frame, area: Rect) {
     let lines = [
-        "  tab / h l     move between panes",
+        "  tab           cycle panes",
+        "  → / l         open channel · open the message's thread",
+        "  ← / h         close thread · back to channels",
         "  j k  g G      move · top · bottom",
         "  enter         open channel · open thread · jump to result",
         "  r             reply in the focused conversation",

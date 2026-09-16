@@ -291,8 +291,10 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.help = true,
-            KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => self.focus = self.next_focus(),
-            KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => self.focus = self.prev_focus(),
+            KeyCode::Tab => self.focus = self.next_focus(),
+            KeyCode::BackTab => self.focus = self.prev_focus(),
+            KeyCode::Char('l') | KeyCode::Right => return self.go_right(),
+            KeyCode::Char('h') | KeyCode::Left => self.go_left(),
             KeyCode::Char('j') | KeyCode::Down => self.move_selection(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
             KeyCode::Char('g') | KeyCode::Home => self.move_selection(i64::MIN / 2),
@@ -418,6 +420,31 @@ impl App {
             _ => self.current_channel.clone()?,
         };
         Some((channel, self.selected_message()?.ts.clone()))
+    }
+
+    /// Right dives in: channel → its messages, message with replies → its thread.
+    fn go_right(&mut self) -> Vec<Action> {
+        match self.focus {
+            Focus::Channels => self.activate(),
+            Focus::Messages if self.search.is_none() => match self.messages.get(self.message_selected) {
+                Some(m) if m.is_thread_root() || m.is_reply() => self.activate(),
+                _ => vec![],
+            },
+            Focus::Messages => self.activate(),
+            Focus::Thread => vec![],
+        }
+    }
+
+    /// Left backs out: thread → messages (closing it), messages → channels.
+    fn go_left(&mut self) {
+        match self.focus {
+            Focus::Thread => {
+                self.thread = None;
+                self.focus = Focus::Messages;
+            }
+            Focus::Messages => self.focus = Focus::Channels,
+            Focus::Channels => {}
+        }
     }
 
     fn next_focus(&self) -> Focus {
@@ -697,6 +724,27 @@ mod tests {
         app.handle_key(code(KeyCode::Esc));
         assert_eq!(app.thread, None);
         assert_eq!(app.focus, Focus::Messages);
+    }
+
+    #[test]
+    fn right_opens_the_selected_thread_and_left_closes_it() {
+        let mut app = loaded();
+        assert_eq!(app.handle_key(code(KeyCode::Right)), vec![Action::LoadHistory("C1".into())]);
+        let mut root = msg("1", "root");
+        root.reply_count = 2;
+        root.thread_ts = Some("1".into());
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![root, msg("2", "plain")], names: NameBook::default() });
+        app.thread = Some(Thread { channel: "C1".into(), root_ts: "9".into(), messages: vec![], selected: 0 });
+        assert_eq!(app.handle_key(code(KeyCode::Right)), vec![]);
+        assert_eq!(app.focus, Focus::Messages);
+        app.handle_key(key('k'));
+        assert_eq!(app.handle_key(code(KeyCode::Right)), vec![Action::LoadReplies { channel: "C1".into(), ts: "1".into() }]);
+        assert_eq!(app.focus, Focus::Thread);
+        app.handle_key(code(KeyCode::Left));
+        assert_eq!(app.thread, None);
+        assert_eq!(app.focus, Focus::Messages);
+        app.handle_key(code(KeyCode::Left));
+        assert_eq!(app.focus, Focus::Channels);
     }
 
     #[test]
