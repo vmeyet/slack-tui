@@ -231,6 +231,22 @@ pub struct ReadState {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Section {
+    #[serde(default, rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub channel_ids_page: SectionPage,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SectionPage {
+    #[serde(default)]
+    pub channel_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ThreadView {
     pub root_msg: ThreadRoot,
     #[serde(default)]

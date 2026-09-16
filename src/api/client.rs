@@ -200,6 +200,18 @@ impl Slack {
         self.call_as("subscriptions.thread.getView", params(&[("limit", &limit.to_string())]), "threads").await
     }
 
+    /// Sidebar sections as the web client shows them: stars first, then custom ones. Best effort.
+    pub async fn sections(&self) -> Result<Vec<Section>> {
+        self.call_as("users.channelSections.list", vec![], "channel_sections").await
+    }
+
+    /// Channel ids the user muted, from the web client's preference blob. Best effort.
+    pub async fn muted(&self) -> Result<Vec<String>> {
+        let body = self.call("users.prefs.get", vec![]).await?;
+        let raw = body["prefs"]["muted_channels"].as_str().unwrap_or_default();
+        Ok(raw.split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect())
+    }
+
     pub async fn join(&self, channel: &str) -> Result<()> {
         self.call("conversations.join", params(&[("channel", channel)])).await?;
         Ok(())

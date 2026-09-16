@@ -1,4 +1,4 @@
-use super::app::{App, Focus, Input, Kind, Live};
+use super::app::{self, App, Focus, Input, Kind, Live, SidebarRow};
 use crate::api::{Message, SearchMatch};
 use crate::mrkdwn;
 use crate::render;
@@ -10,6 +10,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 5;
 const NAME_W: usize = 12;
@@ -86,31 +87,16 @@ fn frame(app: &App, title: &str, focused: bool) -> Block<'static> {
 fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Channels;
     let visible = app.visible_channels();
-    let items: Vec<ListItem> = visible
+    let rows = app::sidebar_rows(&visible, app.filter.is_empty());
+    let inner_w = area.width.saturating_sub(5) as usize;
+    let items: Vec<ListItem> = rows
         .iter()
-        .map(|c| {
-            let current = app.current_channel.as_deref() == Some(&c.id);
-            let marker = if current {
-                "▸ "
-            } else if app.unread.contains(&c.id) {
-                "● "
-            } else {
-                "  "
-            };
-            let color = match c.kind {
-                Kind::Public => Color::Reset,
-                Kind::Private => Color::Yellow,
-                Kind::Dm => Color::Magenta,
-                Kind::GroupDm => Color::Blue,
-            };
-            let mut style = Style::new().fg(color);
-            if current || app.unread.contains(&c.id) {
-                style = style.add_modifier(Modifier::BOLD);
+        .map(|row| match row {
+            SidebarRow::Spacer => ListItem::new(Line::raw("")),
+            SidebarRow::Header(name) => {
+                ListItem::new(Line::from(Span::styled(format!(" {name}"), Style::new().fg(FADED).add_modifier(Modifier::BOLD))))
             }
-            ListItem::new(Line::from(vec![
-                Span::raw(marker),
-                Span::styled(text::visible_fit(&c.label, area.width.saturating_sub(5) as usize), style),
-            ]))
+            SidebarRow::Channel(i) => channel_row(app, visible[*i], inner_w),
         })
         .collect();
     let title = if app.filter.is_empty() { "channels".to_owned() } else { format!("channels /{}", app.filter) };
@@ -120,8 +106,41 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
         .highlight_symbol(cursor_bar(focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
-    app.channels_view.select(Some(app.channel_selected));
+    let list_index = rows.iter().position(|r| *r == SidebarRow::Channel(app.channel_selected));
+    app.channels_view.select(list_index);
     f.render_stateful_widget(list, area, &mut app.channels_view);
+}
+
+fn channel_row(app: &App, c: &app::ChannelRow, width: usize) -> ListItem<'static> {
+    let current = app.current_channel.as_deref() == Some(&c.id);
+    let badge = app.badges.get(&c.id).copied().unwrap_or_default();
+    let unread = badge.unread || app.unread.contains(&c.id);
+    let badge_text = match badge.mentions {
+        0 if unread && !c.muted => "●".to_owned(),
+        0 => String::new(),
+        n => format!("● {n}"),
+    };
+    let color = match c.kind {
+        Kind::Public => Color::Reset,
+        Kind::Private => Color::Yellow,
+        Kind::Dm => Color::Magenta,
+        Kind::GroupDm => Color::Blue,
+    };
+    let mut style = Style::new().fg(color);
+    if c.muted {
+        style = Style::new().fg(FADED);
+    } else if current || unread {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    let label_w = width.saturating_sub(badge_text.width() + if badge_text.is_empty() { 0 } else { 1 });
+    let label = text::visible_fit(&c.label, label_w);
+    let badge_style = if badge.mentions > 0 { Style::new().cyan().bold() } else { Style::new().fg(FADED_SOFT) };
+    ListItem::new(Line::from(vec![
+        Span::raw(" "),
+        Span::styled(label, style),
+        Span::raw(if badge_text.is_empty() { "" } else { " " }),
+        Span::styled(badge_text, badge_style),
+    ]))
 }
 
 fn highlight(app: &App, focused: bool) -> Style {
@@ -449,11 +468,17 @@ mod tests {
     fn full_layout_snapshot() {
         let mut app = App::new();
         let rows = vec![
-            ChannelRow { id: "C1".into(), label: "#general".into(), kind: Kind::Public },
-            ChannelRow { id: "C2".into(), label: "🔒vault".into(), kind: Kind::Private },
-            ChannelRow { id: "D1".into(), label: "@bob".into(), kind: Kind::Dm },
+            ChannelRow::new("C1", "#general", Kind::Public),
+            ChannelRow::new("C2", "🔒vault", Kind::Private),
+            ChannelRow::new("D1", "@bob", Kind::Dm),
         ];
-        app.apply(Incoming::Channels { rows, people: vec![], names: NameBook::default() });
+        app.apply(Incoming::Channels {
+            rows,
+            people: vec![],
+            names: NameBook::default(),
+            badges: std::collections::HashMap::from([("D1".to_string(), app::Badge { unread: true, mentions: 3 })]),
+            me: "U1".into(),
+        });
         app.current_channel = Some("C1".into());
         let mut root = message(
             "1694700000.000100",

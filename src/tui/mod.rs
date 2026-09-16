@@ -123,12 +123,23 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
             d.channels().await?;
             let _ = d.users().await;
             let _ = d.learn_dm_users().await;
-            let rows = d
-                .conversations(false)
-                .into_iter()
-                .map(|(c, label)| ChannelRow { id: c.id.clone(), label, kind: Kind::from(c.kind()) })
-                .collect();
-            Ok(Incoming::Channels { rows, people: d.people(), names: d.names() })
+            let rows: Vec<ChannelRow> =
+                d.conversations(false).into_iter().map(|(c, label)| ChannelRow::new(&c.id, &label, Kind::from(c.kind()))).collect();
+            let sections = slack.sections().await.unwrap_or_default();
+            let muted = slack.muted().await.unwrap_or_default();
+            let me = slack.auth_test().await.map(|i| i.user_id).unwrap_or_default();
+            let badges = match slack.counts().await {
+                Ok(counts) => counts
+                    .channels
+                    .iter()
+                    .chain(&counts.ims)
+                    .chain(&counts.mpims)
+                    .filter(|c| c.has_unreads || c.mention_count > 0)
+                    .map(|c| (c.id.clone(), app::Badge { unread: c.has_unreads, mentions: c.mention_count }))
+                    .collect(),
+                Err(_) => std::collections::HashMap::new(),
+            };
+            Ok(Incoming::Channels { rows: app::arrange(rows, &sections, &muted), people: d.people(), names: d.names(), badges, me })
         }
         Action::LoadHistory(channel) => {
             let messages = slack.history(&channel, 100, None).await?;

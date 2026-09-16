@@ -3,12 +3,12 @@ source: src/tui/ui.rs
 expression: stable
 ---
 "╭ channels ──────────────╮╭ C1 ──────────────────────────────────╮╭ thread · 1 replies ──────────────────────╮"
-"│ ▸ #general             ││ ── 14 Sep 2023 ──────────────────────││ ── 14 Sep 2023 ──────────────────────────│"
-"│   🔒vault              ││ HH:MM           U1 Deploy v2 is out, ││ HH:MM       U1 Deploy v2 is out, see     │" Hidden by multi-width symbols: [(5, " ")]
-"│   @bob                 ││                    see notes. A long ││                notes. A long line that   │"
+"│  CHANNELS              ││ ── 14 Sep 2023 ──────────────────────││ ── 14 Sep 2023 ──────────────────────────│"
+"│  #general              ││ HH:MM           U1 Deploy v2 is out, ││ HH:MM       U1 Deploy v2 is out, see     │"
+"│  🔒vault               ││                    see notes. A long ││                notes. A long line that   │" Hidden by multi-width symbols: [(4, " ")]
 "│                        ││                    line that needs   ││                needs wrapping inside the │"
-"│                        ││                    wrapping inside th││                pane for sure.            │"
-"│                        ││                    pane for sure.    ││                🚀 3                      │" Hidden by multi-width symbols: [(84, " ")]
+"│  DIRECT                ││                    wrapping inside th││                pane for sure.            │"
+"│  @bob              ● 3 ││                    pane for sure.    ││                🚀 3                      │" Hidden by multi-width symbols: [(84, " ")]
 "│                        ││                    🚀 3              ││▎                                         │" Hidden by multi-width symbols: [(48, " ")]
 "│                        ││                    ↳ 2 replies       ││▎HH:MM       U2 reply                     │"
 "│                        ││                                      ││                                          │"

@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 pub const DEFAULT_HIGHLIGHT: Color = Color::Indexed(236);
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -40,6 +40,81 @@ pub struct ChannelRow {
     pub id: String,
     pub label: String,
     pub kind: Kind,
+    /// Sidebar group: "starred", a custom section name, "channels" or "direct".
+    pub section: String,
+    pub muted: bool,
+}
+
+impl ChannelRow {
+    pub fn new(id: &str, label: &str, kind: Kind) -> Self {
+        let section = match kind {
+            Kind::Dm | Kind::GroupDm => "direct",
+            _ => "channels",
+        };
+        Self { id: id.into(), label: label.into(), kind, section: section.into(), muted: false }
+    }
+}
+
+/// Unread state of one conversation, from `client.counts` at load and RTM afterwards.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Badge {
+    pub unread: bool,
+    pub mentions: u64,
+}
+
+/// Puts rows in sidebar order: starred, custom sections, channels, direct; muted last in each group.
+pub fn arrange(rows: Vec<ChannelRow>, sections: &[crate::api::Section], muted: &[String]) -> Vec<ChannelRow> {
+    let placed: Vec<(String, Vec<String>)> = sections
+        .iter()
+        .filter(|s| !s.channel_ids_page.channel_ids.is_empty())
+        .filter(|s| s.kind == "stars" || s.kind == "standard")
+        .map(|s| (if s.kind == "stars" { "starred".to_owned() } else { s.name.to_lowercase() }, s.channel_ids_page.channel_ids.clone()))
+        .collect();
+    let mut rows: Vec<ChannelRow> = rows
+        .into_iter()
+        .map(|mut r| {
+            if let Some((name, _)) = placed.iter().find(|(_, ids)| ids.contains(&r.id)) {
+                r.section = name.clone();
+            }
+            r.muted = muted.contains(&r.id);
+            r
+        })
+        .collect();
+    let rank = |r: &ChannelRow| -> (usize, bool, String) {
+        let group = match r.section.as_str() {
+            "starred" => 0,
+            "channels" => 2 + placed.len(),
+            "direct" => 3 + placed.len(),
+            custom => 1 + placed.iter().position(|(n, _)| n == custom).unwrap_or(0),
+        };
+        (group, r.muted, r.label.trim_start_matches(['#', '🔒', '@']).to_lowercase())
+    };
+    rows.sort_by_cached_key(rank);
+    rows
+}
+
+/// What the sidebar draws: headers and spacers between groups, rows inside.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SidebarRow {
+    Spacer,
+    Header(String),
+    Channel(usize),
+}
+
+pub fn sidebar_rows(channels: &[&ChannelRow], grouped: bool) -> Vec<SidebarRow> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for (i, c) in channels.iter().enumerate() {
+        if grouped && c.section != current {
+            if !out.is_empty() {
+                out.push(SidebarRow::Spacer);
+            }
+            out.push(SidebarRow::Header(c.section.to_uppercase()));
+            current = c.section.clone();
+        }
+        out.push(SidebarRow::Channel(i));
+    }
+    out
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,7 +184,7 @@ pub enum Incoming {
     Names(NameBook),
     Joined(String),
     Left(String),
-    Channels { rows: Vec<ChannelRow>, people: Vec<(String, String)>, names: NameBook },
+    Channels { rows: Vec<ChannelRow>, people: Vec<(String, String)>, names: NameBook, badges: HashMap<String, Badge>, me: String },
     History { channel: String, messages: Vec<Message>, names: NameBook },
     Replies { channel: String, ts: String, messages: Vec<Message>, names: NameBook },
     Sent { channel: String, thread_ts: Option<String> },
@@ -138,6 +213,8 @@ pub struct App {
     pub should_quit: bool,
     pub live: Live,
     pub unread: HashSet<String>,
+    pub badges: HashMap<String, Badge>,
+    pub me: String,
     pub highlight: Color,
     pub inbox: Option<Inbox>,
     pub workspace: String,
@@ -177,6 +254,8 @@ impl Default for App {
             should_quit: false,
             live: Live::default(),
             unread: HashSet::new(),
+            badges: HashMap::new(),
+            me: String::new(),
             highlight: DEFAULT_HIGHLIGHT,
             inbox: None,
             workspace: "env".into(),
@@ -266,10 +345,13 @@ impl App {
             | Incoming::Names(_)
             | Incoming::Joined(_)
             | Incoming::Left(_) => unreachable!(),
-            Incoming::Channels { rows, people, names } => {
+            Incoming::Channels { rows, people, names, badges, me } => {
                 self.channels = rows;
                 self.people = people;
                 self.names = names;
+                self.me = me;
+                self.badges = badges;
+                self.unread = self.badges.iter().filter(|(_, b)| b.unread).map(|(id, _)| id.clone()).collect();
                 self.status = format!("{} conversations · ? for help", self.channels.len());
             }
             Incoming::History { channel, messages, names } => {
@@ -366,6 +448,11 @@ impl App {
 
     fn live_message(&mut self, channel: String, message: Message) {
         if self.current_channel.as_deref() != Some(&channel) {
+            let badge = self.badges.entry(channel.clone()).or_default();
+            badge.unread = true;
+            if !self.me.is_empty() && crate::inbox::mentions_me(&message.text, &self.me) {
+                badge.mentions += 1;
+            }
             self.unread.insert(channel);
             return;
         }
@@ -1051,6 +1138,7 @@ impl App {
 
     fn open_channel(&mut self, id: String) -> Vec<Action> {
         self.unread.remove(&id);
+        self.badges.remove(&id);
         self.current_channel = Some(id.clone());
         self.messages.clear();
         self.messages_view = ListState::default();
@@ -1122,7 +1210,7 @@ mod tests {
     }
 
     fn row(id: &str, label: &str) -> ChannelRow {
-        ChannelRow { id: id.into(), label: label.into(), kind: Kind::Public }
+        ChannelRow::new(id, label, Kind::Public)
     }
 
     fn msg(ts: &str, text: &str) -> Message {
@@ -1135,6 +1223,8 @@ mod tests {
             rows: vec![row("C1", "#general"), row("C2", "#random")],
             people: vec![("U1".into(), "vivien".into())],
             names: NameBook::default(),
+            badges: HashMap::new(),
+            me: "U1".into(),
         });
         app
     }
@@ -1622,6 +1712,62 @@ mod tests {
             palette_run(&mut app, "react rocket"),
             vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "rocket".into() }]
         );
+    }
+
+    #[test]
+    fn arrange_groups_and_sorts_muted_last() {
+        use crate::api::{Section, SectionPage};
+        let rows = vec![
+            ChannelRow::new("C1", "#zeta", Kind::Public),
+            ChannelRow::new("C2", "#alpha", Kind::Public),
+            ChannelRow::new("C3", "#ops", Kind::Private),
+            ChannelRow::new("D1", "@bob", Kind::Dm),
+            ChannelRow::new("C4", "#infra", Kind::Public),
+        ];
+        let sections = vec![
+            Section { kind: "stars".into(), name: String::new(), channel_ids_page: SectionPage { channel_ids: vec!["C3".into()] } },
+            Section { kind: "standard".into(), name: "Team".into(), channel_ids_page: SectionPage { channel_ids: vec!["C4".into()] } },
+            Section { kind: "channels".into(), name: "Channels".into(), channel_ids_page: SectionPage::default() },
+        ];
+        let arranged = arrange(rows, &sections, &["C2".to_string()]);
+        let order: Vec<(&str, &str, bool)> = arranged.iter().map(|r| (r.label.as_str(), r.section.as_str(), r.muted)).collect();
+        assert_eq!(
+            order,
+            [
+                ("#ops", "starred", false),
+                ("#infra", "team", false),
+                ("#zeta", "channels", false),
+                ("#alpha", "channels", true),
+                ("@bob", "direct", false)
+            ]
+        );
+        let refs: Vec<&ChannelRow> = arranged.iter().collect();
+        let rows = sidebar_rows(&refs, true);
+        assert_eq!(rows[0], SidebarRow::Header("STARRED".into()));
+        assert_eq!(rows[2], SidebarRow::Spacer);
+        assert_eq!(rows[3], SidebarRow::Header("TEAM".into()));
+        assert_eq!(rows.iter().filter(|r| matches!(r, SidebarRow::Channel(_))).count(), 5);
+        assert_eq!(sidebar_rows(&refs, false).len(), 5);
+    }
+
+    #[test]
+    fn badges_come_from_counts_and_live_mentions() {
+        let mut app = loaded();
+        app.apply(Incoming::Channels {
+            rows: vec![row("C1", "#general"), row("C2", "#random")],
+            people: vec![],
+            names: NameBook::default(),
+            badges: HashMap::from([("C2".to_string(), Badge { unread: true, mentions: 2 })]),
+            me: "U1".into(),
+        });
+        assert!(app.unread.contains("C2"));
+        live(
+            &mut app,
+            rtm::Event::Message { channel: "C1".into(), message: Message { user: Some("U2".into()), ..msg("1", "<@U1> ping") } },
+        );
+        assert_eq!(app.badges["C1"], Badge { unread: true, mentions: 1 });
+        app.handle_key(code(KeyCode::Enter));
+        assert!(!app.badges.contains_key("C1"));
     }
 
     #[test]
