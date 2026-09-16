@@ -99,7 +99,7 @@ pub fn message(t: &Theme, names: &NameBook, m: &Message, indent: usize) -> Strin
         out.push_str(&format!("{pad}{} {}\n", t.dim("📎"), t.link_labelled(label, &f.permalink)));
     }
     if !m.reactions.is_empty() {
-        let r: Vec<String> = m.reactions.iter().map(|r| format!(":{}: {}", r.name, r.count)).collect();
+        let r: Vec<String> = m.reactions.iter().map(|r| format!("{} {}", crate::emoji::render(&r.name), r.count)).collect();
         out.push_str(&format!("{pad}{}\n", t.dim(&r.join("  "))));
     }
     if m.is_thread_root() && indent == 0 {

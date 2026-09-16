@@ -61,6 +61,7 @@ pub fn from_segments(segments: &[Segment]) -> Styled {
             Segment::Link { label, url } => (format!("{label} ({url})"), Style::Link),
             Segment::Mention(n) => (format!("@{n}"), Style::Mention),
             Segment::Channel(n) => (format!("#{n}"), Style::Mention),
+            Segment::Emoji(n) => (crate::emoji::render(n), Style::Plain),
         })
         .collect();
     Styled { spans }

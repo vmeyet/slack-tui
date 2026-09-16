@@ -5,6 +5,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod ctx;
+pub mod emoji;
 pub mod markdown;
 pub mod mrkdwn;
 pub mod permalink;

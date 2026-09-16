@@ -13,6 +13,7 @@ pub enum Segment {
     Link { label: String, url: String },
     Mention(String),
     Channel(String),
+    Emoji(String),
 }
 
 pub trait Names {
@@ -32,6 +33,7 @@ impl Names for NoNames {
 }
 
 static ANGLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<([^<>]+)>").unwrap());
+static EMOJI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^:([a-z0-9_+-]+(?:::skin-tone-\d)?):").unwrap());
 
 pub fn parse(text: &str, names: &dyn Names) -> Vec<Segment> {
     let mut out = Vec::new();
@@ -56,6 +58,7 @@ fn segment_text(s: &Segment) -> String {
         Segment::Link { label, url } => format!("{label} ({url})"),
         Segment::Mention(n) => format!("@{n}"),
         Segment::Channel(n) => format!("#{n}"),
+        Segment::Emoji(n) => crate::emoji::render(n),
     }
 }
 
@@ -96,6 +99,14 @@ fn push_formatted(out: &mut Vec<Segment>, raw: &str) {
             continue;
         }
         let c = chars[i];
+        if c == ':'
+            && let Some(m) = EMOJI.captures(&chars[i..].iter().collect::<String>())
+        {
+            flush(out, &mut buf);
+            out.push(Segment::Emoji(m[1].to_owned()));
+            i += m[0].chars().count();
+            continue;
+        }
         if matches!(c, '*' | '_' | '~' | '`')
             && opens_at(&chars, i)
             && let Some(end) = close_of(&chars, i, c)
@@ -217,6 +228,15 @@ mod tests {
     #[test]
     fn code_fence_becomes_pre() {
         assert_eq!(parse("run\n```\nls -la\n```", &NoNames), vec![Text("run\n".into()), Pre("ls -la".into())]);
+    }
+
+    #[test]
+    fn emoji_shortcodes_become_segments() {
+        assert_eq!(
+            parse("ship it :rocket: 12:30 :partyparrot:", &NoNames),
+            vec![Text("ship it ".into()), Emoji("rocket".into()), Text(" 12:30 ".into()), Emoji("partyparrot".into())]
+        );
+        assert_eq!(plain("go :tada: :custom_one:", &NoNames), "go 🎉 :custom_one:");
     }
 
     #[test]

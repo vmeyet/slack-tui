@@ -133,7 +133,7 @@ fn message_item(names: &NameBook, m: &Message, width: usize, name_w: usize, show
         lines.push(Line::from(spans));
     }
     if !m.reactions.is_empty() {
-        let r: Vec<String> = m.reactions.iter().map(|r| format!(":{}: {}", r.name, r.count)).collect();
+        let r: Vec<String> = m.reactions.iter().map(|r| format!("{} {}", crate::emoji::render(&r.name), r.count)).collect();
         lines.push(Line::from(vec![Span::raw(" ".repeat(indent)), Span::styled(r.join("  "), Style::new().dim())]));
     }
     if show_meta && m.is_thread_root() {

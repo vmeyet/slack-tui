@@ -7,9 +7,9 @@ expression: stable
 "│  🔒vault               ││                 notes                ││               (https://acme.io). A long  │" Hidden by multi-width symbols: [(4, " ")]
 "│  @bob                  ││                 (https://acme.io). A ││               line that needs wrapping   │"
 "│                        ││                 long line that needs ││               inside the pane for sure.  │"
-"│                        ││                 wrapping inside the  ││               :rocket: 3                 │"
+"│                        ││                 wrapping inside the  ││               🚀 3                       │" Hidden by multi-width symbols: [(83, " ")]
 "│                        ││                 pane for sure.       ││HH:MM U2       reply                      │"
-"│                        ││                 :rocket: 3           ││                                          │"
+"│                        ││                 🚀 3                 ││                                          │" Hidden by multi-width symbols: [(45, " ")]
 "│                        ││                 ↳ 2 replies          ││                                          │"
 "│                        ││HH:MM U2         ok                   ││                                          │"
 "│                        ││                                      ││                                          │"
