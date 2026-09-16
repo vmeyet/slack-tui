@@ -2,7 +2,7 @@
 source: src/tui/ui.rs
 expression: stable
 ---
-"┌ channels ──────────────┐┌ C1 ──────────────────────────────────┐┌ thread · 1 replies ──────────────────────┐"
+"╭ channels ──────────────╮╭ C1 ──────────────────────────────────╮╭ thread · 1 replies ──────────────────────╮"
 "│▸ #general              ││── 14 Sep 2023 ───────────────────────││── 14 Sep 2023 ───────────────────────────│"
 "│  🔒vault               ││HH:MM U1         Deploy v2 is out, see││HH:MM U1       Deploy v2 is out, see      │" Hidden by multi-width symbols: [(4, " ")]
 "│  @bob                  ││                 notes. A long line   ││               notes. A long line that    │"
@@ -17,6 +17,6 @@ expression: stable
 "│                        ││                                      ││                                          │"
 "│                        ││                                      ││                                          │"
 "│                        ││                                      ││                                          │"
-"└────────────────────────┘└──────────────────────────────────────┘└──────────────────────────────────────────┘"
+"╰────────────────────────╯╰──────────────────────────────────────╯╰──────────────────────────────────────────╯"
 " reply to #general ▸ typing…▌                                                                                 "
 " ○ #general                                                                          enter send · esc cancel  "

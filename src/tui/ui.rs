@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
 const TIME_W: usize = 5;
 const NAME_W: usize = 10;
@@ -42,10 +42,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
-fn pane(title: &str, focused: bool) -> Block<'static> {
-    let style = if focused { Style::new().cyan() } else { Style::new().dim() };
-    let title = if focused { format!(" {title} ").bold().cyan() } else { format!(" {title} ").into() };
-    Block::bordered().border_style(style).title(title)
+pub const BORDER: Color = Color::Indexed(238);
+
+/// Quiet rounded frame; focus is carried by the title alone.
+pub fn pane(title: &str, focused: bool) -> Block<'static> {
+    let title = if focused { format!(" {title} ").bold().cyan() } else { format!(" {title} ").dim() };
+    Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(BORDER)).title(title)
 }
 
 fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {

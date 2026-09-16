@@ -3,7 +3,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
@@ -75,7 +75,7 @@ pub fn draw(f: &mut Frame, jump: &Jump, area: Rect, highlight: Color) {
     let height = (MAX_SHOWN as u16 + 3).min(area.height);
     let popup = Rect { x: area.x + (area.width - width) / 2, y: area.y + area.height.saturating_sub(height) / 3, width, height };
     f.render_widget(Clear, popup);
-    let block = Block::bordered().border_style(Style::new().cyan()).title(" jump · > to search ".bold().cyan());
+    let block = super::ui::pane("jump · > to search", true);
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let prompt = Line::from(vec![

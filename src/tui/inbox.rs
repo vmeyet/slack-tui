@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
 
 #[derive(Debug, Default)]
 pub struct Inbox {
@@ -86,7 +86,7 @@ pub fn draw(f: &mut Frame, inbox: &Inbox, names: &NameBook, area: Rect, highligh
         (false, 0) => " inbox · all clear ".to_owned(),
         (false, n) => format!(" inbox · {n} "),
     };
-    let block = Block::bordered().border_style(Style::new().cyan()).title(title.bold().cyan());
+    let block = super::ui::pane(title.trim(), true);
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let [list_area, hint_area] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
@@ -152,7 +152,12 @@ fn draw_snooze_picker(f: &mut Frame, area: Rect) {
     };
     f.render_widget(Clear, popup);
     f.render_widget(
-        Paragraph::new(lines).block(Block::bordered().border_style(Style::new().yellow()).title(" snooze for ".bold().yellow())),
+        Paragraph::new(lines).block(
+            Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(Style::new().fg(super::ui::BORDER))
+                .title(" snooze for ".bold().yellow()),
+        ),
         popup,
     );
 }
