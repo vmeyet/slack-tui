@@ -11,6 +11,21 @@ pub struct Config {
     pub workspaces: BTreeMap<String, Workspace>,
     #[serde(default, skip_serializing_if = "Tui::is_default")]
     pub tui: Tui,
+    #[serde(default, skip_serializing_if = "Links::is_default")]
+    pub links: Links,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Links {
+    /// Print `label (url)` instead of a clickable label.
+    #[serde(default)]
+    pub show_url: bool,
+}
+
+impl Links {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -122,6 +137,9 @@ mod tests {
     fn tui_section_is_optional() {
         let config: Config = toml::from_str("default = \"acme\"\n\n[tui]\nhighlight = \"#2a2a2a\"\n").unwrap();
         assert_eq!(config.tui.highlight.as_deref(), Some("#2a2a2a"));
+        assert!(!config.links.show_url);
+        let config: Config = toml::from_str("[links]\nshow_url = true\n").unwrap();
+        assert!(config.links.show_url);
         assert!(!toml::to_string(&Config::default()).unwrap().contains("tui"));
     }
 

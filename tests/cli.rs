@@ -117,6 +117,26 @@ async fn messages_render() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn links_show_url_setting() {
+    let env = Env::new().await;
+    env.mock("conversations.list", channels_payload()).await;
+    env.mock("users.list", users_payload()).await;
+    env.mock(
+        "conversations.history",
+        json!({"messages": [{"ts": "1694700000.000100", "user": "U1", "text": "see <https://acme.io/notes|release notes>"}]}),
+    )
+    .await;
+    let out = stdout(env.slack().args(["messages", "#general"]));
+    assert!(out.contains("see release notes"), "{out}");
+    assert!(!out.contains("acme.io"), "{out}");
+    let config = env.dir.path().join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("config.toml"), "[links]\nshow_url = true\n").unwrap();
+    let out = stdout(env.slack().args(["messages", "#general"]));
+    assert!(out.contains("release notes (https://acme.io/notes)"), "{out}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn messages_json_and_since() {
     let env = Env::new().await;
     env.mock("conversations.list", channels_payload()).await;

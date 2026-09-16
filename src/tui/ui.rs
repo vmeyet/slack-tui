@@ -135,7 +135,7 @@ fn message_item(names: &NameBook, m: &Message, width: usize, name_w: usize, show
         } else {
             vec![Span::raw(" ".repeat(indent))]
         };
-        spans.extend(chunks.iter().map(|(t, s)| Span::styled(t.clone(), style_of(*s))));
+        spans.extend(chunks.iter().map(|p| Span::styled(p.text.clone(), style_of(p.style))));
         lines.push(Line::from(spans));
     }
     if !m.reactions.is_empty() {
@@ -156,7 +156,7 @@ fn body(names: &NameBook, m: &Message) -> Styled {
         if m.text.is_empty() { m.attachments.iter().map(|a| a.fallback.clone()).collect::<Vec<_>>().join("\n") } else { m.text.clone() };
     let mut styled = match m.subtype.as_deref() {
         Some("channel_join") => Styled::dim("joined the channel"),
-        _ => text::from_segments(&mrkdwn::parse(&text, names)),
+        _ => text::from_segments(&mrkdwn::parse(&text, names), false),
     };
     for file in &m.files {
         styled.push_dim(&format!(" 📎 {}", if file.title.is_empty() { &file.name } else { &file.title }));
@@ -173,10 +173,10 @@ fn search_item(m: &SearchMatch, width: usize) -> ListItem<'static> {
         Span::styled(m.username.clone(), user_style(&m.username)),
     ]);
     let mut lines = vec![head];
-    let styled = text::from_segments(&mrkdwn::parse(&m.text, &mrkdwn::NoNames));
+    let styled = text::from_segments(&mrkdwn::parse(&m.text, &mrkdwn::NoNames), false);
     for chunks in styled.wrap_styled(width.saturating_sub(4).max(10)).into_iter().take(3) {
         let mut spans = vec![Span::raw("    ")];
-        spans.extend(chunks.into_iter().map(|(t, s)| Span::styled(t, style_of(s))));
+        spans.extend(chunks.into_iter().map(|p| Span::styled(p.text, style_of(p.style))));
         lines.push(Line::from(spans));
     }
     ListItem::new(lines)
@@ -202,8 +202,10 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let hints = match (app.input.is_some(), app.focus) {
         (true, _) => "enter send · esc cancel",
         (_, Focus::Channels) => "j/k move · enter open · / filter · s search · R refresh · ? help · q quit",
-        (_, Focus::Messages) => "j/k move · enter thread · r reply · t thread reply · e react · o open · y copy · s search · ? help",
-        (_, Focus::Thread) => "j/k move · r reply · e react · o open · y copy · esc close · ? help",
+        (_, Focus::Messages) => {
+            "j/k move · enter thread · r reply · t thread reply · e react · o open · u link · y copy · s search · ? help"
+        }
+        (_, Focus::Thread) => "j/k move · r reply · e react · o open · u link · y copy · esc close · ? help",
     };
     let (dot, dot_style) = match &app.live {
         Live::Live => ("● ", Style::new().green()),
@@ -236,6 +238,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
         "  t             reply in the selected message's thread",
         "  e             react (type the emoji name)",
         "  o / y         open in Slack · copy permalink",
+        "  u             open the message's link in the browser",
         "  s   /         search · filter channels",
         "  R             refresh",
         "  esc           close thread · clear search or filter",

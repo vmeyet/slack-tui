@@ -63,11 +63,16 @@ Use `--raw` to send Slack mrkdwn untouched.
 New messages, edits, deletions and reactions arrive live over Slack's RTM websocket; other channels light up with `●`.
 If the workspace refuses RTM the open conversation is polled every 10 seconds instead (`↻` in the status bar).
 
-Selected row too bright? Set it in `~/.config/slack-cli/config.toml`:
+## Settings
+
+`~/.config/slack-cli/config.toml`:
 
 ```toml
 [tui]
-highlight = "#2a2a2a"   # a name, #rrggbb, or a 0-255 index
+highlight = "#2a2a2a"   # selected row: a name, #rrggbb, or a 0-255 index
+
+[links]
+show_url = false        # true prints `label (url)`; false keeps the label, clickable on OSC 8 terminals
 ```
 
 ## Development

@@ -14,22 +14,43 @@ pub enum Style {
     Mention,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Piece {
+    pub text: String,
+    pub style: Style,
+    pub url: Option<String>,
+}
+
+impl Piece {
+    pub fn new(text: impl Into<String>, style: Style) -> Self {
+        Self { text: text.into(), style, url: None }
+    }
+
+    pub fn link(text: impl Into<String>, url: impl Into<String>) -> Self {
+        Self { text: text.into(), style: Style::Link, url: Some(url.into()) }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Styled {
-    pub spans: Vec<(String, Style)>,
+    pub spans: Vec<Piece>,
 }
 
 impl Styled {
     pub fn dim(s: &str) -> Self {
-        Self { spans: vec![(s.to_owned(), Style::Dim)] }
+        Self { spans: vec![Piece::new(s, Style::Dim)] }
     }
 
     pub fn push_dim(&mut self, s: &str) {
-        self.spans.push((s.to_owned(), Style::Dim));
+        self.spans.push(Piece::new(s, Style::Dim));
     }
 
     pub fn plain_text(&self) -> String {
-        self.spans.iter().map(|(t, _)| t.as_str()).collect()
+        self.spans.iter().map(|p| p.text.as_str()).collect()
+    }
+
+    pub fn urls(&self) -> Vec<String> {
+        self.spans.iter().filter_map(|p| p.url.clone()).collect()
     }
 
     /// Word-wraps to `width` visible columns, returning plain lines carrying no colour.
@@ -38,44 +59,47 @@ impl Styled {
     }
 
     pub fn wrap_with(&self, width: usize, theme: &Theme) -> Vec<String> {
-        self.wrap_styled(width).iter().map(|line| line.iter().map(|(t, s)| paint(theme, t, *s)).collect()).collect()
+        self.wrap_styled(width).iter().map(|line| line.iter().map(|p| paint(theme, p)).collect()).collect()
     }
 
     /// Word-wraps keeping the style of every chunk, for renderers that paint themselves.
-    pub fn wrap_styled(&self, width: usize) -> Vec<Vec<(String, Style)>> {
+    pub fn wrap_styled(&self, width: usize) -> Vec<Vec<Piece>> {
         wrap_spans(&self.spans, width)
     }
 }
 
-pub fn from_segments(segments: &[Segment]) -> Styled {
+/// `show_urls` prints `label (url)`; otherwise a labelled link keeps only its label.
+pub fn from_segments(segments: &[Segment], show_urls: bool) -> Styled {
     let spans = segments
         .iter()
         .map(|s| match s {
-            Segment::Text(t) => (t.clone(), Style::Plain),
-            Segment::Bold(t) => (t.clone(), Style::Bold),
-            Segment::Italic(t) => (t.clone(), Style::Italic),
-            Segment::Strike(t) => (t.clone(), Style::Strike),
-            Segment::Code(t) => (t.clone(), Style::Code),
-            Segment::Pre(t) => (format!("\n{t}\n"), Style::Code),
-            Segment::Link { label, url } if label == url => (url.clone(), Style::Link),
-            Segment::Link { label, url } => (format!("{label} ({url})"), Style::Link),
-            Segment::Mention(n) => (format!("@{n}"), Style::Mention),
-            Segment::Channel(n) => (format!("#{n}"), Style::Mention),
-            Segment::Emoji(n) => (crate::emoji::render(n), Style::Plain),
+            Segment::Text(t) => Piece::new(t.clone(), Style::Plain),
+            Segment::Bold(t) => Piece::new(t.clone(), Style::Bold),
+            Segment::Italic(t) => Piece::new(t.clone(), Style::Italic),
+            Segment::Strike(t) => Piece::new(t.clone(), Style::Strike),
+            Segment::Code(t) => Piece::new(t.clone(), Style::Code),
+            Segment::Pre(t) => Piece::new(format!("\n{t}\n"), Style::Code),
+            Segment::Link { label, url } if label == url => Piece::link(url.clone(), url.clone()),
+            Segment::Link { label, url } if show_urls => Piece::link(format!("{label} ({url})"), url.clone()),
+            Segment::Link { label, url } => Piece::link(label.clone(), url.clone()),
+            Segment::Mention(n) => Piece::new(format!("@{n}"), Style::Mention),
+            Segment::Channel(n) => Piece::new(format!("#{n}"), Style::Mention),
+            Segment::Emoji(n) => Piece::new(crate::emoji::render(n), Style::Plain),
         })
         .collect();
     Styled { spans }
 }
 
-pub fn paint(theme: &Theme, text: &str, style: Style) -> String {
-    match style {
+pub fn paint(theme: &Theme, piece: &Piece) -> String {
+    let text = &piece.text;
+    match piece.style {
         Style::Plain => text.to_owned(),
         Style::Dim => theme.dim(text),
         Style::Bold => theme.bold(text),
         Style::Italic => theme.italic(text),
         Style::Strike => theme.strike(text),
         Style::Code => theme.code(text),
-        Style::Link => theme.link(text),
+        Style::Link => theme.hyperlink(text, piece.url.as_deref().unwrap_or("")),
         Style::Mention => theme.mention(text),
     }
 }
@@ -111,7 +135,7 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
-type Chunks = Vec<(String, Style)>;
+type Chunks = Vec<Piece>;
 
 /// A word is a run of styled pieces with no whitespace between them, so a styled
 /// mention glued to punctuation never breaks in the middle.
@@ -121,7 +145,7 @@ struct Word {
     blank: bool,
 }
 
-fn wrap_spans(spans: &[(String, Style)], width: usize) -> Vec<Chunks> {
+fn wrap_spans(spans: &[Piece], width: usize) -> Vec<Chunks> {
     let mut lines: Vec<Chunks> = Vec::new();
     for paragraph in paragraphs(spans) {
         let mut line: Chunks = Vec::new();
@@ -134,8 +158,8 @@ fn wrap_spans(spans: &[(String, Style)], width: usize) -> Vec<Chunks> {
                     continue;
                 }
             }
-            for (text, style) in &word.pieces {
-                push_chunk(&mut line, text, *style);
+            for piece in &word.pieces {
+                push_chunk(&mut line, piece);
             }
             used += word.width;
         }
@@ -147,15 +171,15 @@ fn wrap_spans(spans: &[(String, Style)], width: usize) -> Vec<Chunks> {
     lines
 }
 
-fn paragraphs(spans: &[(String, Style)]) -> Vec<Chunks> {
+fn paragraphs(spans: &[Piece]) -> Vec<Chunks> {
     let mut out: Vec<Chunks> = vec![Vec::new()];
-    for (text, style) in spans {
-        for (i, part) in text.split('\n').enumerate() {
+    for piece in spans {
+        for (i, part) in piece.text.split('\n').enumerate() {
             if i > 0 {
                 out.push(Vec::new());
             }
             if !part.is_empty() {
-                out.last_mut().expect("one paragraph").push((part.to_owned(), *style));
+                out.last_mut().expect("one paragraph").push(Piece { text: part.to_owned(), ..piece.clone() });
             }
         }
     }
@@ -165,15 +189,16 @@ fn paragraphs(spans: &[(String, Style)]) -> Vec<Chunks> {
 fn words(paragraph: &Chunks) -> Vec<Word> {
     let mut words: Vec<Word> = Vec::new();
     let mut open = false;
-    for (text, style) in paragraph {
-        for piece in split_words(text) {
-            let blank = piece.trim().is_empty();
+    for piece in paragraph {
+        for word in split_words(&piece.text) {
+            let blank = word.trim().is_empty();
+            let part = Piece { text: word.to_owned(), ..piece.clone() };
             if blank || !open {
-                words.push(Word { pieces: vec![(piece.to_owned(), *style)], width: piece.width(), blank });
+                words.push(Word { pieces: vec![part], width: word.width(), blank });
             } else {
                 let last = words.last_mut().expect("open word");
-                last.pieces.push((piece.to_owned(), *style));
-                last.width += piece.width();
+                last.pieces.push(part);
+                last.width += word.width();
             }
             open = !blank;
         }
@@ -181,19 +206,18 @@ fn words(paragraph: &Chunks) -> Vec<Word> {
     words
 }
 
-fn push_chunk(line: &mut Chunks, word: &str, style: Style) {
+fn push_chunk(line: &mut Chunks, piece: &Piece) {
     match line.last_mut() {
-        Some((text, s)) if *s == style => text.push_str(word),
-        _ => line.push((word.to_owned(), style)),
+        Some(last) if last.style == piece.style && last.url == piece.url => last.text.push_str(&piece.text),
+        _ => line.push(piece.clone()),
     }
 }
 
 fn trim_line(mut line: Chunks) -> Chunks {
-    if let Some((text, _)) = line.last_mut() {
-        let trimmed = text.trim_end().to_owned();
-        *text = trimmed;
+    if let Some(last) = line.last_mut() {
+        last.text = last.text.trim_end().to_owned();
     }
-    line.retain(|(t, _)| !t.is_empty());
+    line.retain(|p| !p.text.is_empty());
     line
 }
 
@@ -221,15 +245,15 @@ mod tests {
 
     #[test]
     fn wraps_at_word_boundaries() {
-        let s = Styled { spans: vec![("the quick brown fox jumps".into(), Style::Plain)] };
+        let s = Styled { spans: vec![Piece::new("the quick brown fox jumps", Style::Plain)] };
         assert_eq!(s.wrap(10), vec!["the quick", "brown fox", "jumps"]);
     }
 
     #[test]
     fn newlines_force_breaks_and_styles_span_words() {
-        let s = Styled { spans: vec![("a b".into(), Style::Plain), ("\nc".into(), Style::Bold)] };
+        let s = Styled { spans: vec![Piece::new("a b", Style::Plain), Piece::new("\nc", Style::Bold)] };
         assert_eq!(s.wrap(80), vec!["a b", "c"]);
-        let t = Theme { color: true, width: 80 };
+        let t = Theme { color: true, width: 80, show_urls: false };
         let colored = s.wrap_with(80, &t);
         assert!(colored[1].contains("\x1b[1m"));
         assert_eq!(visible_width(&colored[1]), 1);
@@ -237,15 +261,25 @@ mod tests {
 
     #[test]
     fn long_word_is_kept_whole() {
-        let s = Styled { spans: vec![("abcdefghijkl x".into(), Style::Plain)] };
+        let s = Styled { spans: vec![Piece::new("abcdefghijkl x", Style::Plain)] };
         assert_eq!(s.wrap(5), vec!["abcdefghijkl", "x"]);
     }
 
     #[test]
     fn styled_pieces_glued_to_punctuation_stay_together() {
-        let s = Styled { spans: vec![("with ".into(), Style::Plain), ("@Gabriel".into(), Style::Mention), (":".into(), Style::Plain)] };
+        let s = Styled {
+            spans: vec![Piece::new("with ", Style::Plain), Piece::new("@Gabriel", Style::Mention), Piece::new(":", Style::Plain)],
+        };
         assert_eq!(s.wrap(13), vec!["with", "@Gabriel:"]);
         assert_eq!(s.wrap_styled(20)[0].len(), 3);
+    }
+
+    #[test]
+    fn links_keep_label_only_unless_asked() {
+        let segs = vec![Segment::Link { label: "docs".into(), url: "https://a.io".into() }];
+        assert_eq!(from_segments(&segs, false).plain_text(), "docs");
+        assert_eq!(from_segments(&segs, true).plain_text(), "docs (https://a.io)");
+        assert_eq!(from_segments(&segs, false).urls(), vec!["https://a.io"]);
     }
 
     #[test]

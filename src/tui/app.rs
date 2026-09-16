@@ -66,6 +66,7 @@ pub enum Action {
     React { channel: String, ts: String, name: String },
     Search(String),
     Open { channel: String, ts: String },
+    OpenUrl(String),
     Yank { channel: String, ts: String },
 }
 
@@ -347,6 +348,10 @@ impl App {
                     return vec![Action::Open { channel, ts }];
                 }
             }
+            KeyCode::Char('u') => match self.selected_message().and_then(first_link) {
+                Some(url) => return vec![Action::OpenUrl(url)],
+                None => self.status = "no link in this message".into(),
+            },
             KeyCode::Char('y') => {
                 if let Some((channel, ts)) = self.selected_ref() {
                     return vec![Action::Yank { channel, ts }];
@@ -572,6 +577,14 @@ impl App {
     }
 }
 
+fn first_link(m: &Message) -> Option<String> {
+    let in_text = crate::mrkdwn::parse(&m.text, &crate::mrkdwn::NoNames).into_iter().find_map(|s| match s {
+        crate::mrkdwn::Segment::Link { url, .. } => Some(url),
+        _ => None,
+    });
+    in_text.or_else(|| m.files.iter().map(|f| f.permalink.clone()).find(|p| !p.is_empty()))
+}
+
 fn adjust_reaction(reactions: &mut Vec<Reaction>, name: &str, added: bool) {
     match reactions.iter_mut().position(|r| r.name == name) {
         Some(i) if added => reactions[i].count += 1,
@@ -707,6 +720,18 @@ mod tests {
             app.handle_key(key(c));
         }
         assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "tada".into() }]);
+    }
+
+    #[test]
+    fn u_opens_the_first_link_of_the_selected_message() {
+        let mut app = loaded();
+        app.handle_key(code(KeyCode::Enter));
+        let linked = msg("1", "see <https://a.io|docs> and <https://b.io>");
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![linked, msg("2", "nothing")], names: NameBook::default() });
+        assert_eq!(app.handle_key(key('u')), vec![]);
+        assert_eq!(app.status, "no link in this message");
+        app.handle_key(key('k'));
+        assert_eq!(app.handle_key(key('u')), vec![Action::OpenUrl("https://a.io".into())]);
     }
 
     #[test]

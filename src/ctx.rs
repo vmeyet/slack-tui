@@ -31,7 +31,7 @@ impl Ctx {
             dir: Directory::new(slack.clone(), cache),
             slack,
             json,
-            theme: Theme::detect(),
+            theme: Theme::detect().with_show_urls(config.links.show_url),
             workspace: resolved.workspace,
             config: config.clone(),
         })

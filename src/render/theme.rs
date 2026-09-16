@@ -5,6 +5,8 @@ use std::io::IsTerminal;
 pub struct Theme {
     pub color: bool,
     pub width: usize,
+    /// Print `label (url)` instead of a clickable label.
+    pub show_urls: bool,
 }
 
 const USER_COLORS: [AnsiColors; 6] =
@@ -20,11 +22,22 @@ impl Theme {
             .or_else(|| crossterm::terminal::size().ok().map(|(w, _)| w as usize))
             .filter(|w| *w > 0)
             .unwrap_or(100);
-        Self { color, width }
+        Self { color, width, show_urls: false }
     }
 
     pub fn plain(width: usize) -> Self {
-        Self { color: false, width }
+        Self { color: false, width, show_urls: false }
+    }
+
+    pub fn with_show_urls(mut self, show_urls: bool) -> Self {
+        self.show_urls = show_urls;
+        self
+    }
+
+    /// A label that opens `url` on terminals speaking OSC 8, plain underlined text elsewhere.
+    pub fn hyperlink(&self, label: &str, url: &str) -> String {
+        let text = self.paint(label, |s| s.blue().underline().to_string());
+        if self.color && !url.is_empty() { format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\") } else { text }
     }
 
     fn paint(&self, s: &str, f: impl FnOnce(&str) -> String) -> String {
@@ -62,7 +75,10 @@ impl Theme {
         if label == url || url.is_empty() {
             return self.link(label);
         }
-        format!("{} {}", self.paint(label, |s| s.underline().to_string()), self.dim(&format!("({url})")))
+        if self.show_urls {
+            return format!("{} {}", self.paint(label, |s| s.underline().to_string()), self.dim(&format!("({url})")));
+        }
+        self.hyperlink(label, url)
     }
     pub fn mention(&self, s: &str) -> String {
         self.paint(s, |s| s.magenta().to_string())
@@ -76,5 +92,22 @@ impl Theme {
     pub fn user(&self, name: &str) -> String {
         let idx = name.trim().bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(b as usize)) % USER_COLORS.len();
         self.paint(name, |s| s.color(USER_COLORS[idx]).bold().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labelled_links_follow_the_setting() {
+        let plain = Theme::plain(80);
+        assert_eq!(plain.link_labelled("docs", "https://a.io"), "docs");
+        assert_eq!(plain.with_show_urls(true).link_labelled("docs", "https://a.io"), "docs (https://a.io)");
+        assert_eq!(Theme::plain(80).link_labelled("https://a.io", "https://a.io"), "https://a.io");
+        let color = Theme { color: true, width: 80, show_urls: false };
+        let out = color.link_labelled("docs", "https://a.io");
+        assert!(out.starts_with("\x1b]8;;https://a.io\x1b\\"), "{out:?}");
+        assert!(out.ends_with("\x1b]8;;\x1b\\"));
     }
 }

@@ -127,6 +127,10 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
             std::process::Command::new("open").arg(&url).spawn()?;
             Ok(Incoming::Status("opened in Slack".into()))
         }
+        Action::OpenUrl(url) => {
+            std::process::Command::new("open").arg(&url).spawn()?;
+            Ok(Incoming::Status(format!("opened {url}")))
+        }
         Action::Yank { channel, ts } => {
             let url = slack.permalink(&channel, &ts).await?;
             let mut child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;

@@ -74,7 +74,7 @@ pub fn message(t: &Theme, names: &NameBook, m: &Message, indent: usize) -> Strin
     let head = format!("{}{}{}{}{}", " ".repeat(indent), t.time(&time::hhmm(&m.ts)), " ".repeat(GAP), t.user(&name), " ".repeat(GAP));
     let show_ts = t.width >= 80;
     let text_width = t.width.saturating_sub(indent + TEXT_START + if show_ts { TS_WIDTH + 2 } else { 0 }).max(20);
-    let mut lines = body(names, m).wrap_with(text_width, t);
+    let mut lines = body(t, names, m).wrap_with(text_width, t);
     if lines.is_empty() {
         lines.push(String::new());
     }
@@ -119,7 +119,7 @@ fn author(names: &NameBook, m: &Message) -> String {
     m.bot_id.clone().map(|_| "bot".to_owned()).unwrap_or_else(|| "?".to_owned())
 }
 
-fn body(names: &NameBook, m: &Message) -> Styled {
+fn body(t: &Theme, names: &NameBook, m: &Message) -> Styled {
     let mut text = m.text.clone();
     if text.is_empty() {
         text = m
@@ -132,7 +132,7 @@ fn body(names: &NameBook, m: &Message) -> Styled {
     let mut styled = match m.subtype.as_deref() {
         Some("channel_join") => Styled::dim("joined the channel"),
         Some("channel_leave") => Styled::dim("left the channel"),
-        _ => text::from_segments(&mrkdwn::parse(&text, names)),
+        _ => text::from_segments(&mrkdwn::parse(&text, names), t.show_urls),
     };
     if m.edited.is_some() {
         styled.push_dim(" (edited)");
@@ -152,7 +152,8 @@ pub fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
         let when = format!("{} {}", time::day_label(&m.ts), time::hhmm(&m.ts));
         let head = format!("  {}  {}  ", t.dim(&when), t.user(&fit(&m.username, NAME_COL)));
         let indent = 2 + when.width() + 2 + NAME_COL + 2;
-        let lines = text::from_segments(&mrkdwn::parse(&m.text, &mrkdwn::NoNames)).wrap(t.width.saturating_sub(indent).max(20));
+        let lines = text::from_segments(&mrkdwn::parse(&m.text, &mrkdwn::NoNames), t.show_urls)
+            .wrap_with(t.width.saturating_sub(indent).max(20), t);
         for (i, line) in lines.iter().enumerate() {
             out.push_str(if i == 0 { &head } else { "" });
             if i > 0 {
