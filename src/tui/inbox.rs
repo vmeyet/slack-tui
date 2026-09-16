@@ -17,6 +17,7 @@ pub struct Inbox {
     pub picking_snooze: bool,
     pub state: State,
     pub flash: String,
+    pub view: ListState,
 }
 
 impl Inbox {
@@ -78,7 +79,7 @@ impl Inbox {
     }
 }
 
-pub fn draw(f: &mut Frame, inbox: &Inbox, names: &NameBook, area: Rect, highlight: Color) {
+pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, highlight: Color) {
     let popup = centered(area, 92, 90);
     f.render_widget(Clear, popup);
     let title = match (inbox.loading, inbox.items.len()) {
@@ -96,8 +97,8 @@ pub fn draw(f: &mut Frame, inbox: &Inbox, names: &NameBook, area: Rect, highligh
     let width = list_area.width as usize;
     let items: Vec<ListItem> = inbox.items.iter().map(|i| item_lines(i, names, width)).collect();
     let list = List::new(items).highlight_style(Style::new().bg(highlight).add_modifier(Modifier::BOLD));
-    let mut state = ListState::default().with_selected((!inbox.items.is_empty()).then_some(inbox.selected));
-    f.render_stateful_widget(list, list_area, &mut state);
+    inbox.view.select((!inbox.items.is_empty()).then_some(inbox.selected));
+    f.render_stateful_widget(list, list_area, &mut inbox.view);
     let hints = "→ read · ← snooze · r reply · enter open · o slack · a all read · R refresh · esc close";
     let flash = if inbox.flash.is_empty() { String::new() } else { format!(" {} ·", inbox.flash) };
     f.render_widget(
@@ -225,7 +226,7 @@ mod tests {
         inbox.set_items(vec![item("a", Kind::Dm)]);
         inbox.picking_snooze = true;
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
-        terminal.draw(|f| draw(f, &inbox, &NameBook::default(), f.area(), Color::Indexed(236))).unwrap();
+        terminal.draw(|f| draw(f, &mut inbox, &NameBook::default(), f.area(), Color::Indexed(236))).unwrap();
         let out = terminal.backend().to_string();
         assert!(out.contains("inbox · 1"));
         assert!(out.contains("snooze for"));

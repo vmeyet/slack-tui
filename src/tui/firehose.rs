@@ -16,6 +16,7 @@ const CHANNEL_COLORS: [Color; 6] = [Color::Cyan, Color::Green, Color::Yellow, Co
 #[derive(Debug, Default)]
 pub struct Firehose {
     pub selected: Option<usize>,
+    pub view: ListState,
 }
 
 impl Firehose {
@@ -45,7 +46,15 @@ pub fn push(wall: &mut VecDeque<LiveLine>, line: LiveLine) {
     wall.push_back(line);
 }
 
-pub fn draw(f: &mut Frame, view: &Firehose, wall: &VecDeque<LiveLine>, names: &NameBook, hl: &Highlighter, area: Rect, highlight: Color) {
+pub fn draw(
+    f: &mut Frame,
+    view: &mut Firehose,
+    wall: &VecDeque<LiveLine>,
+    names: &NameBook,
+    hl: &Highlighter,
+    area: Rect,
+    highlight: Color,
+) {
     let status = if view.following() { "live" } else { "paused · G to follow" };
     let block = super::ui::pane(&format!("firehose · {} · {status}", wall.len()), true);
     let inner = block.inner(area);
@@ -58,8 +67,8 @@ pub fn draw(f: &mut Frame, view: &Firehose, wall: &VecDeque<LiveLine>, names: &N
     } else {
         Style::new().bg(highlight).add_modifier(Modifier::BOLD)
     });
-    let mut state = ListState::default().with_selected(selected);
-    f.render_stateful_widget(list, inner, &mut state);
+    view.view.select(selected);
+    f.render_stateful_widget(list, inner, &mut view.view);
     if wall.is_empty() {
         f.render_widget(ratatui::widgets::Paragraph::new("  waiting for messages…".dim()), Rect { y: inner.y + 1, ..inner });
     }
@@ -143,7 +152,8 @@ mod tests {
         push(&mut wall, LiveLine { text: "quiet".into(), in_thread: false, ..line(2) });
         let hl = Highlighter::new(&["prod".into()]).unwrap();
         let mut terminal = Terminal::new(TestBackend::new(80, 6)).unwrap();
-        terminal.draw(|f| draw(f, &Firehose::default(), &wall, &NameBook::default(), &hl, f.area(), Color::Indexed(236))).unwrap();
+        let mut view = Firehose::default();
+        terminal.draw(|f| draw(f, &mut view, &wall, &NameBook::default(), &hl, f.area(), Color::Indexed(236))).unwrap();
         let out = terminal.backend().to_string();
         assert!(out.contains("firehose · 2 · live"));
         assert!(out.contains("! "));

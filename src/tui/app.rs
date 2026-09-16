@@ -8,6 +8,7 @@ use crate::inbox::{Item, Snooze, State};
 use crate::resolve::NameBook;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
+use ratatui::widgets::ListState;
 use std::collections::VecDeque;
 
 pub const DEFAULT_HIGHLIGHT: Color = Color::Indexed(236);
@@ -136,6 +137,10 @@ pub struct App {
     pub wall: VecDeque<LiveLine>,
     pub firehose: Option<Firehose>,
     pub highlighter: Highlighter,
+    /// Scroll offsets survive between frames so the viewport only moves when the selection leaves it.
+    pub channels_view: ListState,
+    pub messages_view: ListState,
+    pub thread_view: ListState,
 }
 
 impl Default for App {
@@ -167,6 +172,9 @@ impl Default for App {
             wall: VecDeque::new(),
             firehose: None,
             highlighter: Highlighter::default(),
+            channels_view: ListState::default(),
+            messages_view: ListState::default(),
+            thread_view: ListState::default(),
         }
     }
 }
@@ -246,6 +254,9 @@ impl App {
             Incoming::Replies { channel, ts, messages, names } => {
                 self.names = names;
                 let selected = messages.len().saturating_sub(1);
+                if self.thread.as_ref().is_none_or(|t| t.root_ts != ts) {
+                    self.thread_view = ListState::default();
+                }
                 self.thread = Some(Thread { channel, root_ts: ts, messages, selected });
             }
             Incoming::Sent { channel, thread_ts } => {
@@ -805,6 +816,8 @@ impl App {
         self.unread.remove(&id);
         self.current_channel = Some(id.clone());
         self.messages.clear();
+        self.messages_view = ListState::default();
+        self.thread_view = ListState::default();
         self.thread = None;
         self.focus = Focus::Messages;
         self.loading = true;

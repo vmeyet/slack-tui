@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Wrap};
 
 const TIME_W: usize = 5;
 const NAME_W: usize = 10;
@@ -31,15 +31,16 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         draw_input(f, app, input);
     }
     draw_status(f, app, status);
-    if let Some(inbox) = &app.inbox {
-        super::inbox::draw(f, inbox, &app.names, main, app.highlight);
+    let highlight = app.highlight;
+    if let Some(inbox) = &mut app.inbox {
+        super::inbox::draw(f, inbox, &app.names, main, highlight);
     }
-    if let Some(view) = &app.firehose {
+    if let Some(view) = &mut app.firehose {
         f.render_widget(Clear, main);
-        super::firehose::draw(f, view, &app.wall, &app.names, &app.highlighter, main, app.highlight);
+        super::firehose::draw(f, view, &app.wall, &app.names, &app.highlighter, main, highlight);
     }
-    if let Some(jump) = &app.jump {
-        super::jump::draw(f, jump, main, app.highlight);
+    if let Some(jump) = &mut app.jump {
+        super::jump::draw(f, jump, main, highlight);
     }
     if app.help {
         draw_help(f, f.area());
@@ -86,8 +87,8 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     let title = if app.filter.is_empty() { "channels".to_owned() } else { format!("channels /{}", app.filter) };
     let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
-    let mut state = ListState::default().with_selected(Some(app.channel_selected));
-    f.render_stateful_widget(list, area, &mut state);
+    app.channels_view.select(Some(app.channel_selected));
+    f.render_stateful_widget(list, area, &mut app.channels_view);
 }
 
 fn highlight(app: &App, focused: bool) -> Style {
@@ -113,8 +114,8 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let empty = items.is_empty();
     let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
-    let mut state = ListState::default().with_selected((!empty).then_some(app.message_selected));
-    f.render_stateful_widget(list, area, &mut state);
+    app.messages_view.select((!empty).then_some(app.message_selected));
+    f.render_stateful_widget(list, area, &mut app.messages_view);
     if empty && app.current_channel.is_none() {
         let hint = Paragraph::new("pick a conversation on the left, enter to open".dim()).block(Block::default());
         f.render_widget(hint, Rect { x: area.x + 2, y: area.y + 2, width: area.width.saturating_sub(4), height: 1 });
@@ -128,8 +129,9 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let items: Vec<ListItem> = grouped_items(&app.names, &thread.messages, width, 8, false);
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
     let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
-    let mut state = ListState::default().with_selected((!thread.messages.is_empty()).then_some(thread.selected));
-    f.render_stateful_widget(list, area, &mut state);
+    let selected = (!thread.messages.is_empty()).then_some(thread.selected);
+    app.thread_view.select(selected);
+    f.render_stateful_widget(list, area, &mut app.thread_view);
 }
 
 /// One list item per message, with a dim day line on the first message of each day and

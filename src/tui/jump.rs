@@ -27,6 +27,7 @@ pub struct Jump {
     pub channels: Vec<Candidate>,
     pub people: Vec<Candidate>,
     pub threads: Vec<Candidate>,
+    pub view: ListState,
 }
 
 impl Jump {
@@ -70,7 +71,7 @@ impl Jump {
     }
 }
 
-pub fn draw(f: &mut Frame, jump: &Jump, area: Rect, highlight: Color) {
+pub fn draw(f: &mut Frame, jump: &mut Jump, area: Rect, highlight: Color) {
     let width = (area.width * 3 / 5).clamp(30.min(area.width), area.width);
     let height = (MAX_SHOWN as u16 + 3).min(area.height);
     let popup = Rect { x: area.x + (area.width - width) / 2, y: area.y + area.height.saturating_sub(height) / 3, width, height };
@@ -103,8 +104,8 @@ pub fn draw(f: &mut Frame, jump: &Jump, area: Rect, highlight: Color) {
         .collect();
     let empty = items.is_empty();
     let list = List::new(items).highlight_style(Style::new().bg(highlight).add_modifier(Modifier::BOLD));
-    let mut state = ListState::default().with_selected((!empty).then_some(jump.selected));
-    f.render_stateful_widget(list, list_area, &mut state);
+    jump.view.select((!empty).then_some(jump.selected));
+    f.render_stateful_widget(list, list_area, &mut jump.view);
     if empty {
         f.render_widget(Paragraph::new("   no match".dim()), list_area);
     }
