@@ -1,6 +1,7 @@
 use super::app::{App, Focus, Input, Kind, Live};
 use crate::api::{Message, SearchMatch};
 use crate::mrkdwn;
+use crate::render;
 use crate::render::text::{self, Style as TextStyle, Styled};
 use crate::render::time;
 use crate::resolve::NameBook;
@@ -102,7 +103,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = match &app.search {
         Some(results) => results.iter().map(|m| search_item(m, width)).collect(),
-        None => app.messages.iter().map(|m| message_item(&app.names, m, width, NAME_W, true)).collect(),
+        None => grouped_items(&app.names, &app.messages, width, NAME_W, true),
     };
     let empty = items.is_empty();
     let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
@@ -118,20 +119,49 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Thread;
     let Some(thread) = &app.thread else { return };
     let width = area.width.saturating_sub(2) as usize;
-    let items: Vec<ListItem> = thread.messages.iter().map(|m| message_item(&app.names, m, width, 8, false)).collect();
+    let items: Vec<ListItem> = grouped_items(&app.names, &thread.messages, width, 8, false);
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
     let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
     let mut state = ListState::default().with_selected((!thread.messages.is_empty()).then_some(thread.selected));
     f.render_stateful_widget(list, area, &mut state);
 }
 
-fn message_item(names: &NameBook, m: &Message, width: usize, name_w: usize, show_meta: bool) -> ListItem<'static> {
+/// One list item per message, with a dim day line on the first message of each day and
+/// no header on messages that continue the previous one.
+fn grouped_items(names: &NameBook, messages: &[Message], width: usize, name_w: usize, show_meta: bool) -> Vec<ListItem<'static>> {
+    let mut items = Vec::with_capacity(messages.len());
+    let mut prev: Option<&Message> = None;
+    let mut last_day = String::new();
+    for m in messages {
+        let day = time::day_label(&m.ts);
+        let new_day = day != last_day;
+        last_day = day;
+        items.push(message_item(names, m, width, name_w, show_meta, render::continues(prev, m), new_day));
+        prev = Some(m);
+    }
+    items
+}
+
+fn message_item(
+    names: &NameBook,
+    m: &Message,
+    width: usize,
+    name_w: usize,
+    show_meta: bool,
+    continued: bool,
+    new_day: bool,
+) -> ListItem<'static> {
     let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
     let indent = TIME_W + 1 + name_w + 1;
     let styled = body(names, m);
     let mut lines: Vec<Line> = Vec::new();
+    if new_day {
+        let label = time::day_label(&m.ts);
+        let dashes = "─".repeat(width.saturating_sub(label.len() + 4));
+        lines.push(Line::from(Span::styled(format!("── {label} {dashes}"), Style::new().dim())));
+    }
     for (i, chunks) in styled.wrap_styled(width.saturating_sub(indent).max(10)).iter().enumerate() {
-        let mut spans = if i == 0 {
+        let mut spans = if i == 0 && !continued {
             vec![
                 Span::styled(time::hhmm(&m.ts), Style::new().dim()),
                 Span::raw(" "),

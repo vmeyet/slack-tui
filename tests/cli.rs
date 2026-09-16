@@ -107,12 +107,13 @@ async fn messages_render() {
     env.mock("conversations.list", channels_payload()).await;
     env.mock("users.list", users_payload()).await;
     env.mock("conversations.history", json!({"messages": [
+        {"ts": "1694700160.000300", "user": "U2", "text": "same author, a minute later"},
         {"ts": "1694700100.000200", "user": "U2", "text": "short reply <@U1> :tada:", "thread_ts": "1694700000.000100"},
         {"ts": "1694700000.000100", "user": "U1", "text": "Deploy *v2.3* is out, see <https://acme.io/notes|release notes> and <#C1|general>. This line is long enough to wrap around the terminal width for sure.", "reply_count": 2, "thread_ts": "1694700000.000100", "latest_reply": "1694700100.000200", "reactions": [{"name": "rocket", "count": 3}], "edited": {"ts": "1"}},
         {"ts": "1694600000.000100", "subtype": "channel_join", "user": "U2", "text": "<@U2> has joined"},
         {"ts": "1694500000.000100", "bot_id": "B1", "username": "deploybot", "text": "", "attachments": [{"fallback": "build #12 passed"}], "files": [{"name": "log.txt", "permalink": "https://acme.slack.com/files/log"}]}
     ]})).await;
-    let out = stdout(env.slack().args(["messages", "#general", "-n", "4"]));
+    let out = stdout(env.slack().args(["messages", "#general", "-n", "5"]));
     insta::assert_snapshot!(out);
 }
 

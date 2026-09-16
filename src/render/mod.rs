@@ -16,6 +16,30 @@ const NAME_COL: usize = 12;
 const GAP: usize = 2;
 const TEXT_START: usize = TIME_COL + GAP + NAME_COL + GAP;
 const TS_WIDTH: usize = 17;
+const GROUP_WINDOW_SECS: f64 = 5.0 * 60.0;
+
+/// Slack-style grouping: a message continues the previous one when the same author
+/// sent it within a few minutes, on the same day, and neither is a system notice.
+pub fn continues(prev: Option<&Message>, m: &Message) -> bool {
+    let Some(prev) = prev else { return false };
+    let same_author = match (&m.user, &prev.user) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => m.username == prev.username && m.bot_id == prev.bot_id && (m.username.is_some() || m.bot_id.is_some()),
+        _ => false,
+    };
+    let secs = |ts: &str| ts.parse::<f64>().unwrap_or(0.0);
+    same_author
+        && m.subtype.is_none()
+        && prev.subtype.is_none()
+        && secs(&m.ts) - secs(&prev.ts) < GROUP_WINDOW_SECS
+        && time::day_label(&m.ts) == time::day_label(&prev.ts)
+}
+
+pub fn day_separator(t: &Theme, ts: &str, width: usize) -> String {
+    let label = time::day_label(ts);
+    let dashes = "─".repeat(width.saturating_sub(label.width() + 4).clamp(2, 6));
+    t.dim(&format!("── {label} {dashes}"))
+}
 
 pub fn whoami(t: &Theme, me: &Identity, workspace: Option<&str>) -> String {
     let host = workspace.map(|w| format!("{w}.slack.com")).unwrap_or_else(|| me.url.clone());
@@ -40,16 +64,20 @@ pub fn messages(t: &Theme, names: &NameBook, title: &str, messages: &[Message], 
         return out;
     }
     let mut last_day = String::new();
+    let mut prev: Option<&Message> = None;
     for m in messages {
         let day = time::day_label(&m.ts);
         if day != last_day {
-            out.push_str(&format!("{}{}\n", " ".repeat(TEXT_START), t.dim(&format!("── {day}"))));
+            out.push_str(&format!("{}{}\n", " ".repeat(TEXT_START), day_separator(t, &m.ts, 30)));
             last_day = day;
         }
-        out.push_str(&message(t, names, m, 0));
+        out.push_str(&message_line(t, names, m, 0, continues(prev, m)));
+        prev = Some(m);
         if let Some(thread) = replies.get(&m.ts) {
+            let mut prev_reply: Option<&Message> = None;
             for r in thread.iter().filter(|r| r.ts != m.ts) {
-                out.push_str(&message(t, names, r, 4));
+                out.push_str(&message_line(t, names, r, 4, continues(prev_reply, r)));
+                prev_reply = Some(r);
             }
         }
     }
@@ -69,9 +97,17 @@ pub fn thread(t: &Theme, names: &NameBook, channel: &str, messages: &[Message]) 
 }
 
 pub fn message(t: &Theme, names: &NameBook, m: &Message, indent: usize) -> String {
+    message_line(t, names, m, indent, false)
+}
+
+fn message_line(t: &Theme, names: &NameBook, m: &Message, indent: usize, continued: bool) -> String {
     let author = author(names, m);
     let name = fit(&author, NAME_COL);
-    let head = format!("{}{}{}{}{}", " ".repeat(indent), t.time(&time::hhmm(&m.ts)), " ".repeat(GAP), t.user(&name), " ".repeat(GAP));
+    let head = if continued {
+        " ".repeat(indent + TEXT_START)
+    } else {
+        format!("{}{}{}{}{}", " ".repeat(indent), t.time(&time::hhmm(&m.ts)), " ".repeat(GAP), t.user(&name), " ".repeat(GAP))
+    };
     let show_ts = t.width >= 80;
     let text_width = t.width.saturating_sub(indent + TEXT_START + if show_ts { TS_WIDTH + 2 } else { 0 }).max(20);
     let mut lines = body(t, names, m).wrap_with(text_width, t);
@@ -271,4 +307,29 @@ pub fn fit(s: &str, width: usize) -> String {
 
 fn pad(s: &str, width: usize) -> String {
     format!("{s}{}", " ".repeat(width.saturating_sub(s.width())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(ts: &str, user: Option<&str>) -> Message {
+        Message { ts: ts.into(), user: user.map(str::to_owned), text: "x".into(), ..Default::default() }
+    }
+
+    #[test]
+    fn grouping_rules() {
+        let a = msg("1694700000.000000", Some("U1"));
+        assert!(!continues(None, &a));
+        assert!(continues(Some(&a), &msg("1694700100.000000", Some("U1"))));
+        assert!(!continues(Some(&a), &msg("1694700400.000000", Some("U1"))));
+        assert!(!continues(Some(&a), &msg("1694700100.000000", Some("U2"))));
+        let joined = Message { subtype: Some("channel_join".into()), ..msg("1694700100.000000", Some("U1")) };
+        assert!(!continues(Some(&a), &joined));
+        let bot = Message { username: Some("deploybot".into()), ..msg("1694700000.000000", None) };
+        let bot2 = Message { username: Some("deploybot".into()), ..msg("1694700010.000000", None) };
+        assert!(continues(Some(&bot), &bot2));
+        let anon = msg("1694700010.000000", None);
+        assert!(!continues(Some(&anon), &anon));
+    }
 }

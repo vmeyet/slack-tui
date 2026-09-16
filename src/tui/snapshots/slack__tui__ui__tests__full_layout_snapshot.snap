@@ -3,15 +3,15 @@ source: src/tui/ui.rs
 expression: stable
 ---
 "┌ channels ──────────────┐┌ C1 ──────────────────────────────────┐┌ thread · 1 replies ──────────────────────┐"
-"│▸ #general              ││HH:MM U1         Deploy v2 is out, see││HH:MM U1       Deploy v2 is out, see      │"
-"│  🔒vault               ││                 notes. A long line   ││               notes. A long line that    │" Hidden by multi-width symbols: [(4, " ")]
-"│  @bob                  ││                 that needs wrapping  ││               needs wrapping inside the  │"
+"│▸ #general              ││── 14 Sep 2023 ───────────────────────││── 14 Sep 2023 ───────────────────────────│"
+"│  🔒vault               ││HH:MM U1         Deploy v2 is out, see││HH:MM U1       Deploy v2 is out, see      │" Hidden by multi-width symbols: [(4, " ")]
+"│  @bob                  ││                 notes. A long line   ││               notes. A long line that    │"
+"│                        ││                 that needs wrapping  ││               needs wrapping inside the  │"
 "│                        ││                 inside the pane for  ││               pane for sure.             │"
 "│                        ││                 sure.                ││               🚀 3                       │" Hidden by multi-width symbols: [(83, " ")]
 "│                        ││                 🚀 3                 ││HH:MM U2       reply                      │" Hidden by multi-width symbols: [(45, " ")]
 "│                        ││                 ↳ 2 replies          ││                                          │"
 "│                        ││HH:MM U2         ok                   ││                                          │"
-"│                        ││                                      ││                                          │"
 "│                        ││                                      ││                                          │"
 "│                        ││                                      ││                                          │"
 "│                        ││                                      ││                                          │"
