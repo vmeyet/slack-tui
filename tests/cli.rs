@@ -59,14 +59,19 @@ fn channels_payload() -> Value {
         {"id": "C1", "name": "general", "is_member": true, "num_members": 42, "topic": {"value": "Company wide"}},
         {"id": "C2", "name": "vivien-vault", "is_private": true, "is_member": true, "num_members": 1},
         {"id": "C3", "name": "random", "is_member": false, "num_members": 40},
-        {"id": "D1", "is_im": true, "user": "U2"}
+        {"id": "D1", "is_im": true, "user": "U2"},
+        {"id": "D2", "is_im": true, "user": "U3"},
+        {"id": "D3", "is_im": true, "user": "U4"},
+        {"id": "D4", "is_im": true, "user": "USLACKBOT"}
     ]})
 }
 
 fn users_payload() -> Value {
     json!({"members": [
         {"id": "U1", "name": "vmeyet", "real_name": "Vivien Meyet", "profile": {"display_name": "vivien", "title": "Engineer"}},
-        {"id": "U2", "name": "bob", "real_name": "Bob Builder", "profile": {"display_name": "", "title": ""}}
+        {"id": "U2", "name": "bob", "real_name": "Bob Builder", "profile": {"display_name": "", "title": ""}},
+        {"id": "U3", "name": "gone", "real_name": "Gone Person", "deleted": true},
+        {"id": "U4", "name": "deploybot", "real_name": "Deploy Bot", "is_bot": true}
     ]})
 }
 

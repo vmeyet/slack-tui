@@ -38,7 +38,7 @@ impl Directory {
     }
 
     pub async fn refresh_users(&mut self) -> Result<()> {
-        self.users = self.slack.users().await?.into_iter().filter(|u| !u.deleted).collect();
+        self.users = self.slack.users().await?;
         self.users_fresh = true;
         self.cache.save("users", &self.users)
     }
@@ -110,7 +110,45 @@ impl Directory {
         let lower = handle.to_lowercase();
         let exact = |u: &&User| u.handle().eq_ignore_ascii_case(handle) || u.name.eq_ignore_ascii_case(handle);
         let loose = |u: &&User| u.real_name.to_lowercase() == lower || u.profile.real_name.to_lowercase() == lower;
-        self.users.iter().find(exact).or_else(|| self.users.iter().find(loose)).map(|u| u.id.clone())
+        let active = || self.users.iter().filter(|u| !u.deleted);
+        active().find(exact).or_else(|| active().find(loose)).map(|u| u.id.clone())
+    }
+
+    /// Conversations worth showing: public, private, group DMs, then DMs, each alphabetical.
+    /// Without `all`, DMs with bots and deactivated people are hidden.
+    pub fn conversations(&self, all: bool) -> Vec<(&Channel, String)> {
+        let mut rows: Vec<(&Channel, String)> = self
+            .channels
+            .iter()
+            .filter(|c| all || c.is_member || c.is_mpim || (c.is_im && self.is_person(c.user.as_deref().unwrap_or(""))))
+            .map(|c| (c, self.display_channel(c)))
+            .collect();
+        rows.sort_by_cached_key(|(c, label)| (kind_rank(c.kind()), label.trim_start_matches(['#', '🔒', '@']).to_lowercase()));
+        rows
+    }
+
+    fn is_person(&self, user_id: &str) -> bool {
+        !SLACKBOT.contains(&user_id) && self.users.iter().find(|u| u.id == user_id).is_none_or(|u| !u.deleted && !u.is_bot)
+    }
+
+    /// DMs can point at people `users.list` no longer returns (deactivated, app users); fetch those one by one.
+    pub async fn learn_dm_users(&mut self) -> Result<()> {
+        let unknown: Vec<String> = self
+            .channels
+            .iter()
+            .filter(|c| c.is_im)
+            .filter_map(|c| c.user.clone())
+            .filter(|id| !SLACKBOT.contains(&id.as_str()) && !self.users.iter().any(|u| &u.id == id))
+            .collect();
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        for id in unknown {
+            if let Ok(user) = self.slack.user_info(&id).await {
+                self.users.push(user);
+            }
+        }
+        self.cache.save("users", &self.users)
     }
 
     /// Fetches the users mentioned or authoring these messages that are not known yet.
@@ -163,6 +201,17 @@ impl Directory {
 
     pub fn channels_snapshot(&self) -> &[Channel] {
         &self.channels
+    }
+}
+
+const SLACKBOT: [&str; 2] = ["USLACKBOT", "USLACK"];
+
+fn kind_rank(kind: ChannelKind) -> u8 {
+    match kind {
+        ChannelKind::Public => 0,
+        ChannelKind::Private => 1,
+        ChannelKind::GroupDm => 2,
+        ChannelKind::Dm => 3,
     }
 }
 
@@ -279,6 +328,49 @@ mod tests {
         d.learn_users(&messages).await.unwrap();
         assert_eq!(d.names().user_label("U9"), "bob");
         assert_eq!(d.names().user_label("U0"), "U0");
+    }
+
+    #[test]
+    fn conversations_are_grouped_sorted_and_filtered() {
+        let slack = Slack::new("http://x", Credentials::new("t", None)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = Directory::new(slack, Cache::new(dir.keep()));
+        d.users.push(User { id: "U1".into(), name: "zoe".into(), ..Default::default() });
+        d.users.push(User { id: "U2".into(), name: "gone".into(), deleted: true, ..Default::default() });
+        d.users.push(User { id: "U3".into(), name: "robot".into(), is_bot: true, ..Default::default() });
+        d.users.push(User { id: "U4".into(), name: "adam".into(), ..Default::default() });
+        d.channels.push(Channel { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() });
+        d.channels.push(Channel { id: "D2".into(), is_im: true, user: Some("U2".into()), ..Default::default() });
+        d.channels.push(Channel { id: "D3".into(), is_im: true, user: Some("U3".into()), ..Default::default() });
+        d.channels.push(Channel { id: "D4".into(), is_im: true, user: Some("U4".into()), ..Default::default() });
+        d.channels.push(Channel { id: "D5".into(), is_im: true, user: Some("USLACK".into()), ..Default::default() });
+        d.channels.push(Channel { id: "C1".into(), name: "zebra".into(), is_member: true, ..Default::default() });
+        d.channels.push(Channel { id: "C2".into(), name: "apple".into(), is_member: true, is_private: true, ..Default::default() });
+        d.channels.push(Channel { id: "C3".into(), name: "Beta".into(), is_member: true, ..Default::default() });
+        d.channels.push(Channel { id: "C4".into(), name: "not-mine".into(), is_member: false, ..Default::default() });
+        d.channels.push(Channel { id: "G1".into(), name: "mpdm-zoe--adam-1".into(), is_mpim: true, ..Default::default() });
+        let labels: Vec<String> = d.conversations(false).into_iter().map(|(_, l)| l).collect();
+        assert_eq!(labels, ["#Beta", "#zebra", "🔒apple", "zoe, adam", "@adam", "@zoe"]);
+        assert_eq!(d.conversations(true).len(), 10);
+        assert_eq!(d.find_user("gone"), None);
+    }
+
+    #[tokio::test]
+    async fn dm_users_missing_from_the_list_are_fetched() {
+        let server = MockServer::start().await;
+        Mock::given(path("/users.info"))
+            .and(body_string_contains("user=U7"))
+            .respond_with(ok(serde_json::json!({"user": {"id": "U7", "name": "old-bot", "is_bot": true, "deleted": true}})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut d = directory(&server).await;
+        d.channels.push(Channel { id: "D7".into(), is_im: true, user: Some("U7".into()), ..Default::default() });
+        d.channels.push(Channel { id: "D8".into(), is_im: true, user: Some("USLACKBOT".into()), ..Default::default() });
+        assert_eq!(d.conversations(false).len(), 1);
+        d.learn_dm_users().await.unwrap();
+        d.learn_dm_users().await.unwrap();
+        assert!(d.conversations(false).is_empty());
     }
 
     #[test]

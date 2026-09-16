@@ -205,12 +205,23 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         (_, Focus::Messages) => "j/k move · enter thread · r reply · t thread reply · e react · o open · y copy · s search · ? help",
         (_, Focus::Thread) => "j/k move · r reply · e react · o open · y copy · esc close · ? help",
     };
-    let status = format!(" {}", app.status);
+    let (dot, dot_style) = match &app.live {
+        Live::Live => ("● ", Style::new().green()),
+        Live::Connecting => ("○ ", Style::new().dim()),
+        Live::Polling(_) => ("↻ ", Style::new().yellow()),
+    };
+    let status = format!("{} ", app.status);
     let room = area.width as usize;
-    let right = text::truncate(hints, room.saturating_sub(status.len() + 2));
-    let pad = room.saturating_sub(text::visible_width(&status) + text::visible_width(&right) + 1);
-    let line =
-        Line::from(vec![Span::styled(status, Style::new().bold()), Span::raw(" ".repeat(pad)), Span::styled(right, Style::new().dim())]);
+    let used = 1 + dot.len() + text::visible_width(&status);
+    let right = text::truncate(hints, room.saturating_sub(used + 1));
+    let pad = room.saturating_sub(used + text::visible_width(&right));
+    let line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(dot, dot_style),
+        Span::styled(status, Style::new().bold()),
+        Span::raw(" ".repeat(pad)),
+        Span::styled(right, Style::new().dim()),
+    ]);
     f.render_widget(Paragraph::new(line), area);
 }
 

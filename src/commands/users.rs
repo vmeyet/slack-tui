@@ -13,6 +13,7 @@ pub async fn run(ctx: &mut Ctx, args: UsersArgs) -> Result<()> {
         .dir
         .users_snapshot()
         .iter()
+        .filter(|u| !u.deleted)
         .filter(|u| {
             let hay = format!("{} {} {}", u.handle(), u.real_name, u.profile.real_name).to_lowercase();
             hay.contains(&query)

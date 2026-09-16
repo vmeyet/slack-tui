@@ -2,5 +2,6 @@
 source: tests/cli.rs
 expression: "stdout(env.slack().args([\"users\"]))"
 ---
-@bob     Bob Builder  U2
-@vivien  Vivien Meyet · Engineer  U1
+@bob        Bob Builder  U2
+@deploybot  Deploy Bot (bot)  U4
+@vivien     Vivien Meyet · Engineer  U1

@@ -81,11 +81,11 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
             let mut d = dir.lock().await;
             d.channels().await?;
             let _ = d.users().await;
+            let _ = d.learn_dm_users().await;
             let rows = d
-                .channels_snapshot()
-                .iter()
-                .filter(|c| c.is_member || c.is_im || c.is_mpim)
-                .map(|c| ChannelRow { id: c.id.clone(), label: d.display_channel(c), kind: Kind::from(c.kind()) })
+                .conversations(false)
+                .into_iter()
+                .map(|(c, label)| ChannelRow { id: c.id.clone(), label, kind: Kind::from(c.kind()) })
                 .collect();
             Ok(Incoming::Channels(rows, d.names()))
         }
