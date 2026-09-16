@@ -18,6 +18,11 @@ pub async fn run(ctx: Ctx) -> Result<()> {
     let dir = Arc::new(Mutex::new(ctx.dir));
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut app = App::new();
+    if let Some(color) = ctx.config.tui.highlight.as_deref() {
+        app.highlight = color
+            .parse()
+            .map_err(|_| anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a` or `236`)"))?;
+    }
     let mut terminal = ratatui::init();
     spawn(Action::LoadChannels, slack.clone(), dir.clone(), tx.clone());
     spawn_live(slack.clone(), tx.clone());

@@ -2,6 +2,9 @@ use crate::api::rtm;
 use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
 use crate::resolve::NameBook;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::Color;
+
+pub const DEFAULT_HIGHLIGHT: Color = Color::Indexed(236);
 use std::collections::HashSet;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +90,7 @@ pub enum Incoming {
     Error(String),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct App {
     pub channels: Vec<ChannelRow>,
     pub filter: String,
@@ -107,6 +110,33 @@ pub struct App {
     pub should_quit: bool,
     pub live: Live,
     pub unread: HashSet<String>,
+    pub highlight: Color,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            channels: vec![],
+            filter: String::new(),
+            channel_selected: 0,
+            current_channel: None,
+            messages: vec![],
+            message_selected: 0,
+            thread: None,
+            search: None,
+            focus: Focus::default(),
+            input: None,
+            buffer: String::new(),
+            status: String::new(),
+            loading: false,
+            names: NameBook::default(),
+            help: false,
+            should_quit: false,
+            live: Live::default(),
+            unread: HashSet::new(),
+            highlight: DEFAULT_HIGHLIGHT,
+        }
+    }
 }
 
 impl App {

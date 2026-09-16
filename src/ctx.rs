@@ -13,6 +13,7 @@ pub struct Ctx {
     pub json: bool,
     pub theme: Theme,
     pub workspace: Option<String>,
+    pub config: Config,
 }
 
 impl Ctx {
@@ -26,7 +27,14 @@ impl Ctx {
         let resolved = auth::resolve(env, store, config, workspace)?;
         let slack = Slack::new(&Slack::api_url_from_env(), resolved.credentials)?;
         let cache = Cache::for_workspace(resolved.workspace.as_deref().unwrap_or("env"));
-        Ok(Self { dir: Directory::new(slack.clone(), cache), slack, json, theme: Theme::detect(), workspace: resolved.workspace })
+        Ok(Self {
+            dir: Directory::new(slack.clone(), cache),
+            slack,
+            json,
+            theme: Theme::detect(),
+            workspace: resolved.workspace,
+            config: config.clone(),
+        })
     }
 
     pub fn emit<T: Serialize>(&self, value: &T) -> Result<()> {

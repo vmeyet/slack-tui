@@ -9,6 +9,21 @@ pub struct Config {
     pub default: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub workspaces: BTreeMap<String, Workspace>,
+    #[serde(default, skip_serializing_if = "Tui::is_default")]
+    pub tui: Tui,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Tui {
+    /// Background of the selected row: a name (`darkgray`), `#rrggbb`, or a 0-255 index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<String>,
+}
+
+impl Tui {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -101,6 +116,13 @@ mod tests {
         let config = Config::default().with_workspace("acme", acme()).with_workspace("beta", acme());
         assert_eq!(config.default.as_deref(), Some("beta"));
         assert_eq!(config.workspaces.len(), 2);
+    }
+
+    #[test]
+    fn tui_section_is_optional() {
+        let config: Config = toml::from_str("default = \"acme\"\n\n[tui]\nhighlight = \"#2a2a2a\"\n").unwrap();
+        assert_eq!(config.tui.highlight.as_deref(), Some("#2a2a2a"));
+        assert!(!toml::to_string(&Config::default()).unwrap().contains("tui"));
     }
 
     #[test]

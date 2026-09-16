@@ -72,13 +72,13 @@ fn draw_channels(f: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
     let title = if app.filter.is_empty() { "channels".to_owned() } else { format!("channels /{}", app.filter) };
-    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(focused));
+    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
     let mut state = ListState::default().with_selected(Some(app.channel_selected));
     f.render_stateful_widget(list, area, &mut state);
 }
 
-fn highlight(focused: bool) -> Style {
-    if focused { Style::new().bg(Color::DarkGray).add_modifier(Modifier::BOLD) } else { Style::new().bg(Color::Black) }
+fn highlight(app: &App, focused: bool) -> Style {
+    if focused { Style::new().bg(app.highlight).add_modifier(Modifier::BOLD) } else { Style::new().bg(Color::Indexed(234)) }
 }
 
 fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
@@ -99,7 +99,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
         None => app.messages.iter().map(|m| message_item(&app.names, m, width, NAME_W, true)).collect(),
     };
     let empty = items.is_empty();
-    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(focused));
+    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
     let mut state = ListState::default().with_selected((!empty).then_some(app.message_selected));
     f.render_stateful_widget(list, area, &mut state);
     if empty && app.current_channel.is_none() {
@@ -114,7 +114,7 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = thread.messages.iter().map(|m| message_item(&app.names, m, width, 8, false)).collect();
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
-    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(focused));
+    let list = List::new(items).block(pane(&title, focused)).highlight_style(highlight(app, focused));
     let mut state = ListState::default().with_selected((!thread.messages.is_empty()).then_some(thread.selected));
     f.render_stateful_widget(list, area, &mut state);
 }
