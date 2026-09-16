@@ -435,10 +435,10 @@ impl App {
                     self.clamp_selections();
                 }
             }
-            rtm::Event::Reaction { channel, ts, name, added } => {
+            rtm::Event::Reaction { channel, ts, name, user, added } => {
                 if self.current_channel.as_deref() == Some(&channel) {
                     for m in self.all_messages_mut().into_iter().filter(|m| m.ts == ts) {
-                        adjust_reaction(&mut m.reactions, &name, added);
+                        adjust_reaction(&mut m.reactions, &name, &user, added);
                     }
                 }
             }
@@ -1183,17 +1183,28 @@ fn first_link(m: &Message) -> Option<String> {
     in_text.or_else(|| m.files.iter().map(|f| f.permalink.clone()).find(|p| !p.is_empty()))
 }
 
-fn adjust_reaction(reactions: &mut Vec<Reaction>, name: &str, added: bool) {
-    match reactions.iter_mut().position(|r| r.name == name) {
-        Some(i) if added => reactions[i].count += 1,
-        Some(i) => {
-            reactions[i].count = reactions[i].count.saturating_sub(1);
-            if reactions[i].count == 0 {
-                reactions.remove(i);
-            }
+fn adjust_reaction(reactions: &mut Vec<Reaction>, name: &str, user: &str, added: bool) {
+    let Some(i) = reactions.iter().position(|r| r.name == name) else {
+        if added {
+            reactions.push(Reaction { name: name.to_owned(), count: 1, users: vec![user.to_owned()] });
         }
-        None if added => reactions.push(Reaction { name: name.to_owned(), count: 1, users: vec![] }),
-        None => {}
+        return;
+    };
+    let reaction = &mut reactions[i];
+    let mine = reaction.users.iter().any(|u| u == user);
+    match (added, mine) {
+        (true, false) => {
+            reaction.users.push(user.to_owned());
+            reaction.count += 1;
+        }
+        (false, true) => {
+            reaction.users.retain(|u| u != user);
+            reaction.count = reaction.count.saturating_sub(1);
+        }
+        _ => {}
+    }
+    if reaction.count == 0 {
+        reactions.remove(i);
     }
 }
 
@@ -1310,6 +1321,19 @@ mod tests {
         app.handle_key(code(KeyCode::Esc));
         assert_eq!(app.input, None);
         assert_eq!(app.buffer, "");
+    }
+
+    #[test]
+    fn repeated_reaction_events_are_idempotent() {
+        let mut reactions = vec![];
+        adjust_reaction(&mut reactions, "tada", "U1", true);
+        adjust_reaction(&mut reactions, "tada", "U1", true);
+        assert_eq!(reactions, vec![Reaction { name: "tada".into(), count: 1, users: vec!["U1".into()] }]);
+        adjust_reaction(&mut reactions, "tada", "U9", false);
+        assert_eq!(reactions[0].count, 1);
+        adjust_reaction(&mut reactions, "tada", "U1", false);
+        adjust_reaction(&mut reactions, "tada", "U1", false);
+        assert!(reactions.is_empty());
     }
 
     #[test]
@@ -1461,11 +1485,20 @@ mod tests {
         app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a"), msg("2", "b")], names: NameBook::default() });
         live(&mut app, rtm::Event::Changed { channel: "C1".into(), message: msg("1", "edited") });
         assert_eq!(app.messages[0].text, "edited");
-        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: true });
-        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: true });
+        let react = |user: &str, added: bool| rtm::Event::Reaction {
+            channel: "C1".into(),
+            ts: "1".into(),
+            name: "tada".into(),
+            user: user.into(),
+            added,
+        };
+        live(&mut app, react("U1", true));
+        live(&mut app, react("U2", true));
         assert_eq!(app.messages[0].reactions[0].count, 2);
-        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: false });
-        live(&mut app, rtm::Event::Reaction { channel: "C1".into(), ts: "1".into(), name: "tada".into(), added: false });
+        assert_eq!(app.messages[0].reactions[0].users, vec!["U1", "U2"]);
+        live(&mut app, react("U1", false));
+        assert_eq!(app.messages[0].reactions[0].users, vec!["U2"]);
+        live(&mut app, react("U2", false));
         assert!(app.messages[0].reactions.is_empty());
         live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "2".into() });
         assert_eq!(app.messages.len(), 1);

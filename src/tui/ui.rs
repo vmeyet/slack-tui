@@ -1,5 +1,5 @@
 use super::app::{self, App, Focus, Input, Kind, Live, SidebarRow};
-use crate::api::{Message, SearchMatch};
+use crate::api::{Message, Reaction, SearchMatch};
 use crate::mrkdwn;
 use crate::render;
 use crate::render::text::{self, Style as TextStyle, Styled};
@@ -161,6 +161,7 @@ fn draw_reading(f: &mut Frame, app: &mut App, area: Rect) {
 
 pub const FADED: Color = Color::Indexed(240);
 pub const FADED_SOFT: Color = Color::Indexed(245);
+pub const ACCENT: Color = Color::Cyan;
 
 /// The selected row's ▎ bar, shown only in the focused pane; the column is always reserved so
 /// content never shifts when focus moves.
@@ -196,7 +197,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width.saturating_sub(2) as usize;
     let items: Vec<ListItem> = match &app.search {
         Some(results) => results.iter().map(|m| search_item(m, width)).collect(),
-        None => grouped_items(&app.names, &app.messages, width, NAME_W, true, app.zen.then_some(app.message_selected)),
+        None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.zen.then_some(app.message_selected)),
     };
     let empty = items.is_empty();
     let list = List::new(items)
@@ -217,7 +218,7 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Thread;
     let Some(thread) = &app.thread else { return };
     let width = area.width.saturating_sub(2) as usize;
-    let items: Vec<ListItem> = grouped_items(&app.names, &thread.messages, width, 8, false, app.zen.then_some(thread.selected));
+    let items: Vec<ListItem> = grouped_items(&viewer(app), &thread.messages, width, 8, false, app.zen.then_some(thread.selected));
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
     let list = List::new(items)
         .block(frame(app, &title, focused))
@@ -230,11 +231,21 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(list, area, &mut app.thread_view);
 }
 
+/// Who is looking at the screen, so their own marks stand out.
+struct Viewer<'a> {
+    names: &'a NameBook,
+    me: &'a str,
+}
+
+fn viewer(app: &App) -> Viewer<'_> {
+    Viewer { names: &app.names, me: &app.me }
+}
+
 /// One list item per message, with a dim day line on the first message of each day and
 /// no header on messages that continue the previous one.
 /// `time_only_on`: reading mode shows the time on that row alone, like a hover.
 fn grouped_items(
-    names: &NameBook,
+    viewer: &Viewer,
     messages: &[Message],
     width: usize,
     name_w: usize,
@@ -251,7 +262,7 @@ fn grouped_items(
         let continued = render::continues(prev, m);
         let gap = prev.is_some() && (new_day || !continued);
         let show_time = time_only_on.is_none_or(|sel| sel == i);
-        items.push(message_item(names, m, width, name_w, show_meta, continued && !(time_only_on == Some(i)), new_day, gap, show_time));
+        items.push(message_item(viewer, m, width, name_w, show_meta, continued && !(time_only_on == Some(i)), new_day, gap, show_time));
         prev = Some(m);
     }
     items
@@ -259,7 +270,7 @@ fn grouped_items(
 
 #[allow(clippy::too_many_arguments)]
 fn message_item(
-    names: &NameBook,
+    viewer: &Viewer,
     m: &Message,
     width: usize,
     name_w: usize,
@@ -269,6 +280,7 @@ fn message_item(
     gap: bool,
     show_time: bool,
 ) -> ListItem<'static> {
+    let names = viewer.names;
     let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
     let indent = TIME_W + 1 + name_w + 1;
     let styled = body(names, m);
@@ -296,8 +308,9 @@ fn message_item(
         lines.push(Line::from(spans));
     }
     if !m.reactions.is_empty() {
-        let r: Vec<String> = m.reactions.iter().map(|r| format!("{} {}", crate::emoji::render(&r.name), r.count)).collect();
-        lines.push(Line::from(vec![Span::raw(" ".repeat(indent)), Span::styled(r.join("  "), Style::new().dim())]));
+        let mut spans = vec![Span::raw(" ".repeat(indent))];
+        spans.extend(reaction_pills(&m.reactions, viewer.me));
+        lines.push(Line::from(spans));
     }
     if show_meta && m.is_thread_root() {
         lines.push(Line::from(vec![
@@ -306,6 +319,25 @@ fn message_item(
         ]));
     }
     ListItem::new(lines)
+}
+
+/// Reactions as a quiet dim row; the ones you joined stand out in bold accent.
+/// Custom emoji have no glyph and show their bare name.
+fn reaction_pills(reactions: &[Reaction], me: &str) -> Vec<Span<'static>> {
+    let pill = |r: &Reaction| {
+        let mine = !me.is_empty() && r.users.iter().any(|u| u == me);
+        let style = if mine { Style::new().fg(ACCENT).bold() } else { Style::new().fg(FADED_SOFT) };
+        let glyph = crate::emoji::glyph(&r.name).map(str::to_owned).unwrap_or_else(|| r.name.clone());
+        Span::styled(format!("{glyph} {}", r.count), style)
+    };
+    let mut spans = Vec::with_capacity(reactions.len() * 2);
+    for r in reactions {
+        if !spans.is_empty() {
+            spans.push(Span::raw("   "));
+        }
+        spans.push(pill(r));
+    }
+    spans
 }
 
 fn body(names: &NameBook, m: &Message) -> Styled {
@@ -487,7 +519,7 @@ mod tests {
         );
         root.reply_count = 2;
         root.thread_ts = Some(root.ts.clone());
-        root.reactions = vec![Reaction { name: "rocket".into(), count: 3, users: vec![] }];
+        root.reactions = vec![Reaction { name: "rocket".into(), count: 3, users: vec!["U1".into()] }];
         app.apply(Incoming::History {
             channel: "C1".into(),
             messages: vec![root.clone(), message("1694700100.000200", "U2", "ok")],
@@ -508,6 +540,23 @@ mod tests {
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         let stable = regex::Regex::new(r"\d\d:\d\d").unwrap().replace_all(&terminal.backend().to_string(), "HH:MM").to_string();
         insta::assert_snapshot!(stable);
+    }
+
+    #[test]
+    fn reaction_pills_glow_when_mine() {
+        let reactions = vec![
+            Reaction { name: "rocket".into(), count: 3, users: vec!["U1".into(), "U2".into()] },
+            Reaction { name: "merged".into(), count: 1, users: vec!["U2".into()] },
+        ];
+        let pills = reaction_pills(&reactions, "U1");
+        let texts: Vec<&str> = pills.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(texts, vec!["🚀 3", "   ", "merged 1"]);
+        assert!(pills[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(pills[0].style.fg, Some(ACCENT));
+        assert!(!pills[2].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(pills[2].style.fg, Some(FADED_SOFT));
+        assert!(pills.iter().all(|s| s.style.bg.is_none()));
+        assert!(reaction_pills(&reactions, "").iter().all(|s| !s.style.add_modifier.contains(Modifier::BOLD)));
     }
 
     #[test]

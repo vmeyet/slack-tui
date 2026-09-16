@@ -14,7 +14,7 @@ pub enum Event {
     Message { channel: String, message: Message },
     Changed { channel: String, message: Message },
     Deleted { channel: String, ts: String },
-    Reaction { channel: String, ts: String, name: String, added: bool },
+    Reaction { channel: String, ts: String, name: String, user: String, added: bool },
     Disconnected(String),
 }
 
@@ -38,12 +38,18 @@ impl Event {
             kind @ ("reaction_added" | "reaction_removed") => Some(Event::Reaction {
                 channel: raw["item"]["channel"].as_str()?.to_owned(),
                 ts: raw["item"]["ts"].as_str()?.to_owned(),
-                name: raw["reaction"].as_str()?.to_owned(),
+                name: raw["reaction"].as_str().filter(|n| is_emoji_name(n))?.to_owned(),
+                user: raw["user"].as_str()?.to_owned(),
                 added: kind == "reaction_added",
             }),
             _ => None,
         }
     }
+}
+
+/// Slack emoji names are `[a-z0-9_+-]` plus `::skin-tone-N`; anything else never reaches the screen.
+fn is_emoji_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || "+-_:".contains(c))
 }
 
 const PING_EVERY: Duration = Duration::from_secs(30);
@@ -127,11 +133,21 @@ mod tests {
 
     #[test]
     fn parses_reactions_and_ignores_noise() {
-        let raw = json!({"type": "reaction_added", "reaction": "tada", "item": {"channel": "C1", "ts": "1.0"}});
-        assert_eq!(Event::parse(&raw), Some(Event::Reaction { channel: "C1".into(), ts: "1.0".into(), name: "tada".into(), added: true }));
+        let raw = json!({"type": "reaction_added", "reaction": "tada", "user": "U1", "item": {"channel": "C1", "ts": "1.0"}});
+        let expected = Event::Reaction { channel: "C1".into(), ts: "1.0".into(), name: "tada".into(), user: "U1".into(), added: true };
+        assert_eq!(Event::parse(&raw), Some(expected));
         assert_eq!(Event::parse(&json!({"type": "hello"})), Some(Event::Connected));
         assert_eq!(Event::parse(&json!({"type": "user_typing"})), None);
         assert_eq!(Event::parse(&json!({"reply_to": 1, "ok": true})), None);
+    }
+
+    #[test]
+    fn reaction_names_outside_slack_alphabet_are_dropped() {
+        let event = |name: &str| json!({"type": "reaction_added", "reaction": name, "user": "U1", "item": {"channel": "C1", "ts": "1.0"}});
+        assert!(Event::parse(&event("+1::skin-tone-3")).is_some());
+        assert_eq!(Event::parse(&event("")), None);
+        assert_eq!(Event::parse(&event("x\u{1b}[31m")), None);
+        assert_eq!(Event::parse(&event("ta da")), None);
     }
 
     #[tokio::test]
