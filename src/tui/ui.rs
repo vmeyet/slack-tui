@@ -368,7 +368,11 @@ fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_
     if row.new_day {
         let label = time::day_label(&m.ts);
         let dashes = "─".repeat(width.saturating_sub(label.len() + 4));
-        lines.push(Line::from(Span::styled(format!("── {label} {dashes}"), Style::new().fg(theme.muted))));
+        lines.push(Line::from(vec![
+            Span::styled("── ", Style::new().fg(theme.border)),
+            Span::styled(label, Style::new().fg(theme.faded)),
+            Span::styled(format!(" {dashes}"), Style::new().fg(theme.border)),
+        ]));
     }
     let time_style = if row.selected { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
     for (i, chunks) in styled.wrap_styled(width.saturating_sub(indent).max(10)).iter().enumerate() {
