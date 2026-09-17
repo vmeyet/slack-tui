@@ -6,7 +6,9 @@ One Rust binary called `slack`, ~10 ms startup.
 > [!IMPORTANT]
 > **Unofficial.** It logs in with your browser session, not a Slack app, so it needs no admin approval.
 > Check that your workspace rules allow this before you use it.
+>
 > **macOS only** for now (keychain, `open`, `pbcopy`).
+>
 > **Vibe Coded** for personal usage but use at your own risks.
 
 ## Install
