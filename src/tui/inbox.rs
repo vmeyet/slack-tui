@@ -1,3 +1,4 @@
+use super::motion;
 use super::theme::Theme;
 use crate::inbox::{Item, Kind, Snooze, State};
 use crate::mrkdwn;
@@ -9,6 +10,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
+use std::time::Duration;
 
 #[derive(Debug, Default)]
 pub struct Inbox {
@@ -80,21 +82,21 @@ impl Inbox {
     }
 }
 
-pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, theme: &Theme, frame: u32) {
+pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, theme: &Theme, elapsed: Duration) {
     let popup = centered(area, 92, 90);
     f.render_widget(Clear, popup);
     let title = match (inbox.loading, inbox.items.len()) {
-        (true, _) => " inbox · loading… ".to_owned(),
-        (false, 0) => " inbox · all clear ".to_owned(),
-        (false, n) => format!(" inbox · {n} "),
+        (true, _) => format!("inbox {} loading", motion::spinner(elapsed)),
+        (false, 0) => "inbox · all clear".to_owned(),
+        (false, n) => format!("inbox · {n}"),
     };
-    let block = super::ui::pane(theme, title.trim(), true);
+    let block = super::ui::pane(theme, &title, true);
     let inner = block.inner(popup);
     f.render_widget(block, popup);
     let [list_area, hint_area] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     if inbox.items.is_empty() && !inbox.loading {
         let state = super::ui::Empty { title: "all caught up ✓".into(), hint: "nothing waiting for you".into(), key: None };
-        super::ui::draw_empty(f, theme, list_area, frame, &state);
+        super::ui::draw_empty(f, theme, list_area, motion::frame(elapsed), &state);
     }
     let width = list_area.width as usize;
     let items: Vec<ListItem> = inbox.items.iter().map(|i| item_lines(theme, i, names, width)).collect();
@@ -224,9 +226,19 @@ mod tests {
         inbox.set_items(vec![item("a", Kind::Dm)]);
         inbox.picking_snooze = true;
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
-        terminal.draw(|f| draw(f, &mut inbox, &NameBook::default(), f.area(), &Theme::default(), 0)).unwrap();
+        terminal.draw(|f| draw(f, &mut inbox, &NameBook::default(), f.area(), &Theme::default(), Duration::ZERO)).unwrap();
         let out = terminal.backend().to_string();
         assert!(out.contains("inbox · 1"));
         assert!(out.contains("snooze for"));
+    }
+
+    #[test]
+    fn loading_title_spins_with_the_clock() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut inbox = Inbox::new(State::default());
+        let mut terminal = Terminal::new(TestBackend::new(60, 12)).unwrap();
+        terminal.draw(|f| draw(f, &mut inbox, &NameBook::default(), f.area(), &Theme::default(), motion::SPINNER_FRAME)).unwrap();
+        assert!(terminal.backend().to_string().contains("inbox ⠙ loading"));
     }
 }

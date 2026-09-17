@@ -6,6 +6,12 @@ use std::collections::HashMap;
 
 impl App {
     pub fn apply(&mut self, incoming: Incoming) -> Vec<Action> {
+        let actions = self.route(incoming);
+        self.mark_seen();
+        actions
+    }
+
+    fn route(&mut self, incoming: Incoming) -> Vec<Action> {
         match incoming {
             Incoming::Live(event) => return self.apply_live(*event),
             Incoming::Tick => return self.poll(),
@@ -30,10 +36,10 @@ impl App {
             }
             Incoming::Names(names) => self.names = names,
             Incoming::Thumb { id, image } => self.thumbs.arrived(&id, image),
-            Incoming::Status(s) if s.is_empty() => {}
-            Incoming::Status(s) => {
+            Incoming::Toast(text) if text.is_empty() => {}
+            Incoming::Toast(text) => {
                 self.loading = false;
-                self.status = s;
+                self.toast(text);
             }
             Incoming::Error(e) => {
                 self.loading = false;
@@ -56,7 +62,7 @@ impl App {
             self.thread = None;
             self.focus = Focus::Channels;
         }
-        self.status = "left".into();
+        self.toast("left");
         vec![Action::LoadChannels]
     }
 
@@ -75,7 +81,6 @@ impl App {
         self.me = me;
         self.badges = badges;
         self.unread = self.badges.iter().filter(|(_, b)| b.unread).map(|(id, _)| id.clone()).collect();
-        self.status = format!("{} conversations · ? for help", self.channels.len());
     }
 
     fn history_loaded(&mut self, channel: &str, messages: Vec<Message>, names: NameBook) -> Vec<Action> {
@@ -89,7 +94,6 @@ impl App {
         let kept = selected_ts.filter(|_| !at_bottom).and_then(|ts| messages.iter().position(|m| m.ts == ts));
         self.message_selected = kept.unwrap_or(messages.len().saturating_sub(1));
         self.messages = messages;
-        self.status = self.current_label();
         self.refresh_thumbs()
     }
 
@@ -105,7 +109,7 @@ impl App {
     }
 
     fn sent(&mut self, channel: String, thread_ts: Option<String>) -> Vec<Action> {
-        self.status = "sent ✓".into();
+        self.toast("sent ✓");
         if self.current_channel.as_deref() != Some(&channel) {
             self.loading = false;
             if let Some(inbox) = &mut self.inbox {
@@ -122,7 +126,6 @@ impl App {
 
     fn search_loaded(&mut self, matches: Vec<SearchMatch>) {
         self.loading = false;
-        self.status = format!("{} results · enter to jump · esc to close", matches.len());
         self.message_selected = 0;
         self.search = Some(matches);
         self.focus = Focus::Messages;

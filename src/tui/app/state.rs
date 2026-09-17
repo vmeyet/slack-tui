@@ -1,4 +1,4 @@
-use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, Thread};
+use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, Thread, Toast};
 use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
@@ -11,6 +11,7 @@ use crate::tui::palette::Palette;
 use crate::tui::theme::Theme;
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 
 /// What the app is started with; everything else it learns from `Incoming`.
 pub struct Settings {
@@ -28,12 +29,15 @@ pub struct App {
     pub(in crate::tui) current_channel: Option<String>,
     pub(in crate::tui) messages: Vec<Message>,
     pub(in crate::tui) message_selected: usize,
+    /// Newest message the selection reached; anything newer arrived unseen.
+    pub(in crate::tui) seen: Option<String>,
     pub(in crate::tui) thread: Option<Thread>,
     pub(in crate::tui) search: Option<Vec<SearchMatch>>,
     pub(in crate::tui) focus: Focus,
     pub(in crate::tui) input: Option<Input>,
     pub(in crate::tui) buffer: String,
-    pub(in crate::tui) status: String,
+    /// Where the user is; what just happened goes in `toast`.
+    pub(in crate::tui) toast: Option<Toast>,
     pub(in crate::tui) loading: bool,
     pub(in crate::tui) names: NameBook,
     pub(in crate::tui) help: bool,
@@ -43,8 +47,9 @@ pub struct App {
     pub(in crate::tui) badges: HashMap<String, Badge>,
     pub(in crate::tui) me: String,
     pub(in crate::tui) theme: Theme,
-    /// Animation step for empty states; only advances while one is on screen.
-    pub(in crate::tui) frame: u32,
+    pub(in crate::tui) started: Instant,
+    /// Set by the event loop each time it wakes, so nothing below reads the clock.
+    pub(in crate::tui) now: Instant,
     pub(in crate::tui) thumbs: Thumbs,
     pub(in crate::tui) inbox: Option<Inbox>,
     pub(in crate::tui) workspace: String,
@@ -65,6 +70,7 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
+        let now = Instant::now();
         Self {
             channels: vec![],
             filter: String::new(),
@@ -72,12 +78,13 @@ impl Default for App {
             current_channel: None,
             messages: vec![],
             message_selected: 0,
+            seen: None,
             thread: None,
             search: None,
             focus: Focus::default(),
             input: None,
             buffer: String::new(),
-            status: String::new(),
+            toast: None,
             loading: false,
             names: NameBook::default(),
             help: false,
@@ -87,7 +94,8 @@ impl Default for App {
             badges: HashMap::new(),
             me: String::new(),
             theme: Theme::default(),
-            frame: 0,
+            started: now,
+            now,
             thumbs: Thumbs::off(),
             inbox: None,
             workspace: "env".into(),
@@ -108,16 +116,12 @@ impl Default for App {
 
 impl App {
     pub fn new() -> Self {
-        Self { status: "loading channels…".into(), loading: true, ..Default::default() }
+        Self { loading: true, ..Default::default() }
     }
 
     pub fn with(settings: Settings) -> Self {
         let Settings { theme, workspace, highlighter, thumbs } = settings;
         Self { theme, workspace, highlighter, thumbs, ..Self::new() }
-    }
-
-    pub fn advance_frame(&mut self) {
-        self.frame = self.frame.wrapping_add(1);
     }
 
     pub fn visible_channels(&self) -> Vec<&ChannelRow> {
@@ -130,9 +134,13 @@ impl App {
         self.channels.iter().find(|c| c.id == id).map(|c| c.kind)
     }
 
-    /// True while an empty state is visible, so the event loop only ticks frames when there is
+    /// True while the screen changes with time alone, so the event loop only ticks frames when there is
     /// something to animate.
     pub fn animating(&self) -> bool {
+        self.toast_expires() || self.empty_state_visible()
+    }
+
+    fn empty_state_visible(&self) -> bool {
         if self.firehose.is_some() || self.jump.is_some() || self.help {
             return false;
         }
@@ -180,12 +188,12 @@ impl App {
         self.badges.remove(&id);
         self.current_channel = Some(id.clone());
         self.messages.clear();
+        self.seen = None;
         self.messages_view = ListState::default();
         self.thread_view = ListState::default();
         self.thread = None;
         self.focus = Focus::Messages;
         self.loading = true;
-        self.status = format!("loading {}…", self.names.channel_label(&id));
         vec![Action::LoadHistory(id)]
     }
 
@@ -203,7 +211,7 @@ impl App {
 
     pub(super) fn search_for(&mut self, query: String) -> Vec<Action> {
         self.loading = true;
-        self.status = "searching…".into();
+        self.toast("searching…");
         vec![Action::Search(query)]
     }
 
@@ -213,9 +221,5 @@ impl App {
         let files: Vec<File> = self.messages.iter().chain(thread).flat_map(|m| m.files.iter().cloned()).collect();
         self.thumbs.keep_only(files.iter().map(|f| f.id.clone()));
         self.thumbs.wanted(&files).into_iter().map(|(id, url)| Action::LoadImage { id, url }).collect()
-    }
-
-    pub(super) fn fail(&mut self, error: impl std::fmt::Display) {
-        self.status = format!("✗ {error}");
     }
 }

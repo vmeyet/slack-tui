@@ -1,5 +1,6 @@
 use super::app::{self, App, Focus, Input, Kind, Live, SidebarRow};
 use super::images::{Thumb, Thumbs};
+use super::motion;
 use super::theme::Theme;
 use crate::api::File;
 use crate::api::{Message, Reaction, SearchMatch};
@@ -64,8 +65,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     draw_status(f, app, status);
     let theme = app.theme;
+    let elapsed = app.elapsed();
     if let Some(inbox) = &mut app.inbox {
-        super::inbox::draw(f, inbox, &app.names, main, &theme, app.frame);
+        super::inbox::draw(f, inbox, &app.names, main, &theme, elapsed);
     }
     if let Some(view) = &mut app.firehose {
         f.render_widget(Clear, main);
@@ -241,7 +243,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
         "messages".to_owned()
     };
     if app.loading {
-        title.push_str(" · loading…");
+        title.push_str(&format!(" {} loading", motion::spinner(app.elapsed())));
     }
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
     let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) = match &app.search {
@@ -250,7 +252,10 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     };
     let rows: Vec<(usize, Vec<Slot>)> = items.iter().map(ListItem::height).zip(slots).collect();
     let empty = items.is_empty();
-    let block = frame(app, &title, focused);
+    let block = match new_below_pill(app) {
+        Some(pill) => frame(app, &title, focused).title_bottom(pill),
+        None => frame(app, &title, focused),
+    };
     let inner = block.inner(area);
     let list = List::new(items)
         .block(block)
@@ -261,10 +266,16 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     app.messages_view.select((!empty).then_some(app.message_selected));
     f.render_stateful_widget(list, area, &mut app.messages_view);
     if let Some(state) = empty_state(app) {
-        draw_empty(f, &app.theme, inner, app.frame, &state);
+        draw_empty(f, &app.theme, inner, motion::frame(app.elapsed()), &state);
     }
     let x = inner.x + 1 + (TIME_W + 1 + NAME_W + 1) as u16;
     placements(inner, x, app.messages_view.offset(), &rows)
+}
+
+/// Sits on the bottom border while messages wait below the selection.
+fn new_below_pill(app: &App) -> Option<Line<'static>> {
+    let waiting = Some(app.new_below()).filter(|n| *n > 0)?;
+    Some(Line::from(format!(" ↓ {waiting} new ").bold().fg(app.theme.accent)).right_aligned())
 }
 
 /// The caption under the ghost, chosen from what the pane is showing.
@@ -372,10 +383,11 @@ struct Viewer<'a> {
     me: &'a str,
     theme: &'a Theme,
     thumbs: &'a Thumbs,
+    spinner: &'static str,
 }
 
 fn viewer(app: &App) -> Viewer<'_> {
-    Viewer { names: &app.names, me: &app.me, theme: &app.theme, thumbs: &app.thumbs }
+    Viewer { names: &app.names, me: &app.me, theme: &app.theme, thumbs: &app.thumbs, spinner: motion::spinner(app.elapsed()) }
 }
 
 /// How one message sits in its list.
@@ -457,13 +469,13 @@ fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_
     for file in pictures {
         let size = viewer.thumbs.cells(file, avail).expect("partitioned as a picture");
         let note = match viewer.thumbs.get(&file.id) {
-            Some(Thumb::Ready(_)) => "",
-            Some(Thumb::Failed) => "image unavailable",
-            _ => "· loading image…",
+            Some(Thumb::Ready(_)) => String::new(),
+            Some(Thumb::Failed) => "image unavailable".to_owned(),
+            _ => format!("{} loading image", viewer.spinner),
         };
         slots.push(Slot { line: lines.len(), file: file.id.clone(), size });
         for r in 0..size.height {
-            let text = if r == 0 { note } else { "" };
+            let text = if r == 0 { note.clone() } else { String::new() };
             lines.push(Line::from(vec![Span::raw(" ".repeat(indent)), Span::styled(text, Style::new().fg(theme.faded))]));
         }
         lines.push(Line::from(vec![
@@ -584,7 +596,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Live::Connecting => ("○ ", Style::new().fg(app.theme.muted)),
         Live::Polling(_) => ("↻ ", Style::new().fg(app.theme.warn)),
     };
-    let status = format!("{} ", app.status);
+    let status = format!("{} ", app.status_line());
     let room = area.width as usize;
     let used = 1 + dot.len() + text::visible_width(&status);
     let right = text::truncate(hints, room.saturating_sub(used + 1));
@@ -675,6 +687,7 @@ mod tests {
     use super::*;
     use crate::api::Reaction;
     use crate::tui::app::{ChannelRow, Incoming, Thread};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -735,7 +748,6 @@ mod tests {
         app.focus = Focus::Thread;
         app.input = Some(Input::Reply { channel: "C1".into(), thread_ts: None, label: "#general".into() });
         app.buffer = "typing…".into();
-        app.status = "#general".into();
         let backend = TestBackend::new(110, 18);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &mut app)).unwrap();
@@ -829,7 +841,7 @@ mod tests {
             terminal.backend().to_string()
         };
         let out = render(&mut app);
-        assert!(out.contains("· loading image…") && out.contains("📎 shot.png"), "{out}");
+        assert!(out.contains("⠋ loading image") && out.contains("📎 shot.png"), "{out}");
         assert!(!out.contains(" 📎 shot.png\n"), "no inline attachment line for a picture");
         let gradient = image::RgbImage::from_fn(400, 200, |_, y| image::Rgb([y as u8, y as u8, y as u8]));
         app.apply(Incoming::Thumb { id: "F1".into(), image: Some(image::DynamicImage::ImageRgb8(gradient)) });
@@ -843,6 +855,59 @@ mod tests {
         assert!(!out.contains("loading image"), "{out}");
     }
 
+    fn render(app: &mut App) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        terminal.backend().to_string()
+    }
+
+    fn status_bar(app: &mut App) -> String {
+        render(app).lines().last().unwrap_or_default().to_owned()
+    }
+
+    #[test]
+    fn loading_title_spins_with_the_clock() {
+        let mut app = App::new();
+        assert!(render(&mut app).contains("messages ⠋ loading"));
+        app.now += motion::SPINNER_FRAME;
+        assert!(render(&mut app).contains("messages ⠙ loading"));
+    }
+
+    #[test]
+    fn toast_shows_in_the_status_bar_until_it_ends() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        let bar = status_bar(&mut app);
+        assert!(bar.contains("C1"), "{bar}");
+        app.apply(Incoming::Toast("permalink copied".into()));
+        let bar = status_bar(&mut app);
+        assert!(bar.contains("permalink copied") && !bar.contains("C1"), "{bar}");
+        app.now += std::time::Duration::from_secs(2);
+        let bar = status_bar(&mut app);
+        assert!(bar.contains("C1") && !bar.contains("permalink copied"), "{bar}");
+    }
+
+    #[test]
+    fn new_messages_below_the_selection_show_on_the_bottom_border() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        app.focus = Focus::Messages;
+        let history =
+            |messages: &[Message]| Incoming::History { channel: "C1".into(), messages: messages.to_vec(), names: NameBook::default() };
+        let messages = [
+            message("1694700000.000100", "U1", "first"),
+            message("1694700010.000100", "U2", "second"),
+            message("1694700020.000100", "U2", "third"),
+        ];
+        app.apply(history(&messages[..2]));
+        app.message_selected = 0;
+        app.apply(history(&messages));
+        let out = render(&mut app);
+        assert!(out.lines().any(|l| l.contains('╰') && l.contains("↓ 1 new")), "{out}");
+        app.handle_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
+        assert!(!render(&mut app).contains("new"));
+    }
+
     #[test]
     fn selected_message_shows_its_header_even_when_it_continues_the_previous_one() {
         let mut app = App::new();
@@ -850,11 +915,6 @@ mod tests {
         app.focus = Focus::Messages;
         let messages = vec![message("1694700000.000100", "U1", "first"), message("1694700010.000100", "U1", "second")];
         app.apply(Incoming::History { channel: "C1".into(), messages, names: NameBook::default() });
-        let render = |app: &mut App| {
-            let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
-            terminal.draw(|f| draw(f, app)).unwrap();
-            terminal.backend().to_string()
-        };
         app.message_selected = 0;
         assert_eq!(render(&mut app).matches("U1").count(), 1);
         app.message_selected = 1;

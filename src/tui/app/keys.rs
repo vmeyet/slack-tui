@@ -8,6 +8,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        self.dismiss_error();
+        let actions = self.route_key(key);
+        self.mark_seen();
+        actions
+    }
+
+    fn route_key(&mut self, key: KeyEvent) -> Vec<Action> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_quit = true;
             return vec![];
@@ -49,7 +56,7 @@ impl App {
         self.zen = !self.zen;
         if self.zen && self.current_channel.is_none() {
             self.zen = false;
-            self.status = "open a conversation first".into();
+            self.toast("open a conversation first");
         }
     }
 
@@ -113,7 +120,7 @@ impl App {
                 return match candidate.target {
                     Target::Channel(id) => self.open_channel(id),
                     Target::Person(user) => {
-                        self.status = "opening conversation…".into();
+                        self.toast("opening conversation…");
                         vec![Action::OpenDm(user)]
                     }
                     Target::Thread { channel, ts } => {
@@ -231,7 +238,7 @@ impl App {
             }
             KeyCode::Char('u') => match self.selected_message().and_then(first_link) {
                 Some(url) => return vec![Action::OpenUrl(url)],
-                None => self.status = "no link in this message".into(),
+                None => self.toast("no link in this message"),
             },
             KeyCode::Char('y') => {
                 if let Some((channel, ts)) = self.selected_ref() {
@@ -295,7 +302,7 @@ impl App {
             Input::Reply { .. } if text.trim().is_empty() => vec![],
             Input::Reply { channel, thread_ts, .. } => {
                 self.loading = true;
-                self.status = "sending…".into();
+                self.toast("sending…");
                 vec![Action::Send { channel, thread_ts, text }]
             }
             Input::React { channel, ts } => {
@@ -321,7 +328,7 @@ impl App {
 
     fn start_reply(&mut self, in_thread: bool) -> Vec<Action> {
         let Some(channel) = self.current_channel.clone() else {
-            self.status = "pick a conversation first".into();
+            self.toast("pick a conversation first");
             return vec![];
         };
         let label = self.current_label();

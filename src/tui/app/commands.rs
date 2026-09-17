@@ -97,7 +97,7 @@ impl App {
     }
 
     fn join(&mut self, name: String) -> Vec<Action> {
-        self.status = format!("joining {name}…");
+        self.toast(format!("joining {name}…"));
         vec![Action::Join(name)]
     }
 
@@ -118,7 +118,7 @@ impl App {
     }
 
     fn message(&mut self, target: String, text: String) -> Vec<Action> {
-        self.status = format!("sending to {target}…");
+        self.toast(format!("sending to {target}…"));
         vec![Action::SendTo { target, text }]
     }
 
@@ -170,7 +170,7 @@ impl App {
             other => return Err(format!("unknown setting `{other}` (try theme, highlight, images)")),
         };
         let note = if key == "images" && saved == "on" && !self.thumbs.enabled() { " (restart to apply)" } else { "" };
-        self.status = format!("{key} = {saved}{note}");
+        self.toast(format!("{key} = {saved}{note}"));
         Ok(vec![Action::SaveSetting { key, value: saved }])
     }
 

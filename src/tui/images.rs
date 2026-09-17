@@ -98,6 +98,10 @@ impl Thumbs {
         self.slots.insert(id.to_owned(), thumb);
     }
 
+    pub fn loading(&self) -> bool {
+        self.slots.values().any(|t| matches!(t, Thumb::Loading))
+    }
+
     pub fn get(&self, id: &str) -> Option<&Thumb> {
         self.slots.get(id)
     }
@@ -171,7 +175,9 @@ mod tests {
         );
         assert!(thumbs.wanted(&files).is_empty());
         thumbs.arrived("F1", decode(&png(8, 8)));
+        assert!(thumbs.loading(), "F2 is still on its way");
         thumbs.arrived("F2", None);
+        assert!(!thumbs.loading());
         assert!(matches!(thumbs.get("F1"), Some(Thumb::Ready(_))));
         assert!(matches!(thumbs.get("F2"), Some(Thumb::Failed)));
         thumbs.keep_only(["F2".to_string()]);
