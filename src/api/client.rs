@@ -1,6 +1,6 @@
 use super::types::*;
 use crate::auth::Credentials;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -179,6 +179,32 @@ impl Slack {
         Ok(Posted { channel, ts, permalink: String::new() })
     }
 
+    /// Fetches a file Slack hosts, with the session's credentials. Only Slack's own hosts are
+    /// allowed so a crafted message can never point the client elsewhere, and the body is capped.
+    pub async fn download(&self, url: &str) -> Result<Vec<u8>> {
+        const MAX_BYTES: u64 = 10 * 1024 * 1024;
+        let parsed = reqwest::Url::parse(url).context("file url")?;
+        let host = parsed.host_str().unwrap_or_default();
+        let own = reqwest::Url::parse(&self.base).ok().and_then(|b| b.host_str().map(str::to_owned)).unwrap_or_default();
+        let trusted = host == own || host.ends_with(".slack.com") || host.ends_with(".slack-edge.com");
+        if parsed.scheme() != "https" && host != own || !trusted {
+            bail!("refusing to download from {host}");
+        }
+        let mut request = self.http.get(parsed).bearer_auth(&self.credentials.token);
+        if let Some(cookie) = self.credentials.cookie_header() {
+            request = request.header("Cookie", cookie);
+        }
+        let response = request.send().await?.error_for_status()?;
+        if response.content_length().is_some_and(|n| n > MAX_BYTES) {
+            bail!("file too large");
+        }
+        let bytes = response.bytes().await?;
+        if bytes.len() as u64 > MAX_BYTES {
+            bail!("file too large");
+        }
+        Ok(bytes.to_vec())
+    }
+
     pub async fn permalink(&self, channel: &str, ts: &str) -> Result<String> {
         let body = self.call("chat.getPermalink", params(&[("channel", channel), ("message_ts", ts)])).await?;
         body["permalink"].as_str().map(str::to_owned).context("chat.getPermalink: no permalink")
@@ -256,6 +282,31 @@ mod tests {
 
     async fn client(server: &MockServer) -> Slack {
         Slack::new(&server.uri(), Credentials::new("xoxc-1", Some("xoxd-1"))).unwrap()
+    }
+
+    #[tokio::test]
+    async fn downloads_only_from_slack_hosts_with_credentials_and_a_size_cap() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/files/a.png"))
+            .and(header("Authorization", "Bearer xoxc-1"))
+            .and(header("Cookie", "d=xoxd-1"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"PNG".to_vec()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/files/huge.png"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 11 * 1024 * 1024]))
+            .mount(&server)
+            .await;
+        let slack = client(&server).await;
+        assert_eq!(slack.download(&format!("{}/files/a.png", server.uri())).await.unwrap(), b"PNG");
+        let err = slack.download("https://evil.example.com/a.png").await.unwrap_err().to_string();
+        assert!(err.contains("refusing"), "{err}");
+        let err = slack.download("http://files.slack.com/a.png").await.unwrap_err().to_string();
+        assert!(err.contains("refusing"), "{err}");
+        let err = slack.download(&format!("{}/files/huge.png", server.uri())).await.unwrap_err().to_string();
+        assert!(err.contains("too large"), "{err}");
     }
 
     #[tokio::test]

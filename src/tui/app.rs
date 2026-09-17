@@ -1,10 +1,11 @@
 use super::firehose::{self, Firehose};
+use super::images::Thumbs;
 use super::inbox::Inbox;
 use super::jump::{Candidate, Jump, Target};
 use super::palette::{self, Command, Palette};
 use super::theme::Theme;
 use crate::api::rtm;
-use crate::api::{ChannelKind, Message, Reaction, SearchMatch};
+use crate::api::{ChannelKind, File, Message, Reaction, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::{Item, Snooze, State};
 use crate::resolve::NameBook;
@@ -199,6 +200,10 @@ pub enum Action {
         key: String,
         value: String,
     },
+    LoadImage {
+        id: String,
+        url: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -213,18 +218,44 @@ pub enum Live {
 pub enum Incoming {
     Live(rtm::Event),
     Tick,
-    Inbox { items: Vec<Item>, names: NameBook },
+    Inbox {
+        items: Vec<Item>,
+        names: NameBook,
+    },
     Threads(Vec<Candidate>),
     DmOpened(String),
     Names(NameBook),
     Joined(String),
     Left(String),
-    Channels { rows: Vec<ChannelRow>, people: Vec<(String, String)>, names: NameBook, badges: HashMap<String, Badge>, me: String },
-    History { channel: String, messages: Vec<Message>, names: NameBook },
-    Replies { channel: String, ts: String, messages: Vec<Message>, names: NameBook },
-    Sent { channel: String, thread_ts: Option<String> },
+    Channels {
+        rows: Vec<ChannelRow>,
+        people: Vec<(String, String)>,
+        names: NameBook,
+        badges: HashMap<String, Badge>,
+        me: String,
+    },
+    History {
+        channel: String,
+        messages: Vec<Message>,
+        names: NameBook,
+    },
+    Replies {
+        channel: String,
+        ts: String,
+        messages: Vec<Message>,
+        names: NameBook,
+    },
+    Sent {
+        channel: String,
+        thread_ts: Option<String>,
+    },
     SearchResults(Vec<SearchMatch>),
     Status(String),
+    /// A thumbnail came back, decoded, or could not be.
+    Thumb {
+        id: String,
+        image: Option<image::DynamicImage>,
+    },
     Error(String),
 }
 
@@ -253,6 +284,7 @@ pub struct App {
     pub theme: Theme,
     /// Animation step for empty states; only advances while one is on screen.
     pub frame: u32,
+    pub thumbs: Thumbs,
     pub inbox: Option<Inbox>,
     pub workspace: String,
     pub jump: Option<Jump>,
@@ -295,6 +327,7 @@ impl Default for App {
             me: String::new(),
             theme: Theme::default(),
             frame: 0,
+            thumbs: Thumbs::off(),
             inbox: None,
             workspace: "env".into(),
             jump: None,
@@ -421,6 +454,7 @@ impl App {
                 self.message_selected = kept.unwrap_or(messages.len().saturating_sub(1));
                 self.messages = messages;
                 self.status = self.current_label();
+                return self.refresh_thumbs();
             }
             Incoming::Replies { channel, ts, messages, names } => {
                 self.names = names;
@@ -429,7 +463,9 @@ impl App {
                     self.thread_view = ListState::default();
                 }
                 self.thread = Some(Thread { channel, root_ts: ts, messages, selected });
+                return self.refresh_thumbs();
             }
+            Incoming::Thumb { id, image } => self.thumbs.arrived(&id, image),
             Incoming::Sent { channel, thread_ts } => {
                 self.status = "sent ✓".into();
                 if self.current_channel.as_deref() != Some(&channel) {
@@ -470,9 +506,11 @@ impl App {
                 firehose::push(&mut self.wall, LiveLine::from_message(&channel, &message));
                 let unknown = message.user.clone().filter(|u| self.names.user_label(u) == *u);
                 self.live_message(channel, message);
+                let mut actions = self.refresh_thumbs();
                 if let Some(id) = unknown {
-                    return vec![Action::LearnUsers(vec![id])];
+                    actions.push(Action::LearnUsers(vec![id]));
                 }
+                return actions;
             }
             rtm::Event::Changed { channel, message } => {
                 if self.current_channel.as_deref() == Some(&channel) {
@@ -534,6 +572,14 @@ impl App {
         if follow && self.search.is_none() {
             self.message_selected = self.messages.len() - 1;
         }
+    }
+
+    /// Fetches thumbnails for the images now on screen and forgets the ones that left.
+    fn refresh_thumbs(&mut self) -> Vec<Action> {
+        let thread = self.thread.iter().flat_map(|t| t.messages.iter());
+        let files: Vec<File> = self.messages.iter().chain(thread).flat_map(|m| m.files.iter().cloned()).collect();
+        self.thumbs.keep_only(files.iter().map(|f| f.id.clone()));
+        self.thumbs.wanted(&files).into_iter().map(|(id, url)| Action::LoadImage { id, url }).collect()
     }
 
     fn all_messages_mut(&mut self) -> Vec<&mut Message> {
@@ -787,8 +833,23 @@ impl App {
                         vec![]
                     }
                 },
+                "images" => match value.as_str() {
+                    "off" => {
+                        self.thumbs = Thumbs::off();
+                        self.status = "images = off".into();
+                        vec![Action::SaveSetting { key, value }]
+                    }
+                    "on" => {
+                        self.status = if self.thumbs.enabled() { "images = on".into() } else { "images = on (restart to apply)".into() };
+                        vec![Action::SaveSetting { key, value }]
+                    }
+                    _ => {
+                        self.status = format!("✗ `{value}` is not on/off");
+                        vec![]
+                    }
+                },
                 other => {
-                    self.status = format!("✗ unknown setting `{other}` (try theme, highlight)");
+                    self.status = format!("✗ unknown setting `{other}` (try theme, highlight, images)");
                     vec![]
                 }
             },
@@ -1415,6 +1476,31 @@ mod tests {
     }
 
     #[test]
+    fn history_with_pictures_asks_for_each_thumbnail_once() {
+        let mut app = loaded();
+        app.thumbs = Thumbs::with(ratatui_image::picker::Picker::halfblocks());
+        app.handle_key(code(KeyCode::Enter));
+        let picture = File {
+            id: "F1".into(),
+            name: "shot.png".into(),
+            mimetype: "image/png".into(),
+            thumb_360: "https://files.slack.com/shot.png".into(),
+            thumb_360_w: 360,
+            thumb_360_h: 200,
+            ..Default::default()
+        };
+        let with_picture = Message { files: vec![picture], ..msg("1", "look") };
+        let history = |m: Message| Incoming::History { channel: "C1".into(), messages: vec![m], names: NameBook::default() };
+        let actions = app.apply(history(with_picture.clone()));
+        assert_eq!(actions, vec![Action::LoadImage { id: "F1".into(), url: "https://files.slack.com/shot.png".into() }]);
+        assert_eq!(app.apply(history(with_picture)), vec![]);
+        app.apply(Incoming::Thumb { id: "F1".into(), image: Some(image::DynamicImage::new_rgb8(4, 4)) });
+        assert!(matches!(app.thumbs.get("F1"), Some(super::super::images::Thumb::Ready(_))));
+        app.apply(history(msg("2", "gone")));
+        assert!(app.thumbs.get("F1").is_none(), "forgotten once off screen");
+    }
+
+    #[test]
     fn animates_only_while_an_empty_state_is_visible() {
         let mut app = loaded();
         assert!(app.animating(), "no conversation picked yet");
@@ -1799,6 +1885,8 @@ mod tests {
         assert_eq!(palette_run(&mut app, "set theme=nord"), saved("theme", "nord"));
         assert_eq!(app.theme.name, "nord");
         assert_eq!(app.theme.highlight, None);
+        assert_eq!(palette_run(&mut app, "set images=off"), saved("images", "off"));
+        assert_eq!(palette_run(&mut app, "set images=maybe"), vec![]);
         palette_run(&mut app, "set theme=solarized");
         assert!(app.status.contains("unknown theme") && app.status.contains("dracula"));
         assert_eq!(app.theme.name, "nord");

@@ -166,6 +166,47 @@ pub struct File {
     pub title: String,
     #[serde(default)]
     pub permalink: String,
+    #[serde(default)]
+    pub mimetype: String,
+    #[serde(default)]
+    pub thumb_360: String,
+    #[serde(default)]
+    pub thumb_360_w: u32,
+    #[serde(default)]
+    pub thumb_360_h: u32,
+    #[serde(default)]
+    pub thumb_720: String,
+    #[serde(default)]
+    pub thumb_720_w: u32,
+    #[serde(default)]
+    pub thumb_720_h: u32,
+}
+
+/// A thumbnail Slack already rendered for an image file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Thumb<'a> {
+    pub url: &'a str,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl File {
+    pub fn label(&self) -> &str {
+        if self.title.is_empty() { &self.name } else { &self.title }
+    }
+
+    /// The sharpest thumbnail of an image file, none for other files or when Slack made none.
+    pub fn thumb(&self) -> Option<Thumb<'_>> {
+        if !self.mimetype.starts_with("image/") {
+            return None;
+        }
+        let candidates = [(&self.thumb_720, self.thumb_720_w, self.thumb_720_h), (&self.thumb_360, self.thumb_360_w, self.thumb_360_h)];
+        candidates.into_iter().find(|(url, w, h)| !url.is_empty() && *w > 0 && *h > 0).map(|(url, width, height)| Thumb {
+            url,
+            width,
+            height,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

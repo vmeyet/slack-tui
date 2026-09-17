@@ -1,5 +1,7 @@
 use super::app::{self, App, Focus, Input, Kind, Live, SidebarRow};
+use super::images::{Thumb, Thumbs};
 use super::theme::Theme;
+use crate::api::File;
 use crate::api::{Message, Reaction, SearchMatch};
 use crate::mrkdwn;
 use crate::render;
@@ -7,24 +9,29 @@ use crate::render::text::{self, Style as TextStyle, Styled};
 use crate::render::time;
 use crate::resolve::NameBook;
 use ratatui::Frame;
+use ratatui::layout::Size;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::{Resize, StatefulImage};
 use unicode_width::UnicodeWidthStr;
 
 const TIME_W: usize = 5;
 /// Two border columns plus the always-reserved cursor-bar column.
 const BORDERS_AND_CURSOR_W: u16 = 3;
 const NAME_W: usize = 12;
+const THREAD_NAME_W: usize = 8;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let input_rows = u16::from(app.input.is_some() || app.palette.is_some());
     let [main, input, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(input_rows), Constraint::Length(1)]).areas(f.area());
     let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help;
+    let mut pictures = Vec::new();
     if app.zen {
-        draw_reading(f, app, main);
+        pictures = draw_reading(f, app, main);
         if modal {
             fade(f, main, app.theme.faded);
         }
@@ -33,9 +40,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         let [left, middle, right] =
             Layout::horizontal([Constraint::Length(26), Constraint::Min(30), Constraint::Percentage(thread_w)]).areas(main);
         draw_channels(f, app, left);
-        draw_messages(f, app, middle);
+        pictures.extend(draw_messages(f, app, middle));
         if app.thread.is_some() {
-            draw_thread(f, app, right);
+            pictures.extend(draw_thread(f, app, right));
         }
         if app.focus != Focus::Channels || modal {
             fade(f, left, app.theme.faded);
@@ -46,6 +53,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         if app.thread.is_some() && (app.focus != Focus::Thread || modal) {
             fade(f, right, app.theme.faded);
         }
+    }
+    if !modal {
+        draw_pictures(f, app, &pictures);
     }
     if app.input.is_some() {
         draw_input(f, app, input);
@@ -150,14 +160,56 @@ pub fn row_highlight(theme: &Theme, focused: bool) -> Style {
 
 /// Reading mode: one centered column with the thread when open, the conversation otherwise.
 /// Three quarters of the terminal, never narrower than 80 columns nor wider than 110.
-fn draw_reading(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_reading(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     let width = (area.width * 3 / 4).clamp(80, 110).min(area.width);
     let column = Rect { x: area.x + (area.width - width) / 2, width, ..area };
-    if app.thread.is_some() {
-        draw_thread(f, app, column);
-    } else {
-        draw_messages(f, app, column);
+    if app.thread.is_some() { draw_thread(f, app, column) } else { draw_messages(f, app, column) }
+}
+
+/// Where a picture lands on screen this frame.
+pub struct Placement {
+    file: String,
+    area: Rect,
+}
+
+/// Pictures go on last, after the panes and their fades: the terminal paints them as pixels
+/// or placeholder cells, and both must stay exactly as the protocol wrote them.
+fn draw_pictures(f: &mut Frame, app: &mut App, pictures: &[Placement]) {
+    for p in pictures {
+        if let Some(Thumb::Ready(protocol)) = app.thumbs.get_mut(&p.file) {
+            let widget = StatefulImage::<StatefulProtocol>::default().resize(Resize::Fit(Some(image::imageops::FilterType::Triangle)));
+            f.render_stateful_widget(widget, p.area, protocol);
+        }
     }
+}
+
+/// Rows a message item reserved for a picture, counted from the item's first line.
+struct Slot {
+    line: usize,
+    file: String,
+    size: Size,
+}
+
+/// Screen areas of the reserved rows that are fully visible, walking items from the list's
+/// scroll offset; a picture cut by the pane edge is skipped rather than squeezed.
+fn placements(inner: Rect, x: u16, offset: usize, rows: &[(usize, Vec<Slot>)]) -> Vec<Placement> {
+    let mut out = Vec::new();
+    let mut y = usize::from(inner.y);
+    let bottom = usize::from(inner.bottom());
+    for (height, slots) in rows.iter().skip(offset) {
+        for slot in slots {
+            let top = y + slot.line;
+            if top + usize::from(slot.size.height) <= bottom {
+                let width = slot.size.width.min(inner.right().saturating_sub(x));
+                out.push(Placement { file: slot.file.clone(), area: Rect::new(x, top as u16, width, slot.size.height) });
+            }
+        }
+        y += height;
+        if y >= bottom {
+            break;
+        }
+    }
+    out
 }
 
 /// The selected row's ▎ bar, shown only in the focused pane; the column is always reserved so
@@ -179,7 +231,7 @@ pub fn fade(f: &mut Frame, area: Rect, color: Color) {
     }
 }
 
-fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     let focused = app.focus == Focus::Messages;
     let mut title = if app.search.is_some() {
         "search".to_owned()
@@ -192,10 +244,11 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
         title.push_str(" · loading…");
     }
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
-    let items: Vec<ListItem> = match &app.search {
-        Some(results) => results.iter().map(|m| search_item(&app.theme, m, width)).collect(),
-        None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.message_selected, app.zen),
+    let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) = match &app.search {
+        Some(results) => results.iter().map(|m| (search_item(&app.theme, m, width), vec![])).unzip(),
+        None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.message_selected, app.zen).into_iter().unzip(),
     };
+    let rows: Vec<(usize, Vec<Slot>)> = items.iter().map(ListItem::height).zip(slots).collect();
     let empty = items.is_empty();
     let block = frame(app, &title, focused);
     let inner = block.inner(area);
@@ -210,6 +263,8 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(state) = empty_state(app) {
         draw_empty(f, &app.theme, inner, app.frame, &state);
     }
+    let x = inner.x + 1 + (TIME_W + 1 + NAME_W + 1) as u16;
+    placements(inner, x, app.messages_view.offset(), &rows)
 }
 
 /// The caption under the ghost, chosen from what the pane is showing.
@@ -288,14 +343,18 @@ pub fn draw_empty(f: &mut Frame, theme: &Theme, area: Rect, frame: u32, state: &
     f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), slot);
 }
 
-fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
+fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     let focused = app.focus == Focus::Thread;
-    let Some(thread) = &app.thread else { return };
+    let Some(thread) = &app.thread else { return vec![] };
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
-    let items: Vec<ListItem> = grouped_items(&viewer(app), &thread.messages, width, 8, false, thread.selected, app.zen);
+    let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) =
+        grouped_items(&viewer(app), &thread.messages, width, THREAD_NAME_W, false, thread.selected, app.zen).into_iter().unzip();
+    let rows: Vec<(usize, Vec<Slot>)> = items.iter().map(ListItem::height).zip(slots).collect();
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
+    let block = frame(app, &title, focused);
+    let inner = block.inner(area);
     let list = List::new(items)
-        .block(frame(app, &title, focused))
+        .block(block)
         .highlight_style(row_highlight(&app.theme, focused))
         .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
@@ -303,6 +362,8 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
     let selected = (!thread.messages.is_empty()).then_some(thread.selected);
     app.thread_view.select(selected);
     f.render_stateful_widget(list, area, &mut app.thread_view);
+    let x = inner.x + 1 + (TIME_W + 1 + THREAD_NAME_W + 1) as u16;
+    placements(inner, x, app.thread_view.offset(), &rows)
 }
 
 /// Who is looking at the screen, so their own marks stand out.
@@ -310,10 +371,11 @@ struct Viewer<'a> {
     names: &'a NameBook,
     me: &'a str,
     theme: &'a Theme,
+    thumbs: &'a Thumbs,
 }
 
 fn viewer(app: &App) -> Viewer<'_> {
-    Viewer { names: &app.names, me: &app.me, theme: &app.theme }
+    Viewer { names: &app.names, me: &app.me, theme: &app.theme, thumbs: &app.thumbs }
 }
 
 /// How one message sits in its list.
@@ -338,7 +400,7 @@ fn grouped_items(
     show_meta: bool,
     selected: usize,
     zen: bool,
-) -> Vec<ListItem<'static>> {
+) -> Vec<(ListItem<'static>, Vec<Slot>)> {
     let mut items = Vec::with_capacity(messages.len());
     let mut prev: Option<&Message> = None;
     let mut last_day = String::new();
@@ -355,12 +417,14 @@ fn grouped_items(
     items
 }
 
-fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_meta: bool, row: Row) -> ListItem<'static> {
+fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_meta: bool, row: Row) -> (ListItem<'static>, Vec<Slot>) {
     let names = viewer.names;
     let theme = viewer.theme;
     let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
     let indent = TIME_W + 1 + name_w + 1;
-    let styled = body(names, m);
+    let avail = width.saturating_sub(indent) as u16;
+    let (pictures, others): (Vec<&File>, Vec<&File>) = m.files.iter().partition(|f| viewer.thumbs.cells(f, avail).is_some());
+    let styled = body(names, m, others);
     let mut lines: Vec<Line> = Vec::new();
     if row.gap {
         lines.push(Line::raw(""));
@@ -389,6 +453,24 @@ fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_
         spans.extend(body_spans(theme, chunks, width.saturating_sub(indent)));
         lines.push(Line::from(spans));
     }
+    let mut slots = Vec::new();
+    for file in pictures {
+        let size = viewer.thumbs.cells(file, avail).expect("partitioned as a picture");
+        let note = match viewer.thumbs.get(&file.id) {
+            Some(Thumb::Ready(_)) => "",
+            Some(Thumb::Failed) => "image unavailable",
+            _ => "· loading image…",
+        };
+        slots.push(Slot { line: lines.len(), file: file.id.clone(), size });
+        for r in 0..size.height {
+            let text = if r == 0 { note } else { "" };
+            lines.push(Line::from(vec![Span::raw(" ".repeat(indent)), Span::styled(text, Style::new().fg(theme.faded))]));
+        }
+        lines.push(Line::from(vec![
+            Span::raw(" ".repeat(indent)),
+            Span::styled(format!("📎 {}", file.label()), Style::new().fg(theme.faded)),
+        ]));
+    }
     if !m.reactions.is_empty() {
         let mut spans = vec![Span::raw(" ".repeat(indent))];
         spans.extend(reaction_pills(theme, &m.reactions, viewer.me));
@@ -400,7 +482,7 @@ fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_
             Span::styled(format!("↳ {} replies", m.reply_count), Style::new().fg(theme.accent)),
         ]));
     }
-    ListItem::new(lines)
+    (ListItem::new(lines), slots)
 }
 
 /// Reactions as a quiet dim row; the ones you joined stand out in bold accent.
@@ -424,18 +506,19 @@ fn reaction_pills(theme: &Theme, reactions: &[Reaction], me: &str) -> Vec<Span<'
 
 /// A block already leaves its own blank line behind, so the next message needs no gap.
 fn ends_with_code_block(names: &NameBook, m: &Message) -> bool {
-    body(names, m).spans.last().is_some_and(|p| p.style == TextStyle::Block)
+    body(names, m, &m.files).spans.last().is_some_and(|p| p.style == TextStyle::Block)
 }
 
-fn body(names: &NameBook, m: &Message) -> Styled {
+/// The message text plus a 📎 line per attached file that is not drawn as a picture.
+fn body<'a>(names: &NameBook, m: &Message, files: impl IntoIterator<Item = &'a File>) -> Styled {
     let text =
         if m.text.is_empty() { m.attachments.iter().map(|a| a.fallback.clone()).collect::<Vec<_>>().join("\n") } else { m.text.clone() };
     let mut styled = match m.subtype.as_deref() {
         Some("channel_join") => Styled::dim("joined the channel"),
         _ => text::from_segments(&mrkdwn::parse(&text, names), false),
     };
-    for file in &m.files {
-        styled.push_dim(&format!(" 📎 {}", if file.title.is_empty() { &file.name } else { &file.title }));
+    for file in files {
+        styled.push_dim(&format!(" 📎 {}", file.label()));
     }
     styled
 }
@@ -721,6 +804,43 @@ mod tests {
         let out = terminal.backend().to_string();
         assert!(out.contains("pick a conversation") && out.contains("enter"), "{out}");
         assert!(!out.contains("╭─────╮"), "{out}");
+    }
+
+    #[test]
+    fn picture_rows_are_reserved_then_painted_under_the_text() {
+        let mut app = App::new();
+        app.thumbs = Thumbs::with(ratatui_image::picker::Picker::halfblocks());
+        app.current_channel = Some("C1".into());
+        app.focus = Focus::Messages;
+        let shot = File {
+            id: "F1".into(),
+            name: "shot.png".into(),
+            mimetype: "image/png".into(),
+            thumb_360: "https://files.slack.com/s.png".into(),
+            thumb_360_w: 400,
+            thumb_360_h: 200,
+            ..Default::default()
+        };
+        let with_shot = Message { files: vec![shot], ..message("1694700000.000100", "U1", "look") };
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![with_shot], names: NameBook::default() });
+        let render = |app: &mut App| {
+            let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+            terminal.draw(|f| draw(f, app)).unwrap();
+            terminal.backend().to_string()
+        };
+        let out = render(&mut app);
+        assert!(out.contains("· loading image…") && out.contains("📎 shot.png"), "{out}");
+        assert!(!out.contains(" 📎 shot.png\n"), "no inline attachment line for a picture");
+        let gradient = image::RgbImage::from_fn(400, 200, |_, y| image::Rgb([y as u8, y as u8, y as u8]));
+        app.apply(Incoming::Thumb { id: "F1".into(), image: Some(image::DynamicImage::ImageRgb8(gradient)) });
+        let out = render(&mut app);
+        let lines: Vec<&str> = out.lines().collect();
+        let text_row = lines.iter().position(|l| l.contains("look")).unwrap();
+        let painted = |l: &str| l.contains('▀') || l.contains('▄');
+        let first_pixels = lines.iter().position(|l| painted(l)).expect("halfblocks painted");
+        assert_eq!(first_pixels, text_row + 1, "{out}");
+        assert_eq!(lines.iter().filter(|l| painted(l)).count(), 10, "400x200 at 10x20 cells is 40x10");
+        assert!(!out.contains("loading image"), "{out}");
     }
 
     #[test]

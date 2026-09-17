@@ -1,5 +1,6 @@
 pub mod app;
 pub mod firehose;
+pub mod images;
 pub mod inbox;
 pub mod jump;
 pub mod palette;
@@ -58,6 +59,9 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     app.highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
     let mut terminal = ratatui::init();
     let enhanced = enable_modifier_keys();
+    if ctx.config.tui.images.unwrap_or(true) {
+        app.thumbs = images::Thumbs::from_terminal();
+    }
     spawn(Action::LoadChannels, slack.clone(), dir.clone(), tx.clone());
     if open_inbox {
         for action in app.open_inbox() {
@@ -270,6 +274,13 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
         Action::SaveInbox { workspace, state } => {
             state.save(&workspace)?;
             Ok(Incoming::Status(String::new()))
+        }
+        Action::LoadImage { id, url } => {
+            let image = match slack.download(&url).await {
+                Ok(bytes) => tokio::task::spawn_blocking(move || images::decode(&bytes)).await.unwrap_or(None),
+                Err(_) => None,
+            };
+            Ok(Incoming::Thumb { id, image })
         }
         Action::SaveSetting { key, value } => {
             let mut config = crate::config::Config::load()?;

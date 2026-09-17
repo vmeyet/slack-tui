@@ -125,7 +125,7 @@ pub fn slot(line: &str) -> Slot {
         ("react" | "r", 0) => Slot::Emoji,
         ("export" | "e", 0) => Slot::Literal(&["json", "md"]),
         ("snooze" | "z", 0) => Slot::Literal(&["1h", "3h", "tomorrow", "monday"]),
-        ("set", 0) => Slot::Literal(&["theme=", "highlight=", "show_url="]),
+        ("set", 0) => Slot::Literal(&["theme=", "highlight=", "images=", "show_url="]),
         _ => Slot::Free,
     }
 }
