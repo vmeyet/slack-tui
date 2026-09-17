@@ -251,6 +251,8 @@ pub struct App {
     pub badges: HashMap<String, Badge>,
     pub me: String,
     pub theme: Theme,
+    /// Animation step for empty states; only advances while one is on screen.
+    pub frame: u32,
     pub inbox: Option<Inbox>,
     pub workspace: String,
     pub jump: Option<Jump>,
@@ -292,6 +294,7 @@ impl Default for App {
             badges: HashMap::new(),
             me: String::new(),
             theme: Theme::default(),
+            frame: 0,
             inbox: None,
             workspace: "env".into(),
             jump: None,
@@ -317,6 +320,24 @@ impl App {
     pub fn visible_channels(&self) -> Vec<&ChannelRow> {
         let f = self.filter.to_lowercase();
         self.channels.iter().filter(|c| c.label.to_lowercase().contains(&f)).collect()
+    }
+
+    pub fn current_kind(&self) -> Option<Kind> {
+        let id = self.current_channel.as_deref()?;
+        self.channels.iter().find(|c| c.id == id).map(|c| c.kind)
+    }
+
+    /// True while an empty state is visible, so the event loop only ticks frames when there is
+    /// something to animate.
+    pub fn animating(&self) -> bool {
+        if self.firehose.is_some() || self.jump.is_some() || self.help {
+            return false;
+        }
+        if let Some(inbox) = &self.inbox {
+            return inbox.items.is_empty() && !inbox.loading;
+        }
+        let empty_search = self.search.as_ref().is_some_and(Vec::is_empty);
+        !self.loading && (empty_search || (self.search.is_none() && self.messages.is_empty()))
     }
 
     pub fn current_label(&self) -> String {
@@ -1391,6 +1412,22 @@ mod tests {
         adjust_reaction(&mut reactions, "tada", "U1", false);
         adjust_reaction(&mut reactions, "tada", "U1", false);
         assert!(reactions.is_empty());
+    }
+
+    #[test]
+    fn animates_only_while_an_empty_state_is_visible() {
+        let mut app = loaded();
+        assert!(app.animating(), "no conversation picked yet");
+        app.handle_key(code(KeyCode::Enter));
+        assert!(!app.animating(), "history is loading");
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![], names: NameBook::default() });
+        assert!(app.animating(), "empty channel");
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "hi")], names: NameBook::default() });
+        assert!(!app.animating());
+        app.apply(Incoming::SearchResults(vec![]));
+        assert!(app.animating(), "search without results");
+        app.help = true;
+        assert!(!app.animating(), "a modal covers it");
     }
 
     #[test]

@@ -7,7 +7,7 @@ use crate::render::text::{self, Style as TextStyle, Styled};
 use crate::render::time;
 use crate::resolve::NameBook;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Wrap};
@@ -55,7 +55,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_status(f, app, status);
     let theme = app.theme;
     if let Some(inbox) = &mut app.inbox {
-        super::inbox::draw(f, inbox, &app.names, main, &theme);
+        super::inbox::draw(f, inbox, &app.names, main, &theme, app.frame);
     }
     if let Some(view) = &mut app.firehose {
         f.render_widget(Clear, main);
@@ -197,18 +197,95 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) {
         None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.message_selected, app.zen),
     };
     let empty = items.is_empty();
+    let block = frame(app, &title, focused);
+    let inner = block.inner(area);
     let list = List::new(items)
-        .block(frame(app, &title, focused))
+        .block(block)
         .highlight_style(row_highlight(&app.theme, focused))
         .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
     app.messages_view.select((!empty).then_some(app.message_selected));
     f.render_stateful_widget(list, area, &mut app.messages_view);
-    if empty && app.current_channel.is_none() {
-        let hint = Paragraph::new("pick a conversation on the left, enter to open".fg(app.theme.muted)).block(Block::default());
-        f.render_widget(hint, Rect { x: area.x + 2, y: area.y + 2, width: area.width.saturating_sub(4), height: 1 });
+    if let Some(state) = empty_state(app) {
+        draw_empty(f, &app.theme, inner, app.frame, &state);
     }
+}
+
+/// The caption under the ghost, chosen from what the pane is showing.
+pub struct Empty {
+    pub title: String,
+    pub hint: String,
+    pub key: Option<&'static str>,
+}
+
+fn empty_state(app: &App) -> Option<Empty> {
+    if app.loading {
+        return None;
+    }
+    let state = match (&app.search, app.current_kind()) {
+        (Some(results), _) if results.is_empty() => {
+            Empty { title: "no results".into(), hint: "try other words with".into(), key: Some("s") }
+        }
+        (Some(_), _) => return None,
+        _ if !app.messages.is_empty() => return None,
+        (None, None) => Empty { title: "pick a conversation".into(), hint: "on the left, then".into(), key: Some("enter") },
+        (None, Some(Kind::Dm | Kind::GroupDm)) => {
+            Empty { title: "nothing here yet".into(), hint: format!("say hi to {} with", app.current_label()), key: Some("r") }
+        }
+        (None, Some(_)) => Empty {
+            title: "nothing here yet".into(),
+            hint: format!("be the first to post in {} with", app.current_label()),
+            key: Some("r"),
+        },
+    };
+    Some(state)
+}
+
+const GHOST_H: u16 = 4;
+/// Ghost, its trail, a blank line, then the two caption lines.
+const EMPTY_H: u16 = GHOST_H + 3;
+const EMPTY_MIN_W: u16 = 28;
+
+/// Every row is the same width so the face never drifts from the hem. Blinks once in a while.
+pub fn ghost(frame: u32) -> [&'static str; GHOST_H as usize] {
+    let eyes = if frame % 16 == 14 { "│ ─ ─ │" } else { "│ ◠ ◠ │" };
+    ["╭─────╮", eyes, "│  ‿  │", "╰┬┬┬┬┬╯"]
+}
+
+/// Up for four frames, down for four: a slow float.
+fn floating(frame: u32) -> bool {
+    (frame / 4) % 2 == 1
+}
+
+/// A small ghost centered in the pane with a two-line caption; only the caption when the pane
+/// is too small for it to breathe.
+pub fn draw_empty(f: &mut Frame, theme: &Theme, area: Rect, frame: u32, state: &Empty) {
+    let full = area.height >= EMPTY_H + 2 && area.width >= EMPTY_MIN_W;
+    let mut lines: Vec<Line> = Vec::new();
+    if full {
+        let up = floating(frame);
+        let tone = if up { theme.muted } else { theme.faded };
+        if !up {
+            lines.push(Line::raw(""));
+        }
+        lines.extend(ghost(frame).into_iter().map(|row| Line::from(Span::styled(row, Style::new().fg(tone)))));
+        if up {
+            lines.push(Line::from(Span::styled("·   ·", Style::new().fg(theme.faded))));
+        }
+        lines.push(Line::raw(""));
+    }
+    lines.push(Line::from(Span::styled(state.title.clone(), Style::new().fg(theme.muted).bold())));
+    let mut hint = vec![Span::styled(state.hint.clone(), Style::new().fg(theme.muted))];
+    if let Some(key) = state.key {
+        hint.push(Span::raw("  "));
+        hint.push(Span::styled(key, Style::new().fg(theme.accent).bold()));
+    }
+    lines.push(Line::from(hint));
+    let height = lines.len() as u16;
+    let top = area.y + area.height.saturating_sub(height) / 2;
+    let slot = Rect { y: top, height: height.min(area.height), ..area };
+    f.render_widget(Paragraph::new(lines).alignment(Alignment::Center), slot);
 }
 
 fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) {
@@ -595,6 +672,51 @@ mod tests {
         assert_eq!(pills[2].style.fg, Some(theme.muted));
         assert!(pills.iter().all(|s| s.style.bg.is_none()));
         assert!(reaction_pills(&theme, &reactions, "").iter().all(|s| !s.style.add_modifier.contains(Modifier::BOLD)));
+    }
+
+    #[test]
+    fn ghost_rows_share_one_width_and_blink_rarely() {
+        for frame in 0..32 {
+            let rows = ghost(frame);
+            assert!(rows.iter().all(|r| r.width() == rows[0].width()), "frame {frame}: {rows:?}");
+        }
+        assert!(ghost(0)[1].contains("◠ ◠"));
+        assert!(ghost(14)[1].contains("─ ─"));
+        assert_eq!((0..32).filter(|f| ghost(*f)[1].contains("─ ─")).count(), 2);
+    }
+
+    #[test]
+    fn empty_dm_shows_a_centered_ghost_with_a_contextual_caption() {
+        let mut app = App::new();
+        app.apply(Incoming::Channels {
+            rows: vec![ChannelRow::new("D1", "@bob", Kind::Dm)],
+            people: vec![],
+            names: NameBook::default(),
+            badges: Default::default(),
+            me: "U1".into(),
+        });
+        app.current_channel = Some("D1".into());
+        app.apply(Incoming::History { channel: "D1".into(), messages: vec![], names: NameBook::default() });
+        let mut terminal = Terminal::new(TestBackend::new(90, 20)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("╭─────╮") && out.contains("│ ◠ ◠ │") && out.contains("╰┬┬┬┬┬╯"), "{out}");
+        assert!(out.contains("nothing here yet") && out.contains("say hi to D1 with  r"), "{out}");
+        let pane_middle: i32 = 26 + (90 - 26) / 2;
+        let face = out.lines().find(|l| l.contains("◠ ◠")).unwrap();
+        let face_at = face.chars().position(|c| c == '◠').unwrap();
+        assert!((face_at as i32 - pane_middle).abs() <= 3, "face at {face_at}, pane middle {pane_middle}");
+    }
+
+    #[test]
+    fn tiny_pane_keeps_only_the_caption() {
+        let mut app = App::new();
+        app.loading = false;
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let out = terminal.backend().to_string();
+        assert!(out.contains("pick a conversation") && out.contains("enter"), "{out}");
+        assert!(!out.contains("╭─────╮"), "{out}");
     }
 
     #[test]

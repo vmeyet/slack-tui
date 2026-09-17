@@ -44,6 +44,9 @@ fn theme_from(config: &crate::config::Tui) -> Result<theme::Theme> {
     Ok(theme)
 }
 
+/// One step of the empty-state animation.
+const FRAME: Duration = Duration::from_millis(300);
+
 async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let workspace = ctx.workspace.clone().unwrap_or_else(|| "env".into());
     let slack = ctx.slack.clone();
@@ -69,6 +72,10 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
         }
         let actions = tokio::select! {
             Some(incoming) = rx.recv() => app.apply(incoming),
+            _ = tokio::time::sleep(FRAME), if app.animating() => {
+                app.frame = app.frame.wrapping_add(1);
+                vec![]
+            }
             Some(event) = events.next() => match event {
                 Ok(Event::Key(key)) if key.kind != KeyEventKind::Release => app.handle_key(key),
                 Ok(_) => vec![],

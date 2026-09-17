@@ -80,7 +80,7 @@ impl Inbox {
     }
 }
 
-pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, theme: &Theme) {
+pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, theme: &Theme, frame: u32) {
     let popup = centered(area, 92, 90);
     f.render_widget(Clear, popup);
     let title = match (inbox.loading, inbox.items.len()) {
@@ -93,7 +93,8 @@ pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, them
     f.render_widget(block, popup);
     let [list_area, hint_area] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
     if inbox.items.is_empty() && !inbox.loading {
-        f.render_widget(Paragraph::new("  nothing waiting for you ✨".fg(theme.muted)), Rect { y: list_area.y + 1, ..list_area });
+        let state = super::ui::Empty { title: "all caught up ✓".into(), hint: "nothing waiting for you".into(), key: None };
+        super::ui::draw_empty(f, theme, list_area, frame, &state);
     }
     let width = list_area.width as usize;
     let items: Vec<ListItem> = inbox.items.iter().map(|i| item_lines(theme, i, names, width)).collect();
@@ -223,7 +224,7 @@ mod tests {
         inbox.set_items(vec![item("a", Kind::Dm)]);
         inbox.picking_snooze = true;
         let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
-        terminal.draw(|f| draw(f, &mut inbox, &NameBook::default(), f.area(), &Theme::default())).unwrap();
+        terminal.draw(|f| draw(f, &mut inbox, &NameBook::default(), f.area(), &Theme::default(), 0)).unwrap();
         let out = terminal.backend().to_string();
         assert!(out.contains("inbox · 1"));
         assert!(out.contains("snooze for"));
