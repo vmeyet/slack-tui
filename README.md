@@ -1,95 +1,142 @@
-# slack
+# slack-tui
 
-Slack from your terminal, as yourself.
-One Rust binary, ~10ms startup, session stored in the macOS keychain.
+Slack in your terminal, as yourself: a full TUI plus scriptable commands.
+One Rust binary called `slack`, ~10 ms startup.
+
+> [!IMPORTANT]
+> **Unofficial.** It logs in with your browser session, not a Slack app, so it needs no admin approval.
+> Check that your workspace rules allow this before you use it.
+> **macOS only** for now (keychain, `open`, `pbcopy`).
 
 ## Install
 
 ```sh
-cargo install --path .
-slack completions zsh > ~/.zfunc/_slack   # optional
+cargo install --git https://github.com/vmeyet/slack-tui
 ```
 
-## Login
+That is all: the `slack` command is now on your path.
+
+| You need | Get it |
+|---|---|
+| macOS | |
+| Rust 1.88+ (`cargo`) | `curl -sSf https://sh.rustup.rs \| sh` |
+| Brave, Chrome, Chromium or Edge | Only used once, to log in |
+
+Optional shell completions: `slack completions zsh > ~/.zfunc/_slack` (also `bash`, `fish`).
+Update with the same `cargo install` command; remove with `cargo uninstall slack`.
+
+## Log in
 
 ```sh
-slack login acme          # opens your browser on acme.slack.com, log in there, done
+slack login acme    # opens acme.slack.com in your browser; log in there, done
 slack whoami
+slack logout        # forgets the keychain entry, config and cache
 ```
 
-The CLI drives a throwaway Brave/Chrome profile over the DevTools protocol.
-Once you are logged in it reads the web client's session (`xoxc` token + `d` cookie), stores it in the login keychain under the `slack-cli` service, closes the browser and wipes the profile.
-Nothing ever touches disk unencrypted.
-
-The keychain item is written through `/usr/bin/security`, so rebuilding or upgrading the binary never triggers an "allow access" prompt.
-
-Escape hatches: `--browser chrome`, `--profile <dir>` to reuse an existing browser profile, `--cookie -` to paste a `d` cookie from stdin instead of using a browser.
-`slack logout` forgets everything.
-
-## Everyday
-
-```sh
-slack send #general "Deploy **v2.3** is out, see [notes](https://…) cc @bob"
-slack send @bob - < message.md                       # stdin, markdown
-slack send #ops --blocks payload.json                # Block Kit, validated first
-slack send <permalink> "replying in that thread"
-slack send #ops "reply" --thread 1694700000.000100 --broadcast
-slack send #ops "…" --dry-run                        # print the payload only
-
-slack messages #general -n 50 --since 2d --threads
-slack messages #general --follow                     # tail live
-slack thread <permalink>
-slack thread #general 1694700000.000100
-slack search "deploy failed" --in ops --from vivien --after 2026-09-01
-slack react <permalink> :tada:
-slack channels [filter] [--all]
-slack users [filter]
-slack api conversations.info channel=C0123          # any Web API method
-slack inbox                                          # unread DMs, mentions, thread replies
-slack firehose -H 'error|failed' -H prod             # every channel as one live ticker
-slack tui
-```
-
-`slack inbox` is a modal: `→` marks read, `←` snoozes (1h, 3h, tomorrow, monday), `r` replies in place, `enter` jumps into the conversation, `a` clears everything.
-Piped or with `--list`/`--json` it prints the list instead. `i` opens it from the TUI too.
-
-Every command takes `--json` for scripts and agents, and `-w <workspace>` to pick a workspace.
-
-## Markdown
-
-Messages are markdown by default and become Block Kit `rich_text`:
-`**bold**`, `_italic_`, `~~strike~~`, `` `code` ``, fenced code, `# heading`, `-`/`1.` lists, `> quotes`, `---`, `[label](url)`, `@user`, `#channel`, `:emoji:`.
-Use `--raw` to send Slack mrkdwn untouched.
+| Option | Use |
+|---|---|
+| `--browser chrome` | Pick the browser: `brave`, `chrome`, `chromium`, `edge`, or a path. |
+| `--profile <dir>` | Reuse a browser profile that is already logged in. |
+| `--cookie -` | Skip the browser and paste a `d` cookie on stdin. |
 
 ## TUI
 
-`slack tui` opens channels, messages and thread panes.
-`j/k` move, `enter` opens, `r` replies, `t` replies in thread, `e` reacts, `o` opens in Slack, `y` copies the permalink, `s` searches, `/` filters channels, `?` shows every key.
-`ctrl-k` (or `⌘k` on terminals that forward it: Ghostty, Kitty, WezTerm, iTerm2 with the kitty keyboard protocol enabled and ⌘K unbound) opens a fuzzy jump box over channels, people and the threads you follow (`vvt` finds `#vivien-vault`); a leading `>` sends the query to Slack search instead.
-New messages, edits, deletions and reactions arrive live over Slack's RTM websocket; other channels light up with `●`.
-If the workspace refuses RTM the open conversation is polled every 10 seconds instead (`↻` in the status bar).
+```sh
+slack tui
+```
+
+Three panes: channels, messages, thread.
+Messages, edits, deletions and reactions arrive live; other channels light up with `●`.
+
+| Key | Action |
+|---|---|
+| `j` `k` / arrows | Move |
+| `enter` / `l` | Open the channel or the thread |
+| `h` / `esc` | Go back |
+| `r` / `t` | Reply / reply in thread |
+| `e` | React |
+| `o` / `u` | Open the message in Slack / open its first link |
+| `y` | Copy the permalink |
+| `/` | Filter channels |
+| `s` | Search |
+| `ctrl-k` | Fuzzy jump to a channel, a person or a followed thread; start with `>` to search Slack |
+| `i` | Inbox |
+| `f` | Firehose: every conversation as one live wall |
+| `z` | Reading mode: one centered column, nothing else |
+| `:` | Command line |
+| `?` | Every key |
+
+`⌘k` also works on terminals that forward it (Ghostty, Kitty, WezTerm, iTerm2 with the kitty keyboard protocol).
+
+**Command line.**
+`:join #ops`, `:leave`, `:go @bob`, `:msg @bob on my way`, `:react rocket`, `:search deploy failed`, `:export md`, `:read`, `:snooze 1h`, `:set theme=nord`, `:help`, `:quit`.
+Tab completes verbs, channels, people and emoji; `↑` recalls history.
+
+**Inbox.**
+Unread DMs, mentions and thread replies in one list.
+`→` marks read, `←` snoozes (1h, 3h, tomorrow, monday), `r` replies in place, `enter` opens the conversation, `a` clears everything.
+
+**No live feed?**
+If the workspace refuses the RTM websocket, the open conversation is polled every 10 seconds (`↻` in the status bar).
+
+## Commands
+
+Every command takes `--json` (for scripts and agents) and `-w <workspace>`.
+
+```sh
+slack send '#general' "Deploy **v2.3** is out, see [notes](https://…) cc @bob"
+slack send @bob - < message.md                  # markdown from stdin
+slack send '#ops' --blocks payload.json         # Block Kit
+slack send <permalink> "replying in that thread"
+slack send '#ops' "…" --dry-run                 # print the payload, send nothing
+
+slack messages '#general' -n 50 --since 2d --threads
+slack messages '#general' --follow              # tail live
+slack thread <permalink>
+slack search "deploy failed" --in ops --from bob --after 2026-09-01
+slack react <permalink> :tada:
+slack channels [filter] [--all]
+slack users [filter]
+slack inbox                                     # a list when piped or with --list
+slack firehose -H 'error|failed' -H prod        # live ticker, -H highlights a regex
+slack api conversations.info channel=C0123      # any Web API method
+```
+
+Messages are markdown by default and are sent as Block Kit `rich_text`:
+`**bold**`, `_italic_`, `~~strike~~`, `` `code` ``, fenced code, `# heading`, lists, `> quotes`, `---`, `[label](url)`, `@user`, `#channel`, `:emoji:`.
+Use `--raw` to send Slack mrkdwn untouched.
 
 ## Settings
 
-`~/.config/slack-cli/config.toml`:
+`~/.config/slack-cli/config.toml`, every key optional:
 
 ```toml
 [tui]
 theme = "catppuccin"    # dracula, catppuccin, catppuccin-latte, rosepine, rosepine-dawn, nord, tokyonight, monokai
-highlight = "#2a2a2a"   # optional fill under the selected row (only the ▎ bar marks it by default)
-images = true           # inline image thumbnails on Kitty, Ghostty, WezTerm and iTerm2; false to keep the 📎 line
+highlight = "#2a2a2a"   # fill under the selected row; by default only the ▎ bar marks it
+images = true           # inline thumbnails on Kitty, Ghostty, WezTerm and iTerm2
 
 [links]
-show_url = false        # true prints `label (url)`; false keeps the label, clickable on OSC 8 terminals
+show_url = false        # true prints `label (url)`; false keeps a clickable label
 
 [firehose]
-highlight = ["prod", "error|failed", "@vivien"]   # case-insensitive regexes lit up in the ticker
+highlight = ["prod", "error|failed", "@bob"]   # case-insensitive regexes
 ```
 
-`slack firehose` streams every message from every conversation as one ticker, colour-coded by channel, with `!` and a yellow mark on lines matching a highlight.
-`:` opens a command line: `:join #ops`, `:go @bob`, `:msg @bob on my way`, `:react rocket`, `:search deploy failed`, `:export md`, `:read`, `:snooze 1h`, `:set theme=nord`, `:set highlight=#2a2a2a`, `:set images=off`, `:help`, `:quit`. Tab completes verbs, channels, people and emoji with the same fuzzy matcher, `↑` recalls history.
-`z` toggles reading mode: one centered frameless column, three quarters of the terminal, sidebar and thread hidden, timestamps only on the selected row.
-`f` opens the same wall inside the TUI, where scrolling up pauses it, `G` follows again and `enter` jumps into the conversation.
+`:set theme=…`, `:set highlight=…` and `:set images=on|off` write this file from the TUI.
+
+## How the login works
+
+1. `slack login` starts a throwaway browser profile and drives it over the DevTools protocol.
+2. Once you are logged in, it reads the web client's session: the `xoxc` token and the `d` cookie.
+3. It stores both in the macOS login keychain (service `slack-cli`), closes the browser and deletes the profile.
+
+The session never touches disk unencrypted.
+It acts as you, with everything you can do in Slack: treat it like a password.
+The keychain is accessed through `/usr/bin/security`, so rebuilding the binary never triggers an "allow access" prompt.
+
+Unread badges, the inbox and sidebar sections use undocumented web-client endpoints (`client.counts`, `subscriptions.thread.*`, `users.channelSections.list`).
+Slack can change them without notice.
 
 ## Development
 
@@ -99,4 +146,14 @@ cargo test -- --ignored          # also the real keychain round trip
 SLACK_CLI_DEBUG=1 slack login …  # trace the browser capture
 ```
 
-Environment overrides: `SLACK_TOKEN` / `SLACK_COOKIE` bypass the keychain, `SLACK_CLI_API_URL`, `SLACK_CLI_CONFIG_DIR`, `SLACK_CLI_CACHE_DIR`, `NO_COLOR`, `COLUMNS`.
+| Variable | Effect |
+|---|---|
+| `SLACK_TOKEN`, `SLACK_COOKIE` | Bypass the keychain |
+| `SLACK_WORKSPACE` | Default workspace |
+| `SLACK_CLI_API_URL` | Point at another API host (tests use a mock) |
+| `SLACK_CLI_CONFIG_DIR`, `SLACK_CLI_CACHE_DIR` | Move the config and the cache |
+| `NO_COLOR`, `COLUMNS` | Plain output, fixed width |
+
+## License
+
+[MIT](LICENSE)
