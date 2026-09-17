@@ -11,11 +11,28 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     Connected,
-    Message { channel: String, message: Message },
-    Changed { channel: String, message: Message },
-    Deleted { channel: String, ts: String },
-    Reaction { channel: String, ts: String, name: String, user: String, added: bool },
+    Message {
+        channel: String,
+        message: Message,
+    },
+    Changed {
+        channel: String,
+        message: Message,
+    },
+    Deleted {
+        channel: String,
+        ts: String,
+    },
+    Reaction {
+        channel: String,
+        ts: String,
+        name: String,
+        user: String,
+        added: bool,
+    },
     Disconnected(String),
+    /// The feed failed too many times in a row and will not reconnect.
+    GaveUp(String),
 }
 
 impl Event {
@@ -66,8 +83,8 @@ pub async fn stream(slack: Slack, tx: mpsc::UnboundedSender<Event>) {
             Err(e) => {
                 failures += 1;
                 let fatal = failures >= MAX_FAILURES;
-                let text = if fatal { format!("{e} (giving up)") } else { e.to_string() };
-                if tx.send(Event::Disconnected(text)).is_err() || fatal {
+                let event = if fatal { Event::GaveUp(e.to_string()) } else { Event::Disconnected(e.to_string()) };
+                if tx.send(event).is_err() || fatal {
                     return;
                 }
             }
@@ -187,11 +204,12 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::time::pause();
         tokio::spawn(stream(slack, tx));
-        let mut seen = 0;
+        let mut events = vec![];
         while let Some(event) = rx.recv().await {
-            assert!(matches!(event, Event::Disconnected(_)));
-            seen += 1;
+            events.push(event);
         }
-        assert_eq!(seen, MAX_FAILURES);
+        assert_eq!(events.len(), MAX_FAILURES as usize);
+        assert!(matches!(events.pop(), Some(Event::GaveUp(_))));
+        assert!(events.iter().all(|e| matches!(e, Event::Disconnected(_))));
     }
 }

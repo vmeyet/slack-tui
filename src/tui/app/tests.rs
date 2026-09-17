@@ -1,0 +1,611 @@
+use super::*;
+use crate::api::{File, Message};
+use crate::inbox::Item;
+use crate::tui::images::Thumbs;
+use crate::tui::jump::Target;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+fn key(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+}
+
+fn code(c: KeyCode) -> KeyEvent {
+    KeyEvent::new(c, KeyModifiers::NONE)
+}
+
+fn row(id: &str, label: &str) -> ChannelRow {
+    ChannelRow::new(id, label, Kind::Public)
+}
+
+fn msg(ts: &str, text: &str) -> Message {
+    Message { ts: ts.into(), text: text.into(), user: Some("U1".into()), ..Default::default() }
+}
+
+fn loaded() -> App {
+    let mut app = App::new();
+    app.apply(Incoming::Channels {
+        rows: vec![row("C1", "#general"), row("C2", "#random")],
+        people: vec![("U1".into(), "vivien".into())],
+        names: NameBook::default(),
+        badges: HashMap::new(),
+        me: "U1".into(),
+    });
+    app
+}
+
+#[test]
+fn enter_on_channel_loads_history_and_focuses_messages() {
+    let mut app = loaded();
+    app.handle_key(key('j'));
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::LoadHistory("C2".into())]);
+    assert_eq!(app.focus, Focus::Messages);
+    assert!(app.loading);
+    app.apply(Incoming::History { channel: "C2".into(), messages: vec![msg("1", "a"), msg("2", "b")], names: NameBook::default() });
+    assert_eq!(app.message_selected, 1);
+    assert!(!app.loading);
+}
+
+#[test]
+fn stale_history_is_ignored() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C9".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    assert!(app.messages.is_empty());
+}
+
+#[test]
+fn filter_narrows_channels_live_and_escape_clears() {
+    let mut app = loaded();
+    app.handle_key(key('/'));
+    for c in "ran".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(app.visible_channels().len(), 1);
+    app.handle_key(code(KeyCode::Enter));
+    assert_eq!(app.input, None);
+    assert_eq!(app.filter, "ran");
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.filter, "");
+}
+
+#[test]
+fn reply_in_channel_sends_and_reloads() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    app.handle_key(key('r'));
+    for c in "hi".chars() {
+        app.handle_key(key(c));
+    }
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "hi".into() }]);
+    assert_eq!(app.apply(Incoming::Sent { channel: "C1".into(), thread_ts: None }), vec![Action::LoadHistory("C1".into())]);
+}
+
+#[test]
+fn thread_reply_targets_the_root() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    let reply = Message { thread_ts: Some("1".into()), ..msg("2", "b") };
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a"), reply], names: NameBook::default() });
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::LoadReplies { channel: "C1".into(), ts: "1".into() }]);
+    assert_eq!(app.focus, Focus::Thread);
+    app.apply(Incoming::Replies {
+        channel: "C1".into(),
+        ts: "1".into(),
+        messages: vec![msg("1", "a"), msg("2", "b")],
+        names: NameBook::default(),
+    });
+    app.handle_key(key('r'));
+    app.handle_key(key('x'));
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::Send { channel: "C1".into(), thread_ts: Some("1".into()), text: "x".into() }]);
+}
+
+#[test]
+fn empty_reply_is_dropped_and_escape_cancels() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(key('r'));
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![]);
+    app.handle_key(key('r'));
+    app.handle_key(key('z'));
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.input, None);
+    assert_eq!(app.buffer, "");
+}
+
+#[test]
+fn history_with_pictures_asks_for_each_thumbnail_once() {
+    let mut app = loaded();
+    app.thumbs = Thumbs::with(ratatui_image::picker::Picker::halfblocks());
+    app.handle_key(code(KeyCode::Enter));
+    let picture = File {
+        id: "F1".into(),
+        name: "shot.png".into(),
+        mimetype: "image/png".into(),
+        thumb_360: "https://files.slack.com/shot.png".into(),
+        thumb_360_w: 360,
+        thumb_360_h: 200,
+        ..Default::default()
+    };
+    let with_picture = Message { files: vec![picture], ..msg("1", "look") };
+    let history = |m: Message| Incoming::History { channel: "C1".into(), messages: vec![m], names: NameBook::default() };
+    let actions = app.apply(history(with_picture.clone()));
+    assert_eq!(actions, vec![Action::LoadImage { id: "F1".into(), url: "https://files.slack.com/shot.png".into() }]);
+    assert_eq!(app.apply(history(with_picture)), vec![]);
+    app.apply(Incoming::Thumb { id: "F1".into(), image: Some(image::DynamicImage::new_rgb8(4, 4)) });
+    assert!(matches!(app.thumbs.get("F1"), Some(super::super::images::Thumb::Ready(_))));
+    app.apply(history(msg("2", "gone")));
+    assert!(app.thumbs.get("F1").is_none(), "forgotten once off screen");
+}
+
+#[test]
+fn animates_only_while_an_empty_state_is_visible() {
+    let mut app = loaded();
+    assert!(app.animating(), "no conversation picked yet");
+    app.handle_key(code(KeyCode::Enter));
+    assert!(!app.animating(), "history is loading");
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![], names: NameBook::default() });
+    assert!(app.animating(), "empty channel");
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "hi")], names: NameBook::default() });
+    assert!(!app.animating());
+    app.apply(Incoming::SearchResults(vec![]));
+    assert!(app.animating(), "search without results");
+    app.help = true;
+    assert!(!app.animating(), "a modal covers it");
+}
+
+#[test]
+fn react_open_and_yank_use_selected_message() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    assert_eq!(app.handle_key(key('o')), vec![Action::Open { channel: "C1".into(), ts: "1".into() }]);
+    assert_eq!(app.handle_key(key('y')), vec![Action::Yank { channel: "C1".into(), ts: "1".into() }]);
+    app.handle_key(key('e'));
+    for c in ":tada:".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "tada".into() }]);
+}
+
+#[test]
+fn u_opens_the_first_link_of_the_selected_message() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    let linked = msg("1", "see <https://a.io|docs> and <https://b.io>");
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![linked, msg("2", "nothing")], names: NameBook::default() });
+    assert_eq!(app.handle_key(key('u')), vec![]);
+    assert_eq!(app.status, "no link in this message");
+    app.handle_key(key('k'));
+    assert_eq!(app.handle_key(key('u')), vec![Action::OpenUrl("https://a.io".into())]);
+}
+
+#[test]
+fn search_results_jump_to_channel_and_thread() {
+    let mut app = loaded();
+    app.handle_key(key('s'));
+    app.handle_key(key('x'));
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::Search("x".into())]);
+    let hit =
+        SearchMatch { ts: "5".into(), channel: crate::api::SearchChannel { id: "C2".into(), name: "random".into() }, ..Default::default() };
+    app.apply(Incoming::SearchResults(vec![hit]));
+    assert_eq!(app.focus, Focus::Messages);
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "5".into() }]);
+    assert_eq!(app.search, None);
+}
+
+#[test]
+fn selection_is_clamped() {
+    let mut app = loaded();
+    app.handle_key(key('k'));
+    assert_eq!(app.channel_selected, 0);
+    app.handle_key(key('G'));
+    assert_eq!(app.channel_selected, 1);
+    app.handle_key(key('j'));
+    assert_eq!(app.channel_selected, 1);
+    app.handle_key(key('g'));
+    assert_eq!(app.channel_selected, 0);
+}
+
+#[test]
+fn focus_cycles_through_open_panes() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.focus, Focus::Messages);
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.focus, Focus::Channels);
+    app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![], selected: 0 });
+    app.handle_key(code(KeyCode::Tab));
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.focus, Focus::Thread);
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.thread, None);
+    assert_eq!(app.focus, Focus::Messages);
+}
+
+#[test]
+fn right_opens_the_selected_thread_and_left_closes_it() {
+    let mut app = loaded();
+    assert_eq!(app.handle_key(code(KeyCode::Right)), vec![Action::LoadHistory("C1".into())]);
+    let mut root = msg("1", "root");
+    root.reply_count = 2;
+    root.thread_ts = Some("1".into());
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![root, msg("2", "plain")], names: NameBook::default() });
+    app.thread = Some(Thread { channel: "C1".into(), root_ts: "9".into(), messages: vec![], selected: 0 });
+    assert_eq!(app.handle_key(code(KeyCode::Right)), vec![]);
+    assert_eq!(app.focus, Focus::Messages);
+    app.handle_key(key('k'));
+    assert_eq!(app.handle_key(code(KeyCode::Right)), vec![Action::LoadReplies { channel: "C1".into(), ts: "1".into() }]);
+    assert_eq!(app.focus, Focus::Thread);
+    app.handle_key(code(KeyCode::Left));
+    assert_eq!(app.thread, None);
+    assert_eq!(app.focus, Focus::Messages);
+    app.handle_key(code(KeyCode::Left));
+    assert_eq!(app.focus, Focus::Channels);
+}
+
+#[test]
+fn quit_and_help() {
+    let mut app = loaded();
+    app.handle_key(key('?'));
+    assert!(app.help);
+    app.handle_key(key('j'));
+    assert!(!app.help);
+    assert_eq!(app.channel_selected, 0);
+    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert!(app.should_quit);
+}
+
+fn live(app: &mut App, event: rtm::Event) -> Vec<Action> {
+    app.apply(Incoming::Live(Box::new(event)))
+}
+
+#[test]
+fn live_message_appends_and_follows_bottom() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    live(&mut app, rtm::Event::Connected);
+    assert_eq!(app.live, Live::Live);
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.message_selected, 1);
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
+    assert_eq!(app.messages.len(), 2);
+    live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("3", "elsewhere") });
+    assert!(app.unread.contains("C2"));
+    assert_eq!(app.messages.len(), 2);
+}
+
+#[test]
+fn live_reply_updates_root_and_open_thread() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "root")], names: NameBook::default() });
+    app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
+    let reply = Message { thread_ts: Some("1".into()), ..msg("2", "reply") };
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: reply });
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].reply_count, 1);
+    let t = app.thread.as_ref().unwrap();
+    assert_eq!(t.messages.len(), 2);
+    assert_eq!(t.selected, 1);
+}
+
+#[test]
+fn live_edit_delete_and_reactions() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a"), msg("2", "b")], names: NameBook::default() });
+    live(&mut app, rtm::Event::Changed { channel: "C1".into(), message: msg("1", "edited") });
+    assert_eq!(app.messages[0].text, "edited");
+    let react = |user: &str, added: bool| rtm::Event::Reaction {
+        channel: "C1".into(),
+        ts: "1".into(),
+        name: "tada".into(),
+        user: user.into(),
+        added,
+    };
+    live(&mut app, react("U1", true));
+    live(&mut app, react("U2", true));
+    assert_eq!(app.messages[0].reactions[0].count, 2);
+    assert_eq!(app.messages[0].reactions[0].users, vec!["U1", "U2"]);
+    live(&mut app, react("U1", false));
+    assert_eq!(app.messages[0].reactions[0].users, vec!["U2"]);
+    live(&mut app, react("U2", false));
+    assert!(app.messages[0].reactions.is_empty());
+    live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "2".into() });
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.message_selected, 0);
+}
+
+#[test]
+fn polling_only_when_feed_is_down() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![], names: NameBook::default() });
+    assert_eq!(app.apply(Incoming::Tick), vec![Action::LoadHistory("C1".into())]);
+    live(&mut app, rtm::Event::Connected);
+    assert_eq!(app.apply(Incoming::Tick), vec![]);
+    live(&mut app, rtm::Event::GaveUp("boom".into()));
+    assert!(matches!(app.live, Live::Polling(_)));
+    assert_eq!(app.apply(Incoming::Tick), vec![Action::LoadHistory("C1".into())]);
+}
+
+#[test]
+fn refresh_keeps_selection_when_not_at_bottom() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History {
+        channel: "C1".into(),
+        messages: vec![msg("1", "a"), msg("2", "b"), msg("3", "c")],
+        names: NameBook::default(),
+    });
+    app.handle_key(key('g'));
+    app.apply(Incoming::History {
+        channel: "C1".into(),
+        messages: vec![msg("0", "z"), msg("1", "a"), msg("2", "b"), msg("3", "c")],
+        names: NameBook::default(),
+    });
+    assert_eq!(app.message_selected, 1);
+}
+
+fn inbox_item(key: &str) -> Item {
+    Item {
+        key: key.into(),
+        kind: crate::inbox::Kind::Mention,
+        channel: "C2".into(),
+        label: "#random".into(),
+        thread_ts: Some("9".into()),
+        ts: "10".into(),
+        unread: vec![msg("10", "ping")],
+    }
+}
+
+#[test]
+fn inbox_read_snooze_reply_and_open() {
+    let mut app = loaded();
+    assert_eq!(app.handle_key(key('i')), vec![Action::LoadInbox]);
+    app.apply(Incoming::Inbox { items: vec![inbox_item("a"), inbox_item("b")], names: NameBook::default() });
+    assert_eq!(app.inbox.as_ref().unwrap().items.len(), 2);
+    let actions = app.handle_key(code(KeyCode::Right));
+    assert!(matches!(&actions[0], Action::MarkRead(i) if i.key == "a"));
+    assert!(matches!(&actions[1], Action::SaveInbox { .. }));
+    app.handle_key(code(KeyCode::Left));
+    assert!(app.inbox.as_ref().unwrap().picking_snooze);
+    let actions = app.handle_key(key('3'));
+    assert!(matches!(&actions[0], Action::SaveInbox { state, .. } if state.snoozed.contains_key("b")));
+    assert!(app.inbox.as_ref().unwrap().items.is_empty());
+    app.apply(Incoming::Inbox { items: vec![inbox_item("c")], names: NameBook::default() });
+    app.handle_key(key('r'));
+    for c in "ok".chars() {
+        app.handle_key(key(c));
+    }
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions[0], Action::Send { channel: "C2".into(), thread_ts: Some("9".into()), text: "ok".into() });
+    assert!(matches!(&actions[1], Action::MarkRead(i) if i.key == "c"));
+    app.apply(Incoming::Inbox { items: vec![inbox_item("d")], names: NameBook::default() });
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "9".into() }]);
+    assert!(app.inbox.is_none());
+    assert_eq!(app.current_channel.as_deref(), Some("C2"));
+}
+
+fn ctrl(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+}
+
+#[test]
+fn jump_opens_channels_people_threads_and_search() {
+    let mut app = loaded();
+    assert_eq!(app.handle_key(ctrl('k')), vec![Action::LoadThreads]);
+    for c in "rnd".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::LoadHistory("C2".into())]);
+    assert!(app.jump.is_none());
+
+    app.handle_key(ctrl('k'));
+    for c in "@viv".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::OpenDm("U1".into())]);
+    assert_eq!(app.apply(Incoming::DmOpened("D1".into())), vec![Action::LoadHistory("D1".into())]);
+    assert_eq!(app.current_channel.as_deref(), Some("D1"));
+
+    app.handle_key(ctrl('k'));
+    app.apply(Incoming::Threads(vec![Candidate {
+        label: "#general · plan".into(),
+        target: Target::Thread { channel: "C1".into(), ts: "9".into() },
+    }]));
+    for c in "plan".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(
+        app.handle_key(code(KeyCode::Enter)),
+        vec![Action::LoadHistory("C1".into()), Action::LoadReplies { channel: "C1".into(), ts: "9".into() }]
+    );
+
+    app.handle_key(ctrl('k'));
+    for c in ">deploy failed".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::Search("deploy failed".into())]);
+    app.handle_key(ctrl('k'));
+    app.handle_key(code(KeyCode::Esc));
+    assert!(app.jump.is_none());
+    app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
+    assert!(app.jump.is_some());
+}
+
+#[test]
+fn firehose_collects_every_channel_and_jumps() {
+    let mut app = loaded();
+    live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("1", "one") });
+    let reply = Message { thread_ts: Some("1".into()), ..msg("2", "two") };
+    live(&mut app, rtm::Event::Message { channel: "C9".into(), message: reply });
+    assert_eq!(app.wall.len(), 2);
+    app.handle_key(key('f'));
+    assert!(app.firehose.is_some());
+    app.handle_key(key('k'));
+    assert_eq!(app.firehose.as_ref().unwrap().selected, Some(0));
+    app.handle_key(key('G'));
+    assert!(app.firehose.as_ref().unwrap().following());
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::LoadHistory("C9".into()), Action::LoadReplies { channel: "C9".into(), ts: "1".into() }]);
+    assert!(app.firehose.is_none());
+    app.handle_key(key('f'));
+    app.handle_key(code(KeyCode::Esc));
+    assert!(app.firehose.is_none());
+}
+
+#[test]
+fn unknown_live_authors_are_learned_once_seen() {
+    let mut app = loaded();
+    let actions =
+        live(&mut app, rtm::Event::Message { channel: "C1".into(), message: Message { user: Some("U77".into()), ..msg("1", "x") } });
+    assert_eq!(actions, vec![Action::LearnUsers(vec!["U77".into()])]);
+}
+
+#[test]
+fn reading_mode_keeps_focus_on_the_conversation() {
+    let mut app = loaded();
+    app.handle_key(key('z'));
+    assert!(!app.zen);
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    app.handle_key(key('z'));
+    assert!(app.zen);
+    app.handle_key(code(KeyCode::Left));
+    assert_eq!(app.focus, Focus::Messages);
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.focus, Focus::Messages);
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::Replies { channel: "C1".into(), ts: "1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    assert_eq!(app.focus, Focus::Thread);
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.focus, Focus::Messages);
+    assert!(app.thread.is_none());
+    app.handle_key(key('z'));
+    assert!(!app.zen);
+}
+
+fn palette_run(app: &mut App, line: &str) -> Vec<Action> {
+    app.handle_key(key(':'));
+    for c in line.chars() {
+        app.handle_key(key(c));
+    }
+    app.handle_key(code(KeyCode::Enter))
+}
+
+#[test]
+fn palette_runs_verbs() {
+    let mut app = loaded();
+    assert_eq!(palette_run(&mut app, "go #random"), vec![Action::LoadHistory("C2".into())]);
+    assert_eq!(palette_run(&mut app, "go @vivien"), vec![Action::OpenDm("U1".into())]);
+    assert_eq!(palette_run(&mut app, "join #ops"), vec![Action::Join("#ops".into())]);
+    assert_eq!(
+        palette_run(&mut app, "msg @vivien hello there"),
+        vec![Action::SendTo { target: "@vivien".into(), text: "hello there".into() }]
+    );
+    assert_eq!(palette_run(&mut app, "search deploy"), vec![Action::Search("deploy".into())]);
+    let saved = |key: &str, value: &str| vec![Action::SaveSetting { key: key.into(), value: value.into() }];
+    assert_eq!(palette_run(&mut app, "set highlight=#2a2a2a"), saved("highlight", "#2a2a2a"));
+    assert_eq!(app.theme.highlight, Some("#2a2a2a".parse().unwrap()));
+    assert_eq!(palette_run(&mut app, "set highlight=nope"), vec![]);
+    assert_eq!(palette_run(&mut app, "set highlight=off"), saved("highlight", "none"));
+    assert_eq!(app.theme.highlight, None);
+    assert_eq!(palette_run(&mut app, "set theme=Tokyo Night"), saved("theme", "tokyonight"));
+    assert_eq!(palette_run(&mut app, "set theme=nord"), saved("theme", "nord"));
+    assert_eq!(app.theme.name, "nord");
+    assert_eq!(app.theme.highlight, None);
+    assert_eq!(palette_run(&mut app, "set images=off"), saved("images", "off"));
+    assert_eq!(palette_run(&mut app, "set images=maybe"), vec![]);
+    palette_run(&mut app, "set theme=solarized");
+    assert!(app.status.contains("unknown theme") && app.status.contains("dracula"));
+    assert_eq!(app.theme.name, "nord");
+    palette_run(&mut app, "jion #x");
+    assert!(app.status.contains("did you mean :join"));
+    assert_eq!(palette_run(&mut app, "leave"), vec![Action::Leave("C2".into())]);
+    app.apply(Incoming::Left("C2".into()));
+    assert_eq!(app.current_channel, None);
+    palette_run(&mut app, "q");
+    assert!(app.should_quit);
+}
+
+#[test]
+fn palette_completion_and_history() {
+    let mut app = loaded();
+    app.handle_key(key(':'));
+    for c in "go ran".chars() {
+        app.handle_key(key(c));
+    }
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.palette.as_ref().unwrap().input, "go #random ");
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(key(':'));
+    for c in "go #gen".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(app.palette_ghost().as_deref(), Some("eral"));
+    app.handle_key(code(KeyCode::Right));
+    assert_eq!(app.palette.as_ref().unwrap().input, "go #general ");
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(key(':'));
+    app.handle_key(code(KeyCode::Up));
+    assert_eq!(app.palette.as_ref().unwrap().input, "go #general");
+    app.handle_key(code(KeyCode::Up));
+    assert_eq!(app.palette.as_ref().unwrap().input, "go #random");
+    app.handle_key(code(KeyCode::Esc));
+    assert!(app.palette.is_none());
+}
+
+#[test]
+fn palette_export_and_read_use_the_open_conversation() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    let actions = palette_run(&mut app, "export md");
+    assert!(matches!(&actions[0], Action::Export { format: palette::Format::Markdown, messages, .. } if messages.len() == 1));
+    assert_eq!(palette_run(&mut app, "read"), vec![Action::MarkChannelRead { channel: "C1".into(), ts: "1".into() }]);
+    assert_eq!(palette_run(&mut app, "react rocket"), vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "rocket".into() }]);
+}
+
+#[test]
+fn badges_come_from_counts_and_live_mentions() {
+    let mut app = loaded();
+    app.apply(Incoming::Channels {
+        rows: vec![row("C1", "#general"), row("C2", "#random")],
+        people: vec![],
+        names: NameBook::default(),
+        badges: HashMap::from([("C2".to_string(), Badge { unread: true, mentions: 2 })]),
+        me: "U1".into(),
+    });
+    assert!(app.unread.contains("C2"));
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: Message { user: Some("U2".into()), ..msg("1", "<@U1> ping") } });
+    assert_eq!(app.badges["C1"], Badge { unread: true, mentions: 1 });
+    app.handle_key(code(KeyCode::Enter));
+    assert!(!app.badges.contains_key("C1"));
+}
+
+#[test]
+fn inbox_escape_closes_and_q_quits() {
+    let mut app = loaded();
+    app.handle_key(key('i'));
+    app.handle_key(code(KeyCode::Esc));
+    assert!(app.inbox.is_none());
+    app.handle_key(key('i'));
+    app.handle_key(key('q'));
+    assert!(app.should_quit);
+}
+
+#[test]
+fn errors_land_in_status() {
+    let mut app = loaded();
+    app.apply(Incoming::Error("boom".into()));
+    assert_eq!(app.status, "✗ boom");
+}

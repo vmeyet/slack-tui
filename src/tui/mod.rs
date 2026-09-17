@@ -12,14 +12,15 @@ use crate::ctx::Ctx;
 use crate::markdown;
 use crate::resolve::Directory;
 use anyhow::Result;
-use app::{Action, App, ChannelRow, Incoming, Kind};
+use app::{Action, App, ChannelRow, Incoming, Kind, Settings};
 use crossterm::event::{
     Event, EventStream, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, OnceCell, mpsc};
 
 pub async fn run(ctx: Ctx) -> Result<()> {
     run_with(ctx, false).await
@@ -50,25 +51,21 @@ const FRAME: Duration = Duration::from_millis(300);
 
 async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let workspace = ctx.workspace.clone().unwrap_or_else(|| "env".into());
-    let slack = ctx.slack.clone();
-    let dir = Arc::new(Mutex::new(ctx.dir));
+    let backend = Backend { slack: ctx.slack.clone(), dir: Arc::new(Mutex::new(ctx.dir)), me: Arc::new(OnceCell::new()) };
     let (tx, mut rx) = mpsc::unbounded_channel();
-    let mut app = App::new();
-    app.theme = theme_from(&ctx.config.tui)?;
-    app.workspace = workspace;
-    app.highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
+    let theme = theme_from(&ctx.config.tui)?;
+    let highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
     let mut terminal = ratatui::init();
     let enhanced = enable_modifier_keys();
-    if ctx.config.tui.images.unwrap_or(true) {
-        app.thumbs = images::Thumbs::from_terminal();
-    }
-    spawn(Action::LoadChannels, slack.clone(), dir.clone(), tx.clone());
+    let thumbs = if ctx.config.tui.images.unwrap_or(true) { images::Thumbs::from_terminal() } else { images::Thumbs::off() };
+    let mut app = App::with(Settings { theme, workspace, highlighter, thumbs });
+    spawn(Action::LoadChannels, backend.clone(), tx.clone());
     if open_inbox {
         for action in app.open_inbox() {
-            spawn(action, slack.clone(), dir.clone(), tx.clone());
+            spawn(action, backend.clone(), tx.clone());
         }
     }
-    spawn_live(slack.clone(), tx.clone());
+    spawn_live(backend.slack.clone(), tx.clone());
     let mut events = EventStream::new();
     let result = loop {
         if let Err(e) = terminal.draw(|f| ui::draw(f, &mut app)) {
@@ -77,7 +74,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
         let actions = tokio::select! {
             Some(incoming) = rx.recv() => app.apply(incoming),
             _ = tokio::time::sleep(FRAME), if app.animating() => {
-                app.frame = app.frame.wrapping_add(1);
+                app.advance_frame();
                 vec![]
             }
             Some(event) = events.next() => match event {
@@ -87,7 +84,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
             },
         };
         for action in actions {
-            spawn(action, slack.clone(), dir.clone(), tx.clone());
+            spawn(action, backend.clone(), tx.clone());
         }
         if app.should_quit {
             break Ok(());
@@ -116,7 +113,7 @@ fn spawn_live(slack: crate::api::Slack, tx: mpsc::UnboundedSender<Incoming>) {
     let forward = tx.clone();
     tokio::spawn(async move {
         while let Some(event) = live_rx.recv().await {
-            if forward.send(Incoming::Live(event)).is_err() {
+            if forward.send(Incoming::Live(Box::new(event))).is_err() {
                 return;
             }
         }
@@ -133,38 +130,64 @@ fn spawn_live(slack: crate::api::Slack, tx: mpsc::UnboundedSender<Incoming>) {
     });
 }
 
-fn spawn(action: Action, slack: crate::api::Slack, dir: Arc<Mutex<Directory>>, tx: mpsc::UnboundedSender<Incoming>) {
+/// What the background tasks share: the API client, the directory, and who is signed in.
+#[derive(Clone)]
+struct Backend {
+    slack: crate::api::Slack,
+    dir: Arc<Mutex<Directory>>,
+    me: Arc<OnceCell<String>>,
+}
+
+impl Backend {
+    async fn me(&self) -> Result<String> {
+        self.me.get_or_try_init(|| async { Ok(self.slack.auth_test().await?.user_id) }).await.cloned()
+    }
+}
+
+fn spawn(action: Action, backend: Backend, tx: mpsc::UnboundedSender<Incoming>) {
     tokio::spawn(async move {
-        let outcome = perform(action, &slack, &dir).await;
+        let outcome = perform(action, &backend).await;
         let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(e.to_string())));
     });
 }
 
-async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Directory>) -> Result<Incoming> {
+/// The directory lock is released before the sidebar extras are fetched, so history loads never wait on them.
+async fn load_channels(backend: &Backend) -> Result<Incoming> {
+    let (rows, people, names) = {
+        let mut d = backend.dir.lock().await;
+        d.channels().await?;
+        let _ = d.users().await;
+        let _ = d.learn_dm_users().await;
+        let rows: Vec<ChannelRow> =
+            d.conversations(false).into_iter().map(|(c, label)| ChannelRow::new(&c.id, &label, Kind::from(c.kind()))).collect();
+        (rows, d.people(), d.names())
+    };
+    let slack = &backend.slack;
+    let (sections, muted, me, counts) = tokio::join!(slack.sections(), slack.muted(), backend.me(), slack.counts());
+    Ok(Incoming::Channels {
+        rows: app::arrange(rows, &sections.unwrap_or_default(), &muted.unwrap_or_default()),
+        people,
+        names,
+        badges: counts.map(|c| badges(&c)).unwrap_or_default(),
+        me: me.unwrap_or_default(),
+    })
+}
+
+fn badges(counts: &crate::api::Counts) -> HashMap<String, app::Badge> {
+    counts
+        .channels
+        .iter()
+        .chain(&counts.ims)
+        .chain(&counts.mpims)
+        .filter(|c| c.has_unreads || c.mention_count > 0)
+        .map(|c| (c.id.clone(), app::Badge { unread: c.has_unreads, mentions: c.mention_count }))
+        .collect()
+}
+
+async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
+    let Backend { slack, dir, .. } = backend;
     match action {
-        Action::LoadChannels => {
-            let mut d = dir.lock().await;
-            d.channels().await?;
-            let _ = d.users().await;
-            let _ = d.learn_dm_users().await;
-            let rows: Vec<ChannelRow> =
-                d.conversations(false).into_iter().map(|(c, label)| ChannelRow::new(&c.id, &label, Kind::from(c.kind()))).collect();
-            let sections = slack.sections().await.unwrap_or_default();
-            let muted = slack.muted().await.unwrap_or_default();
-            let me = slack.auth_test().await.map(|i| i.user_id).unwrap_or_default();
-            let badges = match slack.counts().await {
-                Ok(counts) => counts
-                    .channels
-                    .iter()
-                    .chain(&counts.ims)
-                    .chain(&counts.mpims)
-                    .filter(|c| c.has_unreads || c.mention_count > 0)
-                    .map(|c| (c.id.clone(), app::Badge { unread: c.has_unreads, mentions: c.mention_count }))
-                    .collect(),
-                Err(_) => std::collections::HashMap::new(),
-            };
-            Ok(Incoming::Channels { rows: app::arrange(rows, &sections, &muted), people: d.people(), names: d.names(), badges, me })
-        }
+        Action::LoadChannels => load_channels(backend).await,
         Action::LoadHistory(channel) => {
             let messages = slack.history(&channel, 100, None).await?;
             let mut d = dir.lock().await;
@@ -251,7 +274,7 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
                 palette::Format::Json => serde_json::to_string_pretty(&messages)?,
                 palette::Format::Markdown => {
                     let theme = crate::render::Theme::plain(100);
-                    crate::render::messages(&theme, &names, &label, &messages, &std::collections::HashMap::new())
+                    crate::render::messages(&theme, &names, &label, &messages, &HashMap::new())
                 }
             };
             std::fs::write(&path, body)?;
@@ -262,7 +285,7 @@ async fn perform(action: Action, slack: &crate::api::Slack, dir: &Mutex<Director
             Ok(Incoming::DmOpened(channel))
         }
         Action::LoadInbox => {
-            let me = slack.auth_test().await?.user_id;
+            let me = backend.me().await?;
             let mut d = dir.lock().await;
             let items = crate::inbox::fetch(slack, &mut d, &me).await?;
             Ok(Incoming::Inbox { items, names: d.names() })

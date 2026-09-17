@@ -51,7 +51,7 @@ async fn follow(ctx: &mut Ctx, channel: &str, mut last_ts: String) -> Result<()>
                 last_ts = message.ts.clone();
                 print_live(ctx, std::slice::from_ref(&message)).await?;
             }
-            rtm::Event::Disconnected(reason) if reason.contains("giving up") => {
+            rtm::Event::GaveUp(reason) => {
                 eprintln!("{}", ctx.theme.dim(&format!("live feed unavailable ({reason}), polling every {}s", POLL_EVERY.as_secs())));
                 break;
             }

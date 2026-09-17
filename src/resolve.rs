@@ -4,7 +4,7 @@ use crate::{fuzzy, markdown, mrkdwn};
 use anyhow::{Result, bail};
 use regex::Regex;
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 static CHANNEL_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[CDG][A-Z0-9]{8,}$").unwrap());
 static USER_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[UW][A-Z0-9]{8,}$").unwrap());
@@ -15,30 +15,64 @@ pub struct Directory {
     cache: Cache,
     channels: Vec<Channel>,
     users: Vec<User>,
+    user_at: HashMap<String, usize>,
+    names: NameBook,
     channels_fresh: bool,
     users_fresh: bool,
 }
 
 impl Directory {
     pub fn new(slack: Slack, cache: Cache) -> Self {
-        Self {
-            channels: cache.load("channels").unwrap_or_default(),
-            users: cache.load("users").unwrap_or_default(),
+        let channels = cache.load("channels").unwrap_or_default();
+        let users = cache.load("users").unwrap_or_default();
+        let mut dir = Self {
             slack,
             cache,
+            channels: vec![],
+            users: vec![],
+            user_at: HashMap::new(),
+            names: NameBook::default(),
             channels_fresh: false,
             users_fresh: false,
+        };
+        dir.set_channels(channels);
+        dir.set_users(users);
+        dir
+    }
+
+    fn set_channels(&mut self, channels: Vec<Channel>) {
+        self.channels = channels;
+        self.names = self.build_names();
+    }
+
+    fn set_users(&mut self, users: Vec<User>) {
+        self.user_at = users.iter().enumerate().map(|(i, u)| (u.id.clone(), i)).collect();
+        self.users = users;
+        self.names = self.build_names();
+    }
+
+    fn add_users(&mut self, users: Vec<User>) {
+        if users.is_empty() {
+            return;
         }
+        let all = std::mem::take(&mut self.users).into_iter().chain(users).collect();
+        self.set_users(all);
+    }
+
+    fn user(&self, id: &str) -> Option<&User> {
+        self.user_at.get(id).map(|&i| &self.users[i])
     }
 
     pub async fn refresh_channels(&mut self) -> Result<()> {
-        self.channels = self.slack.channels().await?;
+        let channels = self.slack.channels().await?;
+        self.set_channels(channels);
         self.channels_fresh = true;
         self.cache.save("channels", &self.channels)
     }
 
     pub async fn refresh_users(&mut self) -> Result<()> {
-        self.users = self.slack.users().await?;
+        let users = self.slack.users().await?;
+        self.set_users(users);
         self.users_fresh = true;
         self.cache.save("users", &self.users)
     }
@@ -149,7 +183,7 @@ impl Directory {
     }
 
     fn is_person(&self, user_id: &str) -> bool {
-        !SLACKBOT.contains(&user_id) && self.users.iter().find(|u| u.id == user_id).is_none_or(|u| !u.deleted && !u.is_bot)
+        !SLACKBOT.contains(&user_id) && self.user(user_id).is_none_or(|u| !u.deleted && !u.is_bot)
     }
 
     /// DMs can point at people `users.list` no longer returns (deactivated, app users); fetch those one by one.
@@ -159,17 +193,9 @@ impl Directory {
             .iter()
             .filter(|c| c.is_im)
             .filter_map(|c| c.user.clone())
-            .filter(|id| !SLACKBOT.contains(&id.as_str()) && !self.users.iter().any(|u| &u.id == id))
+            .filter(|id| !SLACKBOT.contains(&id.as_str()) && self.user(id).is_none())
             .collect();
-        if unknown.is_empty() {
-            return Ok(());
-        }
-        for id in unknown {
-            if let Ok(user) = self.slack.user_info(&id).await {
-                self.users.push(user);
-            }
-        }
-        self.cache.save("users", &self.users)
+        self.fetch_users(unknown).await
     }
 
     /// Fetches the users mentioned or authoring these messages that are not known yet.
@@ -179,7 +205,7 @@ impl Directory {
     }
 
     pub async fn learn_ids(&mut self, ids: &[String]) -> Result<()> {
-        let mut unknown: Vec<String> = ids.iter().filter(|id| !self.users.iter().any(|u| &u.id == *id)).cloned().collect();
+        let mut unknown: Vec<String> = ids.iter().filter(|id| self.user(id).is_none()).cloned().collect();
         unknown.sort();
         unknown.dedup();
         if unknown.is_empty() {
@@ -187,31 +213,43 @@ impl Directory {
         }
         if self.users.is_empty() && !self.users_fresh {
             self.refresh_users().await?;
-            unknown.retain(|id| !self.users.iter().any(|u| &u.id == id));
+            unknown.retain(|id| self.user(id).is_none());
         }
-        for id in unknown {
+        self.fetch_users(unknown).await
+    }
+
+    async fn fetch_users(&mut self, ids: Vec<String>) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut found = vec![];
+        for id in ids {
             if let Ok(user) = self.slack.user_info(&id).await {
-                self.users.push(user);
+                found.push(user);
             }
         }
+        self.add_users(found);
         self.cache.save("users", &self.users)
     }
 
     pub fn names(&self) -> NameBook {
-        let channels = self.channels.iter().map(|c| (c.id.clone(), self.display_channel(c))).collect();
-        NameBook {
+        self.names.clone()
+    }
+
+    fn build_names(&self) -> NameBook {
+        NameBook(Arc::new(Tables {
             users: self.users.iter().map(|u| (u.id.clone(), u.handle().to_owned())).collect(),
             handles: self.users.iter().map(|u| (u.handle().to_lowercase(), u.id.clone())).collect(),
-            channels,
+            channels: self.channels.iter().map(|c| (c.id.clone(), self.display_channel(c))).collect(),
             channel_names: self.channels.iter().filter(|c| !c.name.is_empty()).map(|c| (c.name.clone(), c.id.clone())).collect(),
-        }
+        }))
     }
 
     pub fn display_channel(&self, channel: &Channel) -> String {
         match channel.kind() {
             ChannelKind::Dm => {
                 let user = channel.user.as_deref().unwrap_or("");
-                let handle = self.users.iter().find(|u| u.id == user).map(|u| u.handle().to_owned()).unwrap_or_else(|| user.to_owned());
+                let handle = self.user(user).map_or(user, User::handle);
                 format!("@{handle}")
             }
             ChannelKind::GroupDm => channel.name.replace("mpdm-", "").replace("--", ", ").trim_end_matches("-1").to_owned(),
@@ -246,8 +284,12 @@ fn mentioned_users(text: &str) -> Vec<String> {
     MENTION.captures_iter(text).map(|c| c[1].to_owned()).collect()
 }
 
+/// Cheap to clone: every copy shares the same tables.
 #[derive(Clone, Debug, Default)]
-pub struct NameBook {
+pub struct NameBook(Arc<Tables>);
+
+#[derive(Debug, Default)]
+struct Tables {
     users: HashMap<String, String>,
     handles: HashMap<String, String>,
     channels: HashMap<String, String>,
@@ -256,29 +298,29 @@ pub struct NameBook {
 
 impl NameBook {
     pub fn channel_label(&self, id: &str) -> String {
-        self.channels.get(id).cloned().unwrap_or_else(|| id.to_owned())
+        self.0.channels.get(id).cloned().unwrap_or_else(|| id.to_owned())
     }
 
     pub fn user_label(&self, id: &str) -> String {
-        self.users.get(id).cloned().unwrap_or_else(|| id.to_owned())
+        self.0.users.get(id).cloned().unwrap_or_else(|| id.to_owned())
     }
 }
 
 impl mrkdwn::Names for NameBook {
     fn user(&self, id: &str) -> Option<String> {
-        self.users.get(id).cloned()
+        self.0.users.get(id).cloned()
     }
     fn channel(&self, id: &str) -> Option<String> {
-        self.channels.get(id).map(|n| n.trim_start_matches(['#', '🔒']).to_owned())
+        self.0.channels.get(id).map(|n| n.trim_start_matches(['#', '🔒']).to_owned())
     }
 }
 
 impl markdown::Mentions for NameBook {
     fn user(&self, handle: &str) -> Option<String> {
-        self.handles.get(&handle.to_lowercase()).cloned()
+        self.0.handles.get(&handle.to_lowercase()).cloned()
     }
     fn channel(&self, name: &str) -> Option<String> {
-        self.channel_names.get(name).cloned()
+        self.0.channel_names.get(name).cloned()
     }
 }
 
@@ -362,20 +404,24 @@ mod tests {
         let slack = Slack::new("http://x", Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut d = Directory::new(slack, Cache::new(dir.keep()));
-        d.users.push(User { id: "U1".into(), name: "zoe".into(), ..Default::default() });
-        d.users.push(User { id: "U2".into(), name: "gone".into(), deleted: true, ..Default::default() });
-        d.users.push(User { id: "U3".into(), name: "robot".into(), is_bot: true, ..Default::default() });
-        d.users.push(User { id: "U4".into(), name: "adam".into(), ..Default::default() });
-        d.channels.push(Channel { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() });
-        d.channels.push(Channel { id: "D2".into(), is_im: true, user: Some("U2".into()), ..Default::default() });
-        d.channels.push(Channel { id: "D3".into(), is_im: true, user: Some("U3".into()), ..Default::default() });
-        d.channels.push(Channel { id: "D4".into(), is_im: true, user: Some("U4".into()), ..Default::default() });
-        d.channels.push(Channel { id: "D5".into(), is_im: true, user: Some("USLACK".into()), ..Default::default() });
-        d.channels.push(Channel { id: "C1".into(), name: "zebra".into(), is_member: true, ..Default::default() });
-        d.channels.push(Channel { id: "C2".into(), name: "apple".into(), is_member: true, is_private: true, ..Default::default() });
-        d.channels.push(Channel { id: "C3".into(), name: "Beta".into(), is_member: true, ..Default::default() });
-        d.channels.push(Channel { id: "C4".into(), name: "not-mine".into(), is_member: false, ..Default::default() });
-        d.channels.push(Channel { id: "G1".into(), name: "mpdm-zoe--adam-1".into(), is_mpim: true, ..Default::default() });
+        d.add_users(vec![
+            User { id: "U1".into(), name: "zoe".into(), ..Default::default() },
+            User { id: "U2".into(), name: "gone".into(), deleted: true, ..Default::default() },
+            User { id: "U3".into(), name: "robot".into(), is_bot: true, ..Default::default() },
+            User { id: "U4".into(), name: "adam".into(), ..Default::default() },
+        ]);
+        d.set_channels(vec![
+            Channel { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() },
+            Channel { id: "D2".into(), is_im: true, user: Some("U2".into()), ..Default::default() },
+            Channel { id: "D3".into(), is_im: true, user: Some("U3".into()), ..Default::default() },
+            Channel { id: "D4".into(), is_im: true, user: Some("U4".into()), ..Default::default() },
+            Channel { id: "D5".into(), is_im: true, user: Some("USLACK".into()), ..Default::default() },
+            Channel { id: "C1".into(), name: "zebra".into(), is_member: true, ..Default::default() },
+            Channel { id: "C2".into(), name: "apple".into(), is_member: true, is_private: true, ..Default::default() },
+            Channel { id: "C3".into(), name: "Beta".into(), is_member: true, ..Default::default() },
+            Channel { id: "C4".into(), name: "not-mine".into(), is_member: false, ..Default::default() },
+            Channel { id: "G1".into(), name: "mpdm-zoe--adam-1".into(), is_mpim: true, ..Default::default() },
+        ]);
         let labels: Vec<String> = d.conversations(false).into_iter().map(|(_, l)| l).collect();
         assert_eq!(labels, ["#Beta", "#zebra", "🔒apple", "zoe, adam", "@adam", "@zoe"]);
         assert_eq!(d.conversations(true).len(), 10);
@@ -392,8 +438,10 @@ mod tests {
             .mount(&server)
             .await;
         let mut d = directory(&server).await;
-        d.channels.push(Channel { id: "D7".into(), is_im: true, user: Some("U7".into()), ..Default::default() });
-        d.channels.push(Channel { id: "D8".into(), is_im: true, user: Some("USLACKBOT".into()), ..Default::default() });
+        d.set_channels(vec![
+            Channel { id: "D7".into(), is_im: true, user: Some("U7".into()), ..Default::default() },
+            Channel { id: "D8".into(), is_im: true, user: Some("USLACKBOT".into()), ..Default::default() },
+        ]);
         assert_eq!(d.conversations(false).len(), 1);
         d.learn_dm_users().await.unwrap();
         d.learn_dm_users().await.unwrap();
@@ -405,14 +453,16 @@ mod tests {
         let slack = Slack::new("http://x", Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut d = Directory::new(slack, Cache::new(dir.keep()));
-        d.users.push(User {
+        d.add_users(vec![User {
             id: "U1".into(),
             name: "vmeyet".into(),
             profile: crate::api::Profile { display_name: "Vivien".into(), ..Default::default() },
             ..Default::default()
-        });
-        d.channels.push(Channel { id: "C1".into(), name: "general".into(), ..Default::default() });
-        d.channels.push(Channel { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() });
+        }]);
+        d.set_channels(vec![
+            Channel { id: "C1".into(), name: "general".into(), ..Default::default() },
+            Channel { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() },
+        ]);
         let names = d.names();
         assert_eq!(markdown::Mentions::user(&names, "vivien").as_deref(), Some("U1"));
         assert_eq!(markdown::Mentions::channel(&names, "general").as_deref(), Some("C1"));

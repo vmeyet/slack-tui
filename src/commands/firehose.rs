@@ -17,7 +17,7 @@ pub async fn run(ctx: &mut Ctx, args: FirehoseArgs) -> Result<()> {
     while let Some(event) = rx.recv().await {
         match &event {
             rtm::Event::Connected => eprintln!("{}", ctx.theme.ok("● live")),
-            rtm::Event::Disconnected(reason) if reason.contains("giving up") => bail!("the live feed is unavailable: {reason}"),
+            rtm::Event::GaveUp(reason) => bail!("the live feed is unavailable: {reason}"),
             _ => {}
         }
         let Some(line) = Line::from_event(&event) else { continue };
