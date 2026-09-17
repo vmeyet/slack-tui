@@ -3,6 +3,7 @@ pub mod firehose;
 pub mod images;
 pub mod inbox;
 pub mod jump;
+pub mod motion;
 pub mod palette;
 pub mod theme;
 pub mod ui;
@@ -19,7 +20,7 @@ use crossterm::event::{
 use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, OnceCell, mpsc};
 
 pub async fn run(ctx: Ctx) -> Result<()> {
@@ -46,8 +47,12 @@ fn theme_from(config: &crate::config::Tui) -> Result<theme::Theme> {
     Ok(theme)
 }
 
-/// One step of the empty-state animation.
-const FRAME: Duration = Duration::from_millis(300);
+/// What ended the event loop's wait.
+enum Wake {
+    Incoming(Incoming),
+    Event(std::io::Result<Event>),
+    Frame,
+}
 
 async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let workspace = ctx.workspace.clone().unwrap_or_else(|| "env".into());
@@ -71,17 +76,18 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
         if let Err(e) = terminal.draw(|f| ui::draw(f, &mut app)) {
             break Err(e.into());
         }
-        let actions = tokio::select! {
-            Some(incoming) = rx.recv() => app.apply(incoming),
-            _ = tokio::time::sleep(FRAME), if app.animating() => {
-                app.advance_frame();
-                vec![]
-            }
-            Some(event) = events.next() => match event {
-                Ok(Event::Key(key)) if key.kind != KeyEventKind::Release => app.handle_key(key),
-                Ok(_) => vec![],
-                Err(e) => break Err(e.into()),
-            },
+        let redraw_in = app.redraw_in();
+        let wake = tokio::select! {
+            Some(incoming) = rx.recv() => Wake::Incoming(incoming),
+            _ = tokio::time::sleep(redraw_in.unwrap_or_default()), if redraw_in.is_some() => Wake::Frame,
+            Some(event) = events.next() => Wake::Event(event),
+        };
+        app.now = Instant::now();
+        let actions = match wake {
+            Wake::Incoming(incoming) => app.apply(incoming),
+            Wake::Event(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => app.handle_key(key),
+            Wake::Event(Ok(_)) | Wake::Frame => vec![],
+            Wake::Event(Err(e)) => break Err(e.into()),
         };
         for action in actions {
             spawn(action, backend.clone(), tx.clone());
@@ -210,7 +216,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
         }
         Action::React { channel, ts, name } => {
             slack.react(&channel, &ts, &name).await?;
-            Ok(Incoming::Status(format!("reacted :{name}:")))
+            Ok(Incoming::Toast(format!("reacted :{name}:")))
         }
         Action::Search(query) => {
             let result = slack.search(&query, 50).await?;
@@ -219,11 +225,11 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
         Action::Open { channel, ts } => {
             let url = slack.permalink(&channel, &ts).await?;
             std::process::Command::new("open").arg(&url).spawn()?;
-            Ok(Incoming::Status("opened in Slack".into()))
+            Ok(Incoming::Toast("opened in Slack".into()))
         }
         Action::OpenUrl(url) => {
             std::process::Command::new("open").arg(&url).spawn()?;
-            Ok(Incoming::Status(format!("opened {url}")))
+            Ok(Incoming::Toast(format!("opened {url}")))
         }
         Action::LoadThreads => {
             let threads = slack.thread_view(30).await.unwrap_or_default();
@@ -262,11 +268,11 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             let channel = d.channel_id(&target).await?;
             let rendered = markdown::to_blocks(&text, &d.names());
             slack.post_message(&channel, &rendered.text, Some(&serde_json::Value::Array(rendered.blocks)), None, false).await?;
-            Ok(Incoming::Status(format!("sent to {}", d.names().channel_label(&channel))))
+            Ok(Incoming::Toast(format!("sent to {}", d.names().channel_label(&channel))))
         }
         Action::MarkChannelRead { channel, ts } => {
             slack.mark_read(&channel, &ts).await?;
-            Ok(Incoming::Status("marked read".into()))
+            Ok(Incoming::Toast("marked read".into()))
         }
         Action::Export { path, label, messages, format } => {
             let names = dir.lock().await.names();
@@ -278,7 +284,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
                 }
             };
             std::fs::write(&path, body)?;
-            Ok(Incoming::Status(format!("saved {}", path.display())))
+            Ok(Incoming::Toast(format!("saved {}", path.display())))
         }
         Action::OpenDm(user) => {
             let channel = slack.open_dm(&user).await?;
@@ -292,11 +298,11 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
         }
         Action::MarkRead(item) => {
             crate::inbox::mark_read(slack, &item).await?;
-            Ok(Incoming::Status(String::new()))
+            Ok(Incoming::Toast(String::new()))
         }
         Action::SaveInbox { workspace, state } => {
             state.save(&workspace)?;
-            Ok(Incoming::Status(String::new()))
+            Ok(Incoming::Toast(String::new()))
         }
         Action::LoadImage { id, url } => {
             let image = match slack.download(&url).await {
@@ -309,14 +315,14 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             let mut config = crate::config::Config::load()?;
             config.tui = config.tui.with(&key, &value);
             config.save()?;
-            Ok(Incoming::Status(String::new()))
+            Ok(Incoming::Toast(String::new()))
         }
         Action::Yank { channel, ts } => {
             let url = slack.permalink(&channel, &ts).await?;
             let mut child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
             std::io::Write::write_all(child.stdin.as_mut().expect("piped"), url.as_bytes())?;
             child.wait()?;
-            Ok(Incoming::Status("permalink copied".into()))
+            Ok(Incoming::Toast("permalink copied".into()))
         }
     }
 }

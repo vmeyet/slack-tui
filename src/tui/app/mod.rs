@@ -1,4 +1,5 @@
 mod commands;
+mod feedback;
 mod incoming;
 mod keys;
 mod live;
@@ -7,6 +8,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
+pub use feedback::Toast;
 pub use sidebar::{Badge, ChannelRow, Kind, SidebarRow, arrange, sidebar_rows};
 pub use state::{App, Settings};
 
@@ -152,7 +154,7 @@ pub enum Incoming {
         thread_ts: Option<String>,
     },
     SearchResults(Vec<SearchMatch>),
-    Status(String),
+    Toast(String),
     /// A thumbnail came back, decoded, or could not be.
     Thumb {
         id: String,

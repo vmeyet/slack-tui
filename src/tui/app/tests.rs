@@ -3,7 +3,9 @@ use crate::api::{File, Message};
 use crate::inbox::Item;
 use crate::tui::images::Thumbs;
 use crate::tui::jump::Target;
+use crate::tui::motion::{FRAME, SPINNER_FRAME};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::time::Duration;
 
 fn key(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
@@ -19,6 +21,14 @@ fn row(id: &str, label: &str) -> ChannelRow {
 
 fn msg(ts: &str, text: &str) -> Message {
     Message { ts: ts.into(), text: text.into(), user: Some("U1".into()), ..Default::default() }
+}
+
+fn from_other(ts: &str, text: &str) -> Message {
+    Message { user: Some("U2".into()), ..msg(ts, text) }
+}
+
+fn history(messages: Vec<Message>) -> Incoming {
+    Incoming::History { channel: "C1".into(), messages, names: NameBook::default() }
 }
 
 fn loaded() -> App {
@@ -178,7 +188,7 @@ fn u_opens_the_first_link_of_the_selected_message() {
     let linked = msg("1", "see <https://a.io|docs> and <https://b.io>");
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![linked, msg("2", "nothing")], names: NameBook::default() });
     assert_eq!(app.handle_key(key('u')), vec![]);
-    assert_eq!(app.status, "no link in this message");
+    assert_eq!(app.status_line(), "no link in this message");
     app.handle_key(key('k'));
     assert_eq!(app.handle_key(key('u')), vec![Action::OpenUrl("https://a.io".into())]);
 }
@@ -196,6 +206,41 @@ fn search_results_jump_to_channel_and_thread() {
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "5".into() }]);
     assert_eq!(app.search, None);
+}
+
+#[test]
+fn status_follows_where_you_are() {
+    let mut app = App::new();
+    assert_eq!(app.status_line(), "loading channels…");
+    app = loaded();
+    assert_eq!(app.status_line(), "2 conversations · ? for help");
+
+    app.handle_key(code(KeyCode::Enter));
+    assert_eq!(app.status_line(), "C1");
+
+    app.handle_key(key('s'));
+    app.handle_key(key('x'));
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::SearchResults(vec![SearchMatch::default()]));
+    app.now += Duration::from_secs(2);
+    assert_eq!(app.status_line(), "1 results · enter to jump · esc to close");
+
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.status_line(), "C1", "escaping search leaves the hint behind");
+}
+
+#[test]
+fn reloading_channels_keeps_the_open_conversation_in_the_status() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::Channels {
+        rows: vec![row("C1", "#general"), row("C2", "#random")],
+        people: vec![],
+        names: NameBook::default(),
+        badges: HashMap::new(),
+        me: "U1".into(),
+    });
+    assert_eq!(app.status_line(), "C1");
 }
 
 #[test]
@@ -526,10 +571,10 @@ fn palette_runs_verbs() {
     assert_eq!(palette_run(&mut app, "set images=off"), saved("images", "off"));
     assert_eq!(palette_run(&mut app, "set images=maybe"), vec![]);
     palette_run(&mut app, "set theme=solarized");
-    assert!(app.status.contains("unknown theme") && app.status.contains("dracula"));
+    assert!(app.status_line().contains("unknown theme") && app.status_line().contains("dracula"));
     assert_eq!(app.theme.name, "nord");
     palette_run(&mut app, "jion #x");
-    assert!(app.status.contains("did you mean :join"));
+    assert!(app.status_line().contains("did you mean :join"));
     assert_eq!(palette_run(&mut app, "leave"), vec![Action::Leave("C2".into())]);
     app.apply(Incoming::Left("C2".into()));
     assert_eq!(app.current_channel, None);
@@ -603,9 +648,114 @@ fn inbox_escape_closes_and_q_quits() {
     assert!(app.should_quit);
 }
 
-#[test]
-fn errors_land_in_status() {
+/// `loaded()` with #general open on one message, so no empty state is animating.
+fn reading() -> App {
     let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    app
+}
+
+#[test]
+fn toast_covers_the_status_for_two_seconds() {
+    let mut app = reading();
+    app.apply(Incoming::Toast("permalink copied".into()));
+    assert_eq!(app.status_line(), "permalink copied");
+    app.now += Duration::from_millis(1999);
+    assert_eq!(app.status_line(), "permalink copied");
+    app.now += Duration::from_millis(1);
+    assert_eq!(app.status_line(), "C1");
+}
+
+#[test]
+fn error_survives_time_and_clears_on_the_next_key() {
+    let mut app = reading();
     app.apply(Incoming::Error("boom".into()));
-    assert_eq!(app.status, "✗ boom");
+    app.now += Duration::from_secs(60);
+    assert_eq!(app.status_line(), "✗ boom");
+    assert!(!app.animating(), "nothing to wake up for");
+    app.handle_key(key('j'));
+    assert_eq!(app.status_line(), "C1");
+}
+
+#[test]
+fn key_that_fails_shows_its_own_error() {
+    let mut app = reading();
+    app.apply(Incoming::Error("boom".into()));
+    palette_run(&mut app, "jion #x");
+    assert!(app.status_line().contains("did you mean :join"));
+}
+
+#[test]
+fn timed_toast_keeps_the_loop_awake_until_it_ends() {
+    let mut app = reading();
+    assert_eq!(app.redraw_in(), None);
+    app.handle_key(key('u'));
+    assert!(app.animating());
+    assert_eq!(app.redraw_in(), Some(FRAME));
+    app.now += Duration::from_secs(2);
+    assert!(!app.animating());
+    assert_eq!(app.redraw_in(), None);
+}
+
+#[test]
+fn loading_wakes_the_loop_at_spinner_speed() {
+    let mut app = reading();
+    app.handle_key(key('R'));
+    assert_eq!(app.redraw_in(), Some(SPINNER_FRAME));
+    app.loading = false;
+    app.handle_key(key('i'));
+    assert_eq!(app.redraw_in(), Some(SPINNER_FRAME), "inbox is loading");
+}
+
+fn scrolled_up() -> App {
+    let mut app = reading();
+    app.apply(history(vec![msg("1", "a"), from_other("2", "b"), from_other("3", "c")]));
+    app.handle_key(key('g'));
+    app
+}
+
+#[test]
+fn messages_arriving_below_the_selection_are_counted() {
+    let mut app = scrolled_up();
+    assert_eq!(app.new_below(), 0, "scrolling up over read messages counts nothing");
+    app.apply(history(vec![msg("1", "a"), from_other("2", "b"), from_other("3", "c"), from_other("4", "d"), msg("5", "mine")]));
+    assert_eq!(app.message_selected, 0);
+    assert_eq!(app.new_below(), 1, "my own message does not count");
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: from_other("10", "e") });
+    assert_eq!(app.new_below(), 2);
+}
+
+#[test]
+fn reaching_new_messages_clears_the_count() {
+    let mut app = scrolled_up();
+    app.apply(history(vec![msg("1", "a"), from_other("2", "b"), from_other("3", "c"), from_other("4", "d"), from_other("5", "e")]));
+    assert_eq!(app.new_below(), 2);
+    for _ in 0..3 {
+        app.handle_key(key('j'));
+    }
+    assert_eq!(app.new_below(), 1, "reached the first new one");
+    app.handle_key(key('k'));
+    assert_eq!(app.new_below(), 1, "going back up does not unsee it");
+    app.handle_key(key('G'));
+    assert_eq!(app.new_below(), 0);
+}
+
+#[test]
+fn switching_conversation_clears_the_count() {
+    let mut app = scrolled_up();
+    app.apply(history(vec![msg("1", "a"), from_other("2", "b"), from_other("3", "c"), from_other("4", "d")]));
+    assert_eq!(app.new_below(), 1);
+    palette_run(&mut app, "go #random");
+    assert_eq!(app.new_below(), 0);
+    app.apply(Incoming::History { channel: "C2".into(), messages: vec![from_other("1", "x")], names: NameBook::default() });
+    assert_eq!(app.new_below(), 0);
+}
+
+#[test]
+fn refresh_at_the_bottom_counts_nothing() {
+    let mut app = reading();
+    app.apply(history(vec![msg("1", "a"), from_other("2", "b")]));
+    assert_eq!(app.message_selected, 1);
+    assert_eq!(app.new_below(), 0);
 }
