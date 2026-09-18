@@ -13,7 +13,7 @@ use crate::api::rtm;
 use crate::ctx::Ctx;
 use crate::markdown;
 use crate::resolve::Directory;
-use anyhow::Result;
+use anyhow::{Result, bail};
 use app::{Action, App, ChannelRow, Incoming, Kind, Settings};
 use crossterm::event::{
     Event, EventStream, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -253,7 +253,7 @@ fn badges(counts: &crate::api::Counts) -> HashMap<String, app::Badge> {
 async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
     let Backend { slack, dir, .. } = backend;
     match action {
-        Action::Compose { .. } => unreachable!("the event loop runs the editor itself"),
+        Action::Compose { .. } => bail!("compose is run by the event loop, not here"),
         Action::LoadChannels => load_channels(backend).await,
         Action::CheckUpdate => {
             let latest = tokio::task::spawn_blocking(crate::update::latest_commit).await.unwrap_or(None);
