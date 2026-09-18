@@ -216,6 +216,17 @@ impl Slack {
         Ok(())
     }
 
+    /// Replaces the text of one's own message; the blocks Slack kept give way to this text.
+    pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<()> {
+        self.call("chat.update", params(&[("channel", channel), ("ts", ts), ("text", text)])).await?;
+        Ok(())
+    }
+
+    pub async fn delete_message(&self, channel: &str, ts: &str) -> Result<()> {
+        self.call("chat.delete", params(&[("channel", channel), ("ts", ts)])).await?;
+        Ok(())
+    }
+
     /// Read state of every conversation, the web client's own endpoint.
     pub async fn counts(&self) -> Result<Counts> {
         self.call_as("client.counts", vec![], "").await
@@ -324,6 +335,30 @@ mod tests {
             .await;
         let posted = client(&server).await.post_message("C1", "hi", None, None, false).await.unwrap();
         assert_eq!(posted.ts, "1.2");
+    }
+
+    #[tokio::test]
+    async fn edit_and_delete_name_the_one_message_they_touch() {
+        let server = MockServer::start().await;
+        let ok = || ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true}));
+        Mock::given(path("/chat.update"))
+            .and(body_string_contains("channel=C1"))
+            .and(body_string_contains("ts=1700000000.000100"))
+            .and(body_string_contains("text=fixed"))
+            .respond_with(ok())
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/chat.delete"))
+            .and(body_string_contains("channel=C1"))
+            .and(body_string_contains("ts=1700000000.000100"))
+            .respond_with(ok())
+            .expect(1)
+            .mount(&server)
+            .await;
+        let slack = client(&server).await;
+        slack.update_message("C1", "1700000000.000100", "fixed").await.unwrap();
+        slack.delete_message("C1", "1700000000.000100").await.unwrap();
     }
 
     #[tokio::test]

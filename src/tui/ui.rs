@@ -30,7 +30,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let input_rows = u16::from(app.input.is_some() || app.palette.is_some());
     let [main, input, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(input_rows), Constraint::Length(1)]).areas(f.area());
-    let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help;
+    let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help || app.pending_delete.is_some();
     let mut pictures = Vec::new();
     if app.zen {
         pictures = draw_reading(f, app, main);
@@ -76,6 +76,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if let Some(jump) = &mut app.jump {
         super::jump::draw(f, jump, main, &theme);
+    }
+    if let Some(pending) = &app.pending_delete {
+        draw_confirm_delete(f, &theme, &app.names, pending, f.area());
     }
     if app.help {
         draw_help(f, &theme, f.area());
@@ -563,6 +566,7 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
         Some(Input::Reply { label, .. }) => format!("reply to {label}"),
         Some(Input::InboxReply { item }) => format!("reply to {}", item.label),
         Some(Input::React { .. }) => "react with".into(),
+        Some(Input::Edit { .. }) => "edit".into(),
         Some(Input::Filter) => "filter".into(),
         Some(Input::Search) => "search".into(),
         None => return,
@@ -639,6 +643,8 @@ const HELP_GROUPS: [(&str, &[(&str, &str)]); 4] = [
             ("e", "react (type the emoji name)"),
             ("o / y", "open in Slack · copy permalink"),
             ("u", "open the message's link in the browser"),
+            (":edit", "rewrite your own message"),
+            (":delete", "delete your own message, after a yes"),
         ],
     ),
     (
@@ -669,11 +675,11 @@ const HELP_GUTTER: usize = 2;
 /// Bindings sit under their group name, not next to it.
 const HELP_INDENT: usize = 2;
 /// Breathing room between the border and the text.
-const HELP_PAD_X: u16 = 2;
-const HELP_PAD_Y: u16 = 1;
+const MODAL_PAD_X: u16 = 2;
+const MODAL_PAD_Y: u16 = 1;
 /// The border on both sides plus that padding.
-const HELP_FRAME_W: u16 = 2 + 2 * HELP_PAD_X;
-const HELP_FRAME_H: u16 = 2 + 2 * HELP_PAD_Y;
+const MODAL_FRAME_W: u16 = 2 + 2 * MODAL_PAD_X;
+const MODAL_FRAME_H: u16 = 2 + 2 * MODAL_PAD_Y;
 
 fn help_bindings() -> impl Iterator<Item = (&'static str, &'static str)> {
     HELP_GROUPS.iter().flat_map(|(_, bindings)| bindings.iter().copied())
@@ -724,10 +730,24 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
 
 fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
     let lines = help_lines(theme);
-    let popup = centered(area, help_width() + HELP_FRAME_W, lines.len() as u16 + HELP_FRAME_H);
+    let popup = centered(area, help_width() + MODAL_FRAME_W, lines.len() as u16 + MODAL_FRAME_H);
     let block = pane(theme, "keys", true)
-        .padding(Padding::new(HELP_PAD_X, HELP_PAD_X, HELP_PAD_Y, HELP_PAD_Y))
+        .padding(Padding::new(MODAL_PAD_X, MODAL_PAD_X, MODAL_PAD_Y, MODAL_PAD_Y))
         .title_bottom(Line::from(Span::styled(" esc or ? to close ", Style::new().fg(theme.faded))).right_aligned());
+    f.render_widget(Clear, popup);
+    f.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+const CONFIRM_W: u16 = 56;
+const CONFIRM_ANSWER: &str = "y deletes it · any other key keeps it";
+
+/// The message about to go, on one line, and the only key that deletes it.
+fn draw_confirm_delete(f: &mut Frame, theme: &Theme, names: &NameBook, message: &app::MyMessage, area: Rect) {
+    let room = (CONFIRM_W - MODAL_FRAME_W) as usize;
+    let preview = text::truncate(&mrkdwn::plain(&message.text, names).replace('\n', " "), room);
+    let lines = vec![Line::from(Span::raw(preview)), Line::raw(""), Line::from(Span::styled(CONFIRM_ANSWER, Style::new().fg(theme.muted)))];
+    let popup = centered(area, CONFIRM_W, lines.len() as u16 + MODAL_FRAME_H);
+    let block = pane(theme, "delete this message?", true).padding(Padding::new(MODAL_PAD_X, MODAL_PAD_X, MODAL_PAD_Y, MODAL_PAD_Y));
     f.render_widget(Clear, popup);
     f.render_widget(Paragraph::new(lines).block(block), popup);
 }
@@ -1142,6 +1162,17 @@ mod tests {
         assert_eq!(rows.len(), 12);
         assert!(rows.iter().any(|row| row.contains("keys")), "{rows:?}");
         assert!(rows.iter().all(|row| text::visible_width(row) == 40), "{rows:?}");
+    }
+
+    #[test]
+    fn the_delete_box_shows_the_message_and_the_key_that_deletes_it() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        app.pending_delete = Some(app::MyMessage { channel: "C1".into(), ts: "1".into(), text: "ship it".into() });
+        let out = render(&mut app);
+        assert!(out.contains("delete this message?"), "{out}");
+        assert!(out.contains("ship it"), "{out}");
+        assert!(out.contains(CONFIRM_ANSWER), "{out}");
     }
 
     #[test]

@@ -9,6 +9,8 @@ pub enum Command {
     Go(String),
     Msg { target: String, text: String },
     React(String),
+    Edit,
+    Delete,
     Thread,
     Search(String),
     Open,
@@ -27,12 +29,14 @@ pub enum Format {
     Markdown,
 }
 
-pub const VERBS: [(&str, &str); 15] = [
+pub const VERBS: [(&str, &str); 17] = [
     ("join", "join a channel: :join #ops"),
     ("leave", "leave the current channel, or :leave #ops"),
     ("go", "open a conversation: :go #ops, :go @bob"),
     ("msg", "send a message: :msg @bob on my way"),
     ("react", "react to the selected message: :react rocket"),
+    ("edit", "rewrite the selected message, yours only"),
+    ("delete", "delete the selected message, yours only, after a yes"),
     ("thread", "open the selected message's thread"),
     ("search", "search Slack: :search deploy failed"),
     ("open", "open the selected message in Slack"),
@@ -63,6 +67,8 @@ pub fn parse(line: &str) -> Result<Command, String> {
             Ok(Command::Msg { target: target.to_owned(), text: text.to_owned() })
         }
         "react" | "r" => Ok(Command::React(need("an emoji name")?.trim_matches(':').to_owned())),
+        "edit" => Ok(Command::Edit),
+        "delete" | "del" => Ok(Command::Delete),
         "thread" | "t" => Ok(Command::Thread),
         "search" | "s" | "/" => Ok(Command::Search(need("a query")?)),
         "open" | "o" => Ok(Command::Open),

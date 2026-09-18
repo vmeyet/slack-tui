@@ -23,6 +23,9 @@ impl App {
             self.help = false;
             return vec![];
         }
+        if self.pending_delete.is_some() {
+            return self.handle_confirm_key(key);
+        }
         if self.input.is_some() {
             return self.handle_input_key(key);
         }
@@ -284,7 +287,18 @@ impl App {
         }
     }
 
-    fn start_input(&mut self, input: Input, initial: String) {
+    /// A delete cannot be undone, so only `y` goes through and every other key keeps the message.
+    fn handle_confirm_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let Some(pending) = self.pending_delete.take() else { return vec![] };
+        if key.code != KeyCode::Char('y') {
+            self.toast("kept");
+            return vec![];
+        }
+        self.toast("deleting…");
+        vec![Action::Delete { channel: pending.channel, ts: pending.ts }]
+    }
+
+    pub(super) fn start_input(&mut self, input: Input, initial: String) {
         self.buffer = initial;
         self.input = Some(input);
     }
@@ -308,6 +322,14 @@ impl App {
             Input::React { channel, ts } => {
                 let name = text.trim().trim_matches(':').to_owned();
                 if name.is_empty() { vec![] } else { vec![Action::React { channel, ts, name }] }
+            }
+            Input::Edit { .. } if text.trim().is_empty() => {
+                self.fail("an empty edit would not delete it — use :delete");
+                vec![]
+            }
+            Input::Edit { channel, ts } => {
+                self.toast("saving…");
+                vec![Action::Edit { channel, ts, text }]
             }
             Input::InboxReply { .. } if text.trim().is_empty() => vec![],
             Input::InboxReply { item } => {

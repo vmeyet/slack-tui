@@ -33,9 +33,18 @@ pub enum Focus {
 pub enum Input {
     Reply { channel: String, thread_ts: Option<String>, label: String },
     React { channel: String, ts: String },
+    Edit { channel: String, ts: String },
     Filter,
     Search,
     InboxReply { item: Item },
+}
+
+/// The selected message, once it is the signed-in user's own: all `:edit` and `:delete` may touch.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MyMessage {
+    pub channel: String,
+    pub ts: String,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +73,15 @@ pub enum Action {
         channel: String,
         ts: String,
         name: String,
+    },
+    Edit {
+        channel: String,
+        ts: String,
+        text: String,
+    },
+    Delete {
+        channel: String,
+        ts: String,
     },
     Search(String),
     Open {
