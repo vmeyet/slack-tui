@@ -1,5 +1,7 @@
 pub mod app;
+pub mod complete;
 pub mod compose;
+pub mod field;
 pub mod firehose;
 pub mod images;
 pub mod inbox;

@@ -3,6 +3,8 @@ use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
 use crate::resolve::NameBook;
+use crate::tui::complete::Cycle;
+use crate::tui::field::Field;
 use crate::tui::firehose::Firehose;
 use crate::tui::images::Thumbs;
 use crate::tui::inbox::Inbox;
@@ -35,7 +37,9 @@ pub struct App {
     pub(in crate::tui) search: Option<Vec<SearchMatch>>,
     pub(in crate::tui) focus: Focus,
     pub(in crate::tui) input: Option<Input>,
-    pub(in crate::tui) buffer: String,
+    pub(in crate::tui) buffer: Field,
+    /// The emoji names the react row is tab-cycling through; any edit drops it.
+    pub(in crate::tui) react_cycle: Option<Cycle>,
     /// A delete waiting for its yes; nothing leaves the screen before that.
     pub(in crate::tui) pending_delete: Option<MyMessage>,
     /// Where the user is; what just happened goes in `toast`.
@@ -89,7 +93,8 @@ impl Default for App {
             search: None,
             focus: Focus::default(),
             input: None,
-            buffer: String::new(),
+            buffer: Field::default(),
+            react_cycle: None,
             pending_delete: None,
             toast: None,
             typing: vec![],

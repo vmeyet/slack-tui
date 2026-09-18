@@ -571,12 +571,23 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
         Some(Input::Search) => "search".into(),
         None => return,
     };
+    let (before, under, after) = app.buffer.split();
     let line = Line::from(vec![
         Span::styled(format!(" {label} ▸ "), Style::new().fg(app.theme.accent).bold()),
-        Span::raw(app.buffer.clone()),
-        Span::styled("▌", Style::new().fg(app.theme.accent)),
+        Span::raw(before.to_owned()),
+        caret(&app.theme, under),
+        Span::raw(after.to_owned()),
+        Span::styled(app.input_ghost().unwrap_or_default(), Style::new().fg(app.theme.faded)),
     ]);
     f.render_widget(Paragraph::new(line), area);
+}
+
+/// Where the cursor is: on the character it covers, or a bar of its own past the last one.
+fn caret(theme: &Theme, under: &str) -> Span<'static> {
+    if under.is_empty() {
+        return Span::styled("▌", Style::new().fg(theme.accent));
+    }
+    Span::styled(under.to_owned(), Style::new().fg(theme.base).bg(theme.accent))
 }
 
 fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
@@ -590,14 +601,16 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_status(f: &mut Frame, app: &App, area: Rect) {
-    let completion = app.palette.as_ref().and_then(|p| p.hint());
-    let hints = match (app.input.is_some(), app.focus) {
-        _ if app.palette.is_some() => completion.as_deref().unwrap_or("tab cycle · → accept · ↑ history · enter run · esc cancel"),
-        (true, _) => "enter send · esc cancel",
-        (_, Focus::Channels) => "j/k move · enter open · / filter · ^k jump · ? more",
-        (_, Focus::Messages) => "j/k move · enter thread · r reply · e react · ? more",
-        (_, Focus::Thread) => "j/k move · r reply · e react · esc close · ? more",
+    let keys = match (&app.input, app.focus) {
+        _ if app.palette.is_some() => "tab cycle · → accept · ↑ history · enter run · esc cancel",
+        (Some(Input::React { .. }), _) => "tab completes · → accept · enter react · esc cancel",
+        (Some(_), _) => "enter send · esc cancel",
+        (None, Focus::Channels) => "j/k move · enter open · / filter · ^k jump · ? more",
+        (None, Focus::Messages) => "j/k move · enter thread · r reply · e react · ? more",
+        (None, Focus::Thread) => "j/k move · r reply · e react · esc close · ? more",
     };
+    let cycling = app.palette.as_ref().and_then(|p| p.hint()).or_else(|| app.input_hint());
+    let hints = cycling.as_deref().unwrap_or(keys);
     let (dot, dot_style) = match &app.live {
         Live::Live => ("● ", Style::new().fg(app.theme.success)),
         Live::Connecting => ("○ ", Style::new().fg(app.theme.muted)),
@@ -792,6 +805,7 @@ mod tests {
     use super::*;
     use crate::api::Reaction;
     use crate::tui::app::{ChannelRow, Incoming, Thread};
+    use crate::tui::field::Field;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -852,7 +866,7 @@ mod tests {
         });
         app.focus = Focus::Thread;
         app.input = Some(Input::Reply { channel: "C1".into(), thread_ts: None, label: "#general".into() });
-        app.buffer = "typing…".into();
+        app.buffer = Field::new("typing…");
         let backend = TestBackend::new(110, 18);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &mut app)).unwrap();
@@ -968,6 +982,65 @@ mod tests {
 
     fn status_bar(app: &mut App) -> String {
         render(app).lines().last().unwrap_or_default().to_owned()
+    }
+
+    /// Every cell of the input row with its colors, so a test sees what the cursor and the ghost paint.
+    fn input_row(app: &mut App) -> Vec<(String, Color, Color)> {
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let row = buf.area.height - 2;
+        (0..buf.area.width).map(|x| buf.cell((x, row)).expect("input row")).map(|c| (c.symbol().to_owned(), c.fg, c.bg)).collect()
+    }
+
+    fn shown(row: &[(String, Color, Color)]) -> String {
+        row.iter().map(|(s, ..)| s.as_str()).collect()
+    }
+
+    fn filtering(text: &str) -> App {
+        let mut app = App::new();
+        app.input = Some(Input::Filter);
+        app.buffer = Field::new(text);
+        app
+    }
+
+    #[test]
+    fn the_cursor_paints_the_character_it_sits_on() {
+        let mut app = filtering("héllo");
+        app.buffer.left();
+        app.buffer.left();
+        let row = input_row(&mut app);
+        let painted: Vec<&String> = row.iter().filter(|(.., bg)| *bg == app.theme.accent).map(|(s, ..)| s).collect();
+        assert_eq!(painted, ["l"]);
+        assert!(shown(&row).contains("héllo"), "{}", shown(&row));
+        assert!(!shown(&row).contains('▌'), "no bar while the cursor covers a character: {}", shown(&row));
+    }
+
+    #[test]
+    fn the_cursor_is_a_bar_past_the_last_character() {
+        let mut app = filtering("hey");
+        assert!(shown(&input_row(&mut app)).contains("hey▌"));
+    }
+
+    #[test]
+    fn a_wide_glyph_under_the_cursor_is_painted_where_it_is_drawn() {
+        let mut app = filtering("🚀 ok");
+        app.buffer.start();
+        let row = input_row(&mut app);
+        let painted = row.iter().position(|(.., bg)| *bg == app.theme.accent).expect("cursor painted");
+        assert_eq!(row[painted].0, "🚀");
+        assert_eq!(painted, text::visible_width(" filter ▸ "));
+    }
+
+    #[test]
+    fn the_react_row_shows_the_rest_of_the_emoji_name_in_grey_after_the_cursor() {
+        let mut app = App::new();
+        app.input = Some(Input::React { channel: "C1".into(), ts: "1".into() });
+        app.buffer = Field::new("rocke");
+        let row = input_row(&mut app);
+        assert!(shown(&row).contains("react with ▸ rocke▌t"), "{}", shown(&row));
+        let grey: String = row.iter().filter(|(_, fg, _)| *fg == app.theme.faded).map(|(s, ..)| s.as_str()).collect();
+        assert_eq!(grey, "t", "only the suggestion is dimmed");
     }
 
     #[test]
