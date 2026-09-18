@@ -14,7 +14,7 @@ use ratatui::layout::Size;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, Padding, Paragraph};
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 use unicode_width::UnicodeWidthStr;
@@ -585,11 +585,9 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let hints = match (app.input.is_some(), app.focus) {
         _ if app.palette.is_some() => completion.as_deref().unwrap_or("tab cycle · → accept · ↑ history · enter run · esc cancel"),
         (true, _) => "enter send · esc cancel",
-        (_, Focus::Channels) => "j/k move · enter open · ^k jump · i inbox · f firehose · / filter · s search · ? help · q quit",
-        (_, Focus::Messages) => {
-            "j/k move · enter thread · r reply · t thread reply · e react · o open · u link · y copy · s search · ? help"
-        }
-        (_, Focus::Thread) => "j/k move · r reply · e react · o open · u link · y copy · esc close · ? help",
+        (_, Focus::Channels) => "j/k move · enter open · / filter · ^k jump · ? more",
+        (_, Focus::Messages) => "j/k move · enter thread · r reply · e react · ? more",
+        (_, Focus::Thread) => "j/k move · r reply · e react · esc close · ? more",
     };
     let (dot, dot_style) = match &app.live {
         Live::Live => ("● ", Style::new().fg(app.theme.success)),
@@ -615,41 +613,118 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(line), area);
 }
 
+/// Every browse key, grouped the way a reader looks for them.
+const HELP_GROUPS: [(&str, &[(&str, &str)]); 4] = [
+    (
+        "move",
+        &[
+            ("tab", "cycle panes"),
+            ("j k", "move down · up"),
+            ("g G", "top · bottom"),
+            ("→ / l", "open channel · open the message's thread"),
+            ("← / h", "close thread · back to channels"),
+            ("enter", "open channel · open thread · jump to result"),
+        ],
+    ),
+    (
+        "message",
+        &[
+            ("r", "reply in the focused conversation"),
+            ("t", "reply in the selected message's thread"),
+            ("e", "react (type the emoji name)"),
+            ("o / y", "open in Slack · copy permalink"),
+            ("u", "open the message's link in the browser"),
+        ],
+    ),
+    (
+        "find",
+        &[
+            ("s", "search messages"),
+            ("/", "filter channels"),
+            ("⌘k / ^k", "jump to a channel, person or thread · > searches"),
+            ("i", "inbox: unread DMs, mentions, thread replies"),
+            ("f", "firehose: every channel as one live ticker"),
+        ],
+    ),
+    (
+        "modes",
+        &[
+            ("z", "reading mode: one centered conversation, nothing else"),
+            (":", "command line: :join :go :msg :react :search :export :read …"),
+            ("R", "refresh"),
+            ("esc", "close thread · clear search or filter"),
+            ("q", "quit"),
+        ],
+    ),
+];
+
+const HELP_FOOTER: &str = "messages are markdown: **bold** _italic_ `code` @user #channel";
+/// Blank columns between the key column and what the key does.
+const HELP_GUTTER: usize = 2;
+/// Bindings sit under their group name, not next to it.
+const HELP_INDENT: usize = 2;
+/// Breathing room between the border and the text.
+const HELP_PAD_X: u16 = 2;
+const HELP_PAD_Y: u16 = 1;
+/// The border on both sides plus that padding.
+const HELP_FRAME_W: u16 = 2 + 2 * HELP_PAD_X;
+const HELP_FRAME_H: u16 = 2 + 2 * HELP_PAD_Y;
+
+fn help_bindings() -> impl Iterator<Item = (&'static str, &'static str)> {
+    HELP_GROUPS.iter().flat_map(|(_, bindings)| bindings.iter().copied())
+}
+
+fn help_key_width() -> usize {
+    help_bindings().map(|(key, _)| text::visible_width(key)).max().unwrap_or(0)
+}
+
+/// Columns the widest row needs: a binding, a group name or the footer.
+fn help_width() -> u16 {
+    let key_w = help_key_width();
+    let bindings = help_bindings().map(|(_, what)| HELP_INDENT + key_w + HELP_GUTTER + text::visible_width(what));
+    let names = HELP_GROUPS.iter().map(|(name, _)| text::visible_width(name));
+    bindings.chain(names).chain([text::visible_width(HELP_FOOTER)]).max().unwrap_or(0) as u16
+}
+
+/// Keys in one column and their meaning in the next, a quiet header per group, the markdown
+/// note set apart at the end.
+fn help_lines(theme: &Theme) -> Vec<Line<'static>> {
+    let key_w = help_key_width();
+    let mut lines = Vec::new();
+    for (name, bindings) in HELP_GROUPS {
+        if !lines.is_empty() {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::from(Span::styled(name, Style::new().fg(theme.faded).add_modifier(Modifier::BOLD))));
+        for (key, what) in bindings {
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(HELP_INDENT)),
+                Span::styled(text::visible_fit(key, key_w), Style::new().fg(theme.accent).bold()),
+                Span::raw(" ".repeat(HELP_GUTTER)),
+                Span::styled(*what, Style::new().fg(theme.muted)),
+            ]));
+        }
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(HELP_FOOTER, Style::new().fg(theme.faded))));
+    lines
+}
+
+/// A box of `width` by `height` in the middle of `area`, shrunk to fit when the terminal is smaller.
+fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
+}
+
 fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
-    let lines = [
-        "  tab           cycle panes",
-        "  → / l         open channel · open the message's thread",
-        "  ← / h         close thread · back to channels",
-        "  j k  g G      move · top · bottom",
-        "  enter         open channel · open thread · jump to result",
-        "  r             reply in the focused conversation",
-        "  t             reply in the selected message's thread",
-        "  e             react (type the emoji name)",
-        "  o / y         open in Slack · copy permalink",
-        "  u             open the message's link in the browser",
-        "  s   /         search · filter channels",
-        "  i             inbox: unread DMs, mentions, thread replies",
-        "  f             firehose: every channel as one live ticker",
-        "  z             reading mode: one centered conversation, nothing else",
-        "  :             command line: :join :go :msg :react :search :export :read …",
-        "  ⌘k / ctrl-k   jump to a channel, person or thread · > searches",
-        "  R             refresh",
-        "  esc           close thread · clear search or filter",
-        "  q             quit",
-        "",
-        "  messages are markdown: **bold** _italic_ `code` @user #channel",
-    ];
-    let height = lines.len() as u16 + 2;
-    let width = 62;
-    let popup = Rect {
-        x: area.width.saturating_sub(width) / 2,
-        y: area.height.saturating_sub(height) / 2,
-        width: width.min(area.width),
-        height: height.min(area.height),
-    };
+    let lines = help_lines(theme);
+    let popup = centered(area, help_width() + HELP_FRAME_W, lines.len() as u16 + HELP_FRAME_H);
+    let block = pane(theme, "keys", true)
+        .padding(Padding::new(HELP_PAD_X, HELP_PAD_X, HELP_PAD_Y, HELP_PAD_Y))
+        .title_bottom(Line::from(Span::styled(" esc or ? to close ", Style::new().fg(theme.faded))).right_aligned());
     f.render_widget(Clear, popup);
-    let text: Vec<Line> = lines.iter().map(|l| Line::raw(*l)).collect();
-    f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }).block(pane(theme, "keys", true)), popup);
+    f.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
 /// One wrapped line of message text as spans. A code line gets its bar and a fill to `width`
@@ -966,5 +1041,82 @@ mod tests {
         let out = terminal.backend().to_string();
         assert!(out.contains("keys"));
         assert!(out.contains("reply in the focused conversation"));
+    }
+
+    /// The test backend quotes every row and may add a note after it; tests read the cells alone.
+    fn cells(row: &str) -> &str {
+        row.trim_start_matches('"').split('"').next().unwrap_or_default()
+    }
+
+    fn help_rows(width: u16, height: u16) -> Vec<String> {
+        let mut app = App::new();
+        app.help = true;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        terminal.backend().to_string().lines().map(|row| cells(row).to_owned()).collect()
+    }
+
+    #[test]
+    fn every_binding_sits_whole_on_one_line_with_its_key() {
+        for (width, height) in [(80, 40), (140, 50)] {
+            let rows = help_rows(width, height);
+            for (key, what) in help_bindings() {
+                let found: Vec<&String> = rows.iter().filter(|row| row.contains(what)).collect();
+                assert_eq!(found.len(), 1, "{width}x{height}: “{what}” on {} lines", found.len());
+                assert!(found[0].contains(key), "{width}x{height}: “{what}” lost its key: {}", found[0]);
+            }
+            for note in [HELP_FOOTER, "esc or ? to close"] {
+                assert!(rows.iter().any(|row| row.contains(note)), "{width}x{height}: missing “{note}”");
+            }
+        }
+    }
+
+    #[test]
+    fn descriptions_all_start_at_the_same_column() {
+        let rows = help_rows(140, 50);
+        let column = |what: &str| {
+            let row = rows.iter().find(|row| row.contains(what)).unwrap();
+            text::visible_width(&row[..row.find(what).unwrap()])
+        };
+        let columns: std::collections::HashSet<usize> = help_bindings().map(|(_, what)| column(what)).collect();
+        assert_eq!(columns.len(), 1, "descriptions start at {columns:?}");
+    }
+
+    #[test]
+    fn a_terminal_smaller_than_the_modal_clips_it_instead_of_panicking() {
+        let rows = help_rows(40, 12);
+        assert_eq!(rows.len(), 12);
+        assert!(rows.iter().any(|row| row.contains("keys")), "{rows:?}");
+        assert!(rows.iter().all(|row| text::visible_width(row) == 40), "{rows:?}");
+    }
+
+    #[test]
+    fn key_hints_stay_short_and_follow_the_focus() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        let hint_of = |app: &mut App, focus| {
+            app.focus = focus;
+            let bar = status_bar(app);
+            cells(&bar).split_once("C1 ").map(|(_, hints)| hints.trim().to_owned()).unwrap_or_default()
+        };
+        for focus in [Focus::Channels, Focus::Messages, Focus::Thread] {
+            let hints = hint_of(&mut app, focus);
+            assert!(hints.starts_with("j/k move"), "{focus:?}: {hints}");
+            assert!(hints.ends_with("? more"), "{focus:?}: {hints}");
+            assert_eq!(hints.split(" · ").count(), 5, "{focus:?}: {hints}");
+        }
+        assert!(hint_of(&mut app, Focus::Messages).contains("enter thread"));
+        assert!(hint_of(&mut app, Focus::Thread).contains("esc close"));
+        assert!(hint_of(&mut app, Focus::Channels).contains("/ filter"));
+    }
+
+    #[test]
+    fn the_update_hint_leaves_room_for_the_keys() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        app.focus = Focus::Messages;
+        app.apply(Incoming::Latest(Some("0000000000000000000000000000000000000000".into())));
+        let bar = status_bar(&mut app);
+        assert!(bar.contains("update available · slack update · j/k move · enter thread"), "{bar}");
     }
 }
