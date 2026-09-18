@@ -1,4 +1,4 @@
-use crate::api::{Channel, ChannelKind, Message, Slack, User};
+use crate::api::{Channel, ChannelKind, Group, Message, Slack, User};
 use crate::cache::Cache;
 use crate::{fuzzy, markdown, mrkdwn};
 use anyhow::{Result, bail};
@@ -9,34 +9,40 @@ use std::sync::{Arc, LazyLock};
 static CHANNEL_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[CDG][A-Z0-9]{8,}$").unwrap());
 static USER_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[UW][A-Z0-9]{8,}$").unwrap());
 
-/// Channels and users of one workspace, cached on disk and refreshed on a miss.
+/// Channels, users and usergroups of one workspace, cached on disk and refreshed on a miss.
 pub struct Directory {
     slack: Slack,
     cache: Cache,
     channels: Vec<Channel>,
     users: Vec<User>,
+    groups: Vec<Group>,
     user_at: HashMap<String, usize>,
     names: NameBook,
     channels_fresh: bool,
     users_fresh: bool,
+    groups_fresh: bool,
 }
 
 impl Directory {
     pub fn new(slack: Slack, cache: Cache) -> Self {
         let channels = cache.load("channels").unwrap_or_default();
         let users = cache.load("users").unwrap_or_default();
+        let groups = cache.load("groups").unwrap_or_default();
         let mut dir = Self {
             slack,
             cache,
             channels: vec![],
             users: vec![],
+            groups: vec![],
             user_at: HashMap::new(),
             names: NameBook::default(),
             channels_fresh: false,
             users_fresh: false,
+            groups_fresh: false,
         };
         dir.set_channels(channels);
         dir.set_users(users);
+        dir.set_groups(groups);
         dir
     }
 
@@ -48,6 +54,11 @@ impl Directory {
     fn set_users(&mut self, users: Vec<User>) {
         self.user_at = users.iter().enumerate().map(|(i, u)| (u.id.clone(), i)).collect();
         self.users = users;
+        self.names = self.build_names();
+    }
+
+    fn set_groups(&mut self, groups: Vec<Group>) {
+        self.groups = groups;
         self.names = self.build_names();
     }
 
@@ -75,6 +86,12 @@ impl Directory {
         self.set_users(users);
         self.users_fresh = true;
         self.cache.save("users", &self.users)
+    }
+
+    async fn refresh_groups(&mut self) -> Result<()> {
+        let groups = self.slack.groups().await?;
+        self.set_groups(groups);
+        self.cache.save("groups", &self.groups)
     }
 
     pub async fn channels(&mut self) -> Result<&[Channel]> {
@@ -198,10 +215,26 @@ impl Directory {
         self.fetch_users(unknown).await
     }
 
-    /// Fetches the users mentioned or authoring these messages that are not known yet.
+    /// Fetches the users and usergroups mentioned or authoring these messages that are not known yet.
     pub async fn learn_users(&mut self, messages: &[Message]) -> Result<()> {
         let ids: Vec<String> = messages.iter().flat_map(|m| mentioned_users(&m.text).into_iter().chain(m.user.clone())).collect();
+        self.learn_groups(messages).await;
         self.learn_ids(&ids).await
+    }
+
+    /// Usergroups only come as one whole list, so fetch it once, the first time a message names one we cannot read.
+    /// A workspace without usergroups, or a token without the scope, keeps rendering: the id stands in for the handle.
+    async fn learn_groups(&mut self, messages: &[Message]) {
+        let unknown = |m: &Message| mentioned_groups(&m.text).iter().any(|id| !self.knows_group(id));
+        if self.groups_fresh || !messages.iter().any(unknown) {
+            return;
+        }
+        self.groups_fresh = true;
+        let _ = self.refresh_groups().await;
+    }
+
+    fn knows_group(&self, id: &str) -> bool {
+        self.groups.iter().any(|g| g.id == id)
     }
 
     pub async fn learn_ids(&mut self, ids: &[String]) -> Result<()> {
@@ -242,6 +275,7 @@ impl Directory {
             handles: self.users.iter().map(|u| (u.handle().to_lowercase(), u.id.clone())).collect(),
             channels: self.channels.iter().map(|c| (c.id.clone(), self.display_channel(c))).collect(),
             channel_names: self.channels.iter().filter(|c| !c.name.is_empty()).map(|c| (c.name.clone(), c.id.clone())).collect(),
+            groups: self.groups.iter().filter(|g| g.is_live() && !g.handle.is_empty()).map(|g| (g.id.clone(), g.handle.clone())).collect(),
         }))
     }
 
@@ -284,6 +318,12 @@ fn mentioned_users(text: &str) -> Vec<String> {
     MENTION.captures_iter(text).map(|c| c[1].to_owned()).collect()
 }
 
+static GROUP_MENTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!subteam\^([A-Z0-9]+)").unwrap());
+
+fn mentioned_groups(text: &str) -> Vec<String> {
+    GROUP_MENTION.captures_iter(text).map(|c| c[1].to_owned()).collect()
+}
+
 /// Cheap to clone: every copy shares the same tables.
 #[derive(Clone, Debug, Default)]
 pub struct NameBook(Arc<Tables>);
@@ -294,6 +334,7 @@ struct Tables {
     handles: HashMap<String, String>,
     channels: HashMap<String, String>,
     channel_names: HashMap<String, String>,
+    groups: HashMap<String, String>,
 }
 
 impl NameBook {
@@ -312,6 +353,9 @@ impl mrkdwn::Names for NameBook {
     }
     fn channel(&self, id: &str) -> Option<String> {
         self.0.channels.get(id).map(|n| n.trim_start_matches(['#', '🔒']).to_owned())
+    }
+    fn group(&self, id: &str) -> Option<String> {
+        self.0.groups.get(id).cloned()
     }
 }
 
@@ -397,6 +441,42 @@ mod tests {
         d.learn_users(&messages).await.unwrap();
         assert_eq!(d.names().user_label("U9"), "bob");
         assert_eq!(d.names().user_label("U0"), "U0");
+    }
+
+    fn mentioning_groups(text: &str) -> Vec<Message> {
+        vec![Message { ts: "1".into(), text: text.into(), ..Default::default() }]
+    }
+
+    #[tokio::test]
+    async fn usergroups_are_fetched_once_and_skip_the_disbanded() {
+        let server = MockServer::start().await;
+        Mock::given(path("/usergroups.list"))
+            .respond_with(ok(serde_json::json!({"usergroups": [
+                {"id": "S1", "handle": "team-x", "date_delete": 0},
+                {"id": "S2", "handle": "team-gone", "date_delete": 1700000000},
+            ]})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut d = directory(&server).await;
+        d.learn_users(&mentioning_groups("<!subteam^S1> <!subteam^S2> <!subteam^S3>")).await.unwrap();
+        d.learn_users(&mentioning_groups("<!subteam^S3>")).await.unwrap();
+        let names = d.names();
+        assert_eq!(mrkdwn::Names::group(&names, "S1").as_deref(), Some("team-x"));
+        assert_eq!(mrkdwn::Names::group(&names, "S2"), None);
+        assert_eq!(mrkdwn::Names::group(&names, "S3"), None);
+    }
+
+    #[tokio::test]
+    async fn a_usergroup_we_cannot_fetch_still_renders() {
+        let server = MockServer::start().await;
+        Mock::given(path("/usergroups.list"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": false, "error": "missing_scope"})))
+            .mount(&server)
+            .await;
+        let mut d = directory(&server).await;
+        d.learn_users(&mentioning_groups("<!subteam^S1>")).await.unwrap();
+        assert_eq!(mrkdwn::plain("<!subteam^S1>", &d.names()), "@S1");
     }
 
     #[test]

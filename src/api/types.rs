@@ -100,6 +100,23 @@ impl User {
     }
 }
 
+/// A usergroup, mentioned as `@handle` and carried in messages as its `S…` id.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Group {
+    pub id: String,
+    #[serde(default)]
+    pub handle: String,
+    /// 0 while the group is live, the disband time once it is gone.
+    #[serde(default)]
+    pub date_delete: u64,
+}
+
+impl Group {
+    pub fn is_live(&self) -> bool {
+        self.date_delete == 0
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub ts: String,
