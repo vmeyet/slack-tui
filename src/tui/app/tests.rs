@@ -682,6 +682,100 @@ fn palette_export_and_read_use_the_open_conversation() {
 }
 
 #[test]
+fn edit_prefills_the_message_and_saves_the_change() {
+    let mut app = reading();
+    assert_eq!(palette_run(&mut app, "edit"), vec![]);
+    assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "1".into() }));
+    assert_eq!(app.buffer, "a", "prefilled, with the cursor after the last letter");
+    app.handle_key(key('!'));
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::Edit { channel: "C1".into(), ts: "1".into(), text: "a!".into() }]);
+    assert_eq!(app.messages[0].text, "a", "the screen waits for the live event");
+    live(&mut app, rtm::Event::Changed { channel: "C1".into(), message: msg("1", "a!") });
+    assert_eq!(app.messages[0].text, "a!");
+}
+
+#[test]
+fn an_empty_edit_is_refused_rather_than_deleting() {
+    let mut app = reading();
+    palette_run(&mut app, "edit");
+    app.handle_key(code(KeyCode::Backspace));
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![]);
+    assert!(app.status_line().contains(":delete"), "{}", app.status_line());
+    assert_eq!(app.messages.len(), 1);
+}
+
+#[test]
+fn delete_asks_first_and_only_y_goes_through() {
+    let mut app = reading();
+    assert_eq!(palette_run(&mut app, "delete"), vec![]);
+    assert_eq!(app.pending_delete, Some(MyMessage { channel: "C1".into(), ts: "1".into(), text: "a".into() }));
+    assert_eq!(app.handle_key(key('n')), vec![]);
+    assert_eq!(app.pending_delete, None);
+    assert_eq!(app.status_line(), "kept");
+
+    palette_run(&mut app, "delete");
+    assert_eq!(app.handle_key(code(KeyCode::Esc)), vec![]);
+    assert_eq!(app.pending_delete, None, "esc keeps it too");
+
+    palette_run(&mut app, "delete");
+    assert_eq!(app.handle_key(key('y')), vec![Action::Delete { channel: "C1".into(), ts: "1".into() }]);
+    assert_eq!(app.pending_delete, None);
+    assert_eq!(app.messages.len(), 1, "the screen waits for the live event");
+    live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "1".into() });
+    assert!(app.messages.is_empty());
+}
+
+#[test]
+fn edit_and_delete_refuse_someone_elses_message() {
+    let mut app = reading();
+    app.apply(history(vec![from_other("2", "theirs")]));
+    for verb in ["edit", "delete"] {
+        assert_eq!(palette_run(&mut app, verb), vec![]);
+        assert!(app.status_line().contains(&format!("you can only {verb} your own messages")), "{}", app.status_line());
+    }
+    assert_eq!(app.input, None);
+    assert_eq!(app.pending_delete, None);
+    assert_eq!(app.messages.len(), 1);
+}
+
+#[test]
+fn edit_and_delete_follow_the_selection_into_a_thread() {
+    let mut app = reading();
+    app.thread = Some(Thread {
+        channel: "C1".into(),
+        root_ts: "1".into(),
+        messages: vec![msg("1", "a"), from_other("2", "theirs"), msg("3", "mine")],
+        selected: 2,
+    });
+    app.focus = Focus::Thread;
+    palette_run(&mut app, "edit");
+    assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "3".into() }));
+    assert_eq!(app.buffer, "mine");
+    app.handle_key(code(KeyCode::Esc));
+
+    palette_run(&mut app, "delete");
+    assert_eq!(app.pending_delete.as_ref().map(|p| p.ts.clone()), Some("3".into()));
+    app.handle_key(key('y'));
+
+    app.thread.as_mut().unwrap().selected = 1;
+    palette_run(&mut app, "delete");
+    assert_eq!(app.pending_delete, None);
+    assert!(app.status_line().contains("you can only delete your own messages"), "{}", app.status_line());
+}
+
+#[test]
+fn a_search_hit_has_to_be_opened_before_it_can_be_deleted() {
+    let mut app = reading();
+    let hit =
+        SearchMatch { ts: "9".into(), channel: crate::api::SearchChannel { id: "C2".into(), name: "random".into() }, ..Default::default() };
+    app.apply(Incoming::SearchResults(vec![hit]));
+    palette_run(&mut app, "delete");
+    assert_eq!(app.pending_delete, None);
+    assert!(app.status_line().contains("open the message first"), "{}", app.status_line());
+}
+
+#[test]
 fn badges_come_from_counts_and_live_mentions() {
     let mut app = loaded();
     app.apply(Incoming::Channels {

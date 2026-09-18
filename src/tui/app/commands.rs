@@ -1,4 +1,4 @@
-use super::{Action, App, Focus};
+use super::{Action, App, Focus, Input, MyMessage};
 use crate::inbox::Snooze;
 use crate::tui::images::Thumbs;
 use crate::tui::palette::{self, Command, Format};
@@ -79,6 +79,8 @@ impl App {
             Command::Go(target) => self.go(&target),
             Command::Msg { target, text } => Ok(self.message(target, text)),
             Command::React(name) => Ok(self.react(name)),
+            Command::Edit => self.edit_selected(),
+            Command::Delete => self.ask_delete(),
             Command::Thread => Ok(self.open_thread()),
             Command::Search(query) => Ok(self.search_for(query)),
             Command::Open => Ok(self.open_selected()),
@@ -124,6 +126,17 @@ impl App {
 
     fn react(&self, name: String) -> Vec<Action> {
         self.selected_ref().map(|(channel, ts)| vec![Action::React { channel, ts, name }]).unwrap_or_default()
+    }
+
+    fn edit_selected(&mut self) -> Outcome {
+        let MyMessage { channel, ts, text } = self.my_message("edit")?;
+        self.start_input(Input::Edit { channel, ts }, text);
+        Ok(vec![])
+    }
+
+    fn ask_delete(&mut self) -> Outcome {
+        self.pending_delete = Some(self.my_message("delete")?);
+        Ok(vec![])
     }
 
     fn open_thread(&mut self) -> Vec<Action> {

@@ -223,6 +223,14 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             slack.react(&channel, &ts, &name).await?;
             Ok(Incoming::Toast(format!("reacted :{name}:")))
         }
+        Action::Edit { channel, ts, text } => {
+            slack.update_message(&channel, &ts, &text).await?;
+            Ok(Incoming::Toast("edited ✓".into()))
+        }
+        Action::Delete { channel, ts } => {
+            slack.delete_message(&channel, &ts).await?;
+            Ok(Incoming::Toast("deleted ✓".into()))
+        }
         Action::Search(query) => {
             let result = slack.search(&query, 50).await?;
             Ok(Incoming::SearchResults(result.matches))

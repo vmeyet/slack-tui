@@ -1,4 +1,4 @@
-use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, Thread, Toast, Typing};
+use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, MyMessage, Thread, Toast, Typing};
 use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
@@ -36,6 +36,8 @@ pub struct App {
     pub(in crate::tui) focus: Focus,
     pub(in crate::tui) input: Option<Input>,
     pub(in crate::tui) buffer: String,
+    /// A delete waiting for its yes; nothing leaves the screen before that.
+    pub(in crate::tui) pending_delete: Option<MyMessage>,
     /// Where the user is; what just happened goes in `toast`.
     pub(in crate::tui) toast: Option<Toast>,
     /// Who is typing in the open conversation, each until their own keystroke ages out.
@@ -88,6 +90,7 @@ impl Default for App {
             focus: Focus::default(),
             input: None,
             buffer: String::new(),
+            pending_delete: None,
             toast: None,
             typing: vec![],
             loading: false,
@@ -179,6 +182,17 @@ impl App {
             _ => self.current_channel.clone()?,
         };
         Some((channel, self.selected_message()?.ts.clone()))
+    }
+
+    /// The selected message when it is the user's own; `verb` names what was refused otherwise.
+    /// A search result is refused too: its text is not the one on screen until it is opened.
+    pub(super) fn my_message(&self, verb: &str) -> Result<MyMessage, String> {
+        let (channel, ts) = self.selected_ref().ok_or_else(|| format!("pick a message to {verb}"))?;
+        let message = self.selected_message().filter(|m| m.ts == ts).ok_or_else(|| format!("open the message first, then :{verb}"))?;
+        if message.user.as_deref() != Some(self.me.as_str()) {
+            return Err(format!("you can only {verb} your own messages"));
+        }
+        Ok(MyMessage { channel, ts, text: message.text.clone() })
     }
 
     /// Case-insensitive, with or without the `#` / `🔒` mark.
