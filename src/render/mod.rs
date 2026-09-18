@@ -6,6 +6,7 @@ pub use text::Styled;
 pub use theme::Theme;
 
 use crate::api::{Channel, ChannelKind, Identity, Message, Posted, SearchMatch, User};
+use crate::blocks;
 use crate::mrkdwn;
 use crate::resolve::NameBook;
 use std::collections::HashMap;
@@ -174,7 +175,7 @@ fn body(t: &Theme, names: &NameBook, m: &Message) -> Styled {
     let mut styled = match m.subtype.as_deref() {
         Some("channel_join") => Styled::dim("joined the channel"),
         Some("channel_leave") => Styled::dim("left the channel"),
-        _ => text::from_segments(&mrkdwn::parse(&text, names), t.show_urls),
+        _ => text::from_segments(&blocks::segments(&m.blocks, &text, names), t.show_urls),
     };
     if m.edited.is_some() {
         styled.push_dim(" (edited)");
@@ -245,7 +246,7 @@ pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> Strin
         let indent = " ".repeat(4);
         if let Some(m) = item.unread.last() {
             let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
-            let lines = text::from_segments(&mrkdwn::parse(&m.text, names), t.show_urls)
+            let lines = text::from_segments(&blocks::segments(&m.blocks, &m.text, names), t.show_urls)
                 .wrap_with(t.width.saturating_sub(8 + author.width()).max(20), t);
             out.push_str(&format!("{indent}{} {}\n", t.mention(&format!("{author}:")), lines.first().cloned().unwrap_or_default()));
         }

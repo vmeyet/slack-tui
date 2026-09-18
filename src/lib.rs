@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod blocks;
 pub mod cache;
 pub mod cli;
 pub mod commands;

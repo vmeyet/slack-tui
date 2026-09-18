@@ -105,6 +105,9 @@ pub struct Message {
     pub ts: String,
     #[serde(default)]
     pub text: String,
+    /// The rich rendering of `text`, kept so a formatted message reads the same here as in Slack.
+    #[serde(default, deserialize_with = "crate::blocks::readable", skip_serializing_if = "Vec::is_empty")]
+    pub blocks: Vec<crate::blocks::Block>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

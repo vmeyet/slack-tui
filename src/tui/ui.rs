@@ -4,6 +4,7 @@ use super::motion;
 use super::theme::Theme;
 use crate::api::File;
 use crate::api::{Message, Reaction, SearchMatch};
+use crate::blocks;
 use crate::mrkdwn;
 use crate::render;
 use crate::render::text::{self, Style as TextStyle, Styled};
@@ -527,7 +528,7 @@ fn body<'a>(names: &NameBook, m: &Message, files: impl IntoIterator<Item = &'a F
         if m.text.is_empty() { m.attachments.iter().map(|a| a.fallback.clone()).collect::<Vec<_>>().join("\n") } else { m.text.clone() };
     let mut styled = match m.subtype.as_deref() {
         Some("channel_join") => Styled::dim("joined the channel"),
-        _ => text::from_segments(&mrkdwn::parse(&text, names), false),
+        _ => text::from_segments(&blocks::segments(&m.blocks, &text, names), false),
     };
     for file in files {
         styled.push_dim(&format!(" 📎 {}", file.label()));
@@ -1029,6 +1030,22 @@ mod tests {
         assert_eq!(render(&mut app).matches("U1").count(), 1);
         app.message_selected = 1;
         assert_eq!(render(&mut app).matches("U1").count(), 2);
+    }
+
+    #[test]
+    fn a_message_is_read_from_its_blocks_not_from_the_flat_text() {
+        let sent = crate::markdown::to_blocks("ship it\n```\nls -la\n```", &crate::markdown::NoMentions);
+        let show = |blocks: Vec<crate::blocks::Block>| {
+            let mut app = App::new();
+            app.current_channel = Some("C1".into());
+            app.focus = Focus::Messages;
+            let m = Message { blocks, ..message("1694700000.000100", "U1", &sent.text) };
+            app.apply(Incoming::History { channel: "C1".into(), messages: vec![m], names: NameBook::default() });
+            render(&mut app)
+        };
+        let rich = show(serde_json::from_value(serde_json::json!(sent.blocks)).unwrap());
+        assert!(rich.contains("ship it") && rich.contains("▎ ls -la"), "{rich}");
+        assert!(!show(vec![]).contains("▎ ls -la"), "the flat text has no code block to show");
     }
 
     #[test]
