@@ -49,6 +49,7 @@ pub struct Thread {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     LoadChannels,
+    CheckUpdate,
     LoadHistory(String),
     LoadReplies {
         channel: String,
@@ -155,6 +156,8 @@ pub enum Incoming {
     },
     SearchResults(Vec<SearchMatch>),
     Toast(String),
+    /// The daily update check answered, `None` when it could not.
+    Latest(Option<String>),
     /// A thumbnail came back, decoded, or could not be.
     Thumb {
         id: String,

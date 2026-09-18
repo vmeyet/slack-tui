@@ -35,6 +35,7 @@ impl App {
                 }
             }
             Incoming::Names(names) => self.names = names,
+            Incoming::Latest(commit) => self.latest = commit,
             Incoming::Thumb { id, image } => self.thumbs.arrived(&id, image),
             Incoming::Toast(text) if text.is_empty() => {}
             Incoming::Toast(text) => {

@@ -1,7 +1,8 @@
+use crate::version;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(name = "slack", version, about = "Slack from your terminal, as yourself.", propagate_version = true)]
+#[command(name = "slack", version = version::label(), about = "Slack from your terminal, as yourself.", propagate_version = true)]
 pub struct Cli {
     /// Workspace domain (the `acme` in acme.slack.com). Defaults to the last login.
     #[arg(short, long, global = true, env = "SLACK_WORKSPACE")]
@@ -47,6 +48,15 @@ pub enum Command {
     Firehose(FirehoseArgs),
     /// Generate shell completions.
     Completions { shell: clap_complete::Shell },
+    /// Rebuild and install the latest `slack` with cargo.
+    Update(UpdateArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct UpdateArgs {
+    /// Install even when the running binary is already the latest commit.
+    #[arg(short, long)]
+    pub force: bool,
 }
 
 #[derive(Args, Debug)]
@@ -211,6 +221,13 @@ mod tests {
     #[test]
     fn broadcast_requires_thread() {
         assert!(Cli::try_parse_from(["slack", "send", "#g", "hi", "--broadcast"]).is_err());
+    }
+
+    #[test]
+    fn update_takes_a_force_flag() {
+        let cli = Cli::parse_from(["slack", "update", "-f"]);
+        let Command::Update(args) = cli.command else { panic!() };
+        assert!(args.force);
     }
 
     #[test]

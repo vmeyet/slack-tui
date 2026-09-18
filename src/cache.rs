@@ -14,11 +14,12 @@ impl Cache {
     }
 
     pub fn for_workspace(key: &str) -> Self {
-        let root = std::env::var_os("SLACK_CLI_CACHE_DIR")
-            .map(PathBuf::from)
-            .or_else(|| dirs::cache_dir().map(|d| d.join("slack-cli")))
-            .unwrap_or_else(|| PathBuf::from(".slack-cli-cache"));
-        Self::new(root.join(key))
+        Self::new(root().join(key))
+    }
+
+    /// What every workspace shares, next to their directories.
+    pub fn shared() -> Self {
+        Self::new(root())
     }
 
     pub fn load<T: DeserializeOwned>(&self, name: &str) -> Option<T> {
@@ -39,6 +40,13 @@ impl Cache {
             Err(e) => Err(e.into()),
         }
     }
+}
+
+fn root() -> PathBuf {
+    std::env::var_os("SLACK_CLI_CACHE_DIR")
+        .map(PathBuf::from)
+        .or_else(|| dirs::cache_dir().map(|d| d.join("slack-cli")))
+        .unwrap_or_else(|| PathBuf::from(".slack-cli-cache"))
 }
 
 #[cfg(test)]

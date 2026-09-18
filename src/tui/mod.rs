@@ -65,6 +65,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let thumbs = if ctx.config.tui.images.unwrap_or(true) { images::Thumbs::from_terminal() } else { images::Thumbs::off() };
     let mut app = App::with(Settings { theme, workspace, highlighter, thumbs });
     spawn(Action::LoadChannels, backend.clone(), tx.clone());
+    spawn(Action::CheckUpdate, backend.clone(), tx.clone());
     if open_inbox {
         for action in app.open_inbox() {
             spawn(action, backend.clone(), tx.clone());
@@ -194,6 +195,10 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
     let Backend { slack, dir, .. } = backend;
     match action {
         Action::LoadChannels => load_channels(backend).await,
+        Action::CheckUpdate => {
+            let latest = tokio::task::spawn_blocking(crate::update::latest_commit).await.unwrap_or(None);
+            Ok(Incoming::Latest(latest))
+        }
         Action::LoadHistory(channel) => {
             let messages = slack.history(&channel, 100, None).await?;
             let mut d = dir.lock().await;

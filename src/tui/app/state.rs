@@ -39,6 +39,8 @@ pub struct App {
     /// Where the user is; what just happened goes in `toast`.
     pub(in crate::tui) toast: Option<Toast>,
     pub(in crate::tui) loading: bool,
+    /// Newest commit of the repo, once the daily check answered.
+    pub(in crate::tui) latest: Option<String>,
     pub(in crate::tui) names: NameBook,
     pub(in crate::tui) help: bool,
     pub(in crate::tui) should_quit: bool,
@@ -86,6 +88,7 @@ impl Default for App {
             buffer: String::new(),
             toast: None,
             loading: false,
+            latest: None,
             names: NameBook::default(),
             help: false,
             should_quit: false,

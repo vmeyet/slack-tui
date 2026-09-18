@@ -8,6 +8,7 @@ pub mod react;
 pub mod search;
 pub mod send;
 pub mod thread;
+pub mod update;
 pub mod users;
 pub mod whoami;
 

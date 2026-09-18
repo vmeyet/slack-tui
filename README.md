@@ -26,7 +26,8 @@ That is all: the `slack` command is now on your path.
 | Brave, Chrome, Chromium or Edge | Only used once, to log in |
 
 Optional shell completions: `slack completions zsh > ~/.zfunc/_slack` (also `bash`, `fish`).
-Update with the same `cargo install` command; remove with `cargo uninstall slack`.
+Update with `slack update` (a no-op when you already run the latest commit, `-f` to rebuild anyway); remove with `cargo uninstall slack`.
+`slack --version` prints the version and the commit it was built from.
 
 ## Log in
 

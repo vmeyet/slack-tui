@@ -15,3 +15,5 @@ pub mod permalink;
 pub mod render;
 pub mod resolve;
 pub mod tui;
+pub mod update;
+pub mod version;
