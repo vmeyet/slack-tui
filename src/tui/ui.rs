@@ -252,10 +252,8 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     };
     let rows: Vec<(usize, Vec<Slot>)> = items.iter().map(ListItem::height).zip(slots).collect();
     let empty = items.is_empty();
-    let block = match new_below_pill(app) {
-        Some(pill) => frame(app, &title, focused).title_bottom(pill),
-        None => frame(app, &title, focused),
-    };
+    let pills = [typing_pill(app), new_below_pill(app)];
+    let block = pills.into_iter().flatten().fold(frame(app, &title, focused), Block::title_bottom);
     let inner = block.inner(area);
     let list = List::new(items)
         .block(block)
@@ -270,6 +268,12 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     }
     let x = inner.x + 1 + (TIME_W + 1 + NAME_W + 1) as u16;
     placements(inner, x, app.messages_view.offset(), &rows)
+}
+
+/// Sits on the bottom border, under the last message, while someone types in the open conversation.
+fn typing_pill(app: &App) -> Option<Line<'static>> {
+    let line = app.typing_line()?;
+    Some(Line::from(format!(" {line} ").fg(app.theme.faded)))
 }
 
 /// Sits on the bottom border while messages wait below the selection.
@@ -1016,6 +1020,39 @@ mod tests {
         assert!(out.lines().any(|l| l.contains('╰') && l.contains("↓ 1 new")), "{out}");
         app.handle_key(KeyEvent::new(KeyCode::Char('G'), KeyModifiers::NONE));
         assert!(!render(&mut app).contains("new"));
+    }
+
+    fn watching_c1() -> App {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        app.focus = Focus::Messages;
+        let messages = vec![message("1694700000.000100", "U1", "first")];
+        app.apply(Incoming::History { channel: "C1".into(), messages, names: NameBook::default() });
+        app
+    }
+
+    fn typing(app: &mut App, user: &str) {
+        app.apply(Incoming::Live(Box::new(crate::api::rtm::Event::Typing { channel: "C1".into(), user: user.into() })));
+    }
+
+    #[test]
+    fn a_typist_shows_on_the_bottom_border_under_the_last_message() {
+        let mut app = watching_c1();
+        typing(&mut app, "U2");
+        let out = render(&mut app);
+        assert!(out.lines().any(|l| l.contains('╰') && l.contains("U2 is typing···")), "{out}");
+        app.now += std::time::Duration::from_secs(5);
+        assert!(!render(&mut app).contains("typing"));
+    }
+
+    #[test]
+    fn an_expired_typist_stops_waking_the_loop() {
+        let mut app = watching_c1();
+        assert_eq!(app.redraw_in(), None);
+        typing(&mut app, "U2");
+        assert_eq!(app.redraw_in(), Some(motion::FRAME));
+        app.now += std::time::Duration::from_secs(5);
+        assert_eq!(app.redraw_in(), None);
     }
 
     #[test]
