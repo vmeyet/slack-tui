@@ -131,6 +131,10 @@ impl Slack {
         self.call_pages("users.list", params(&[("limit", "1000")]), "members").await
     }
 
+    pub async fn groups(&self) -> Result<Vec<Group>> {
+        self.call_as("usergroups.list", vec![], "usergroups").await
+    }
+
     pub async fn user_info(&self, id: &str) -> Result<User> {
         self.call_as("users.info", params(&[("user", id)]), "user").await
     }

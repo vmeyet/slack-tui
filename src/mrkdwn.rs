@@ -19,6 +19,7 @@ pub enum Segment {
 pub trait Names {
     fn user(&self, id: &str) -> Option<String>;
     fn channel(&self, id: &str) -> Option<String>;
+    fn group(&self, id: &str) -> Option<String>;
 }
 
 pub struct NoNames;
@@ -28,6 +29,9 @@ impl Names for NoNames {
         None
     }
     fn channel(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn group(&self, _: &str) -> Option<String> {
         None
     }
 }
@@ -74,10 +78,18 @@ fn angle_segment(inner: &str, names: &dyn Names) -> Segment {
         return Segment::Channel(label.map(str::to_owned).or_else(|| names.channel(id)).unwrap_or_else(|| id.to_owned()));
     }
     if let Some(special) = target.strip_prefix('!') {
-        let name = label.map(str::to_owned).unwrap_or_else(|| special.split('^').next().unwrap_or(special).to_owned());
-        return Segment::Mention(name.trim_start_matches('@').to_owned());
+        return Segment::Mention(special_name(special, label, names));
     }
     Segment::Link { label: unescape(label.unwrap_or(target)), url: target.to_owned() }
+}
+
+/// `<!here>` and friends name themselves; `<!subteam^S1>` only carries an id to look up.
+fn special_name(special: &str, label: Option<&str>, names: &dyn Names) -> String {
+    let name = match special.strip_prefix("subteam^") {
+        Some(id) => label.map(str::to_owned).or_else(|| names.group(id)).unwrap_or_else(|| id.to_owned()),
+        None => label.unwrap_or(special).to_owned(),
+    };
+    name.trim_start_matches('@').to_owned()
 }
 
 fn unescape(s: &str) -> String {
@@ -171,6 +183,16 @@ mod tests {
         fn channel(&self, id: &str) -> Option<String> {
             (id == "C1").then(|| "general".to_owned())
         }
+        fn group(&self, id: &str) -> Option<String> {
+            (id == "S1").then(|| "team-x".to_owned())
+        }
+    }
+
+    #[test]
+    fn usergroups_resolve_to_their_handle() {
+        assert_eq!(parse("ping <!subteam^S1>", &Fake), vec![Text("ping ".into()), Mention("team-x".into())]);
+        assert_eq!(parse("ping <!subteam^S9>", &Fake), vec![Text("ping ".into()), Mention("S9".into())]);
+        assert_eq!(parse("ping <!subteam^S1>", &NoNames), vec![Text("ping ".into()), Mention("S1".into())]);
     }
 
     #[test]

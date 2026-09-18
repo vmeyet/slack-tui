@@ -148,10 +148,18 @@ fn element(e: &Element, names: &dyn Names) -> Segment {
         "link" => Segment::Link { label: e.label().to_owned(), url: e.url.clone() },
         "user" => Segment::Mention(names.user(&e.user_id).unwrap_or_else(|| e.user_id.clone())),
         "channel" => Segment::Channel(names.channel(&e.channel_id).unwrap_or_else(|| e.channel_id.clone())),
-        "usergroup" => Segment::Mention(if e.name.is_empty() { e.usergroup_id.clone() } else { e.name.clone() }),
+        "usergroup" => Segment::Mention(group_name(e, names)),
         "broadcast" => Segment::Mention(e.range.clone()),
         "emoji" => Segment::Emoji(e.name.clone()),
         _ => marked(e),
+    }
+}
+
+/// A usergroup element usually carries its id alone, so the handle has to be looked up.
+fn group_name(e: &Element, names: &dyn Names) -> String {
+    match e.name.is_empty() {
+        true => names.group(&e.usergroup_id).unwrap_or_else(|| e.usergroup_id.clone()),
+        false => e.name.clone(),
     }
 }
 
@@ -208,6 +216,9 @@ mod tests {
         }
         fn channel(&self, id: &str) -> Option<String> {
             (id == "C1").then(|| "general".to_owned())
+        }
+        fn group(&self, id: &str) -> Option<String> {
+            (id == "S1").then(|| "team-x".to_owned())
         }
     }
 
@@ -278,6 +289,21 @@ mod tests {
                 Text(" ".into()),
                 Mention("here".into()),
             ]
+        );
+    }
+
+    #[test]
+    fn usergroups_resolve_to_their_handle() {
+        let b = section(json!([
+            {"type": "usergroup", "usergroup_id": "S1"},
+            {"type": "text", "text": " "},
+            {"type": "usergroup", "usergroup_id": "S9"},
+            {"type": "text", "text": " "},
+            {"type": "usergroup", "usergroup_id": "S9", "name": "team-y"},
+        ]));
+        assert_eq!(
+            read(&b),
+            vec![Mention("team-x".into()), Text(" ".into()), Mention("S9".into()), Text(" ".into()), Mention("team-y".into())]
         );
     }
 
