@@ -8,7 +8,7 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-pub use feedback::Toast;
+pub use feedback::{Toast, Typing};
 pub use sidebar::{Badge, ChannelRow, Kind, SidebarRow, arrange, sidebar_rows};
 pub use state::{App, Settings};
 

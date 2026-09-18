@@ -368,6 +368,67 @@ fn live_edit_delete_and_reactions() {
     assert_eq!(app.message_selected, 0);
 }
 
+fn typing(app: &mut App, user: &str) {
+    live(app, rtm::Event::Typing { channel: "C1".into(), user: user.into() });
+}
+
+fn watching_c1() -> App {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    app
+}
+
+#[test]
+fn a_typist_shows_for_five_seconds_then_goes_quiet() {
+    let mut app = watching_c1();
+    typing(&mut app, "U2");
+    assert_eq!(app.typing_line().as_deref(), Some("U2 is typing···"));
+    app.now += Duration::from_secs(4);
+    assert_eq!(app.typing_line().as_deref(), Some("U2 is typing···"));
+    app.now += Duration::from_secs(1);
+    assert_eq!(app.typing_line(), None);
+}
+
+#[test]
+fn typing_again_extends_only_that_person() {
+    let mut app = watching_c1();
+    typing(&mut app, "U2");
+    app.now += Duration::from_secs(3);
+    typing(&mut app, "U3");
+    app.now += Duration::from_secs(3);
+    assert_eq!(app.typing_line().as_deref(), Some("U3 is typing···"));
+    typing(&mut app, "U3");
+    app.now += Duration::from_secs(4);
+    assert_eq!(app.typing_line().as_deref(), Some("U3 is typing···"));
+}
+
+#[test]
+fn typing_elsewhere_or_by_me_shows_nothing() {
+    let mut app = watching_c1();
+    live(&mut app, rtm::Event::Typing { channel: "C2".into(), user: "U2".into() });
+    typing(&mut app, "U1");
+    assert_eq!(app.typing_line(), None);
+}
+
+#[test]
+fn several_typists_read_as_one_line_whatever_their_order() {
+    let mut app = watching_c1();
+    typing(&mut app, "U3");
+    typing(&mut app, "U2");
+    assert_eq!(app.typing_line().as_deref(), Some("U2 and U3 are typing···"));
+    typing(&mut app, "U4");
+    assert_eq!(app.typing_line().as_deref(), Some("3 people are typing···"));
+}
+
+#[test]
+fn opening_another_conversation_forgets_its_typists() {
+    let mut app = watching_c1();
+    typing(&mut app, "U2");
+    app.open_channel("C2".into());
+    assert_eq!(app.typing_line(), None);
+}
+
 #[test]
 fn polling_only_when_feed_is_down() {
     let mut app = loaded();

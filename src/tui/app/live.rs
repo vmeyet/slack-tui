@@ -37,6 +37,11 @@ impl App {
                     self.clamp_selections();
                 }
             }
+            rtm::Event::Typing { channel, user } => {
+                if self.current_channel.as_deref() == Some(&channel) && user != self.me {
+                    self.mark_typing(&user);
+                }
+            }
             rtm::Event::Reaction { channel, ts, name, user, added } => {
                 if self.current_channel.as_deref() == Some(&channel) {
                     for m in self.all_messages_mut().into_iter().filter(|m| m.ts == ts) {

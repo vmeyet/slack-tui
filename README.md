@@ -51,6 +51,7 @@ slack tui
 
 Three panes: channels, messages, thread.
 Messages, edits, deletions and reactions arrive live; other channels light up with `●`.
+Whoever is typing in the open conversation shows under the last message.
 
 | Key | Action |
 |---|---|

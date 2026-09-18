@@ -30,6 +30,10 @@ pub enum Event {
         user: String,
         added: bool,
     },
+    Typing {
+        channel: String,
+        user: String,
+    },
     Disconnected(String),
     /// The feed failed too many times in a row and will not reconnect.
     GaveUp(String),
@@ -59,6 +63,7 @@ impl Event {
                 user: raw["user"].as_str()?.to_owned(),
                 added: kind == "reaction_added",
             }),
+            "user_typing" => Some(Event::Typing { channel: channel()?, user: raw["user"].as_str()?.to_owned() }),
             _ => None,
         }
     }
@@ -154,8 +159,15 @@ mod tests {
         let expected = Event::Reaction { channel: "C1".into(), ts: "1.0".into(), name: "tada".into(), user: "U1".into(), added: true };
         assert_eq!(Event::parse(&raw), Some(expected));
         assert_eq!(Event::parse(&json!({"type": "hello"})), Some(Event::Connected));
-        assert_eq!(Event::parse(&json!({"type": "user_typing"})), None);
         assert_eq!(Event::parse(&json!({"reply_to": 1, "ok": true})), None);
+    }
+
+    #[test]
+    fn parses_typing_and_drops_it_without_a_channel() {
+        let raw = json!({"type": "user_typing", "channel": "C1", "user": "U1"});
+        assert_eq!(Event::parse(&raw), Some(Event::Typing { channel: "C1".into(), user: "U1".into() }));
+        assert_eq!(Event::parse(&json!({"type": "user_typing"})), None);
+        assert_eq!(Event::parse(&json!({"type": "user_typing", "channel": "C1"})), None);
     }
 
     #[test]

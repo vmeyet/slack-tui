@@ -60,6 +60,7 @@ impl App {
         if self.current_channel.as_deref() == Some(channel) {
             self.current_channel = None;
             self.messages.clear();
+            self.typing.clear();
             self.thread = None;
             self.focus = Focus::Channels;
         }

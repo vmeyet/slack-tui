@@ -5,6 +5,7 @@ use crate::{update, version};
 use std::time::{Duration, Instant};
 
 const TOAST_LIFE: Duration = Duration::from_secs(2);
+const TYPING_LIFE: Duration = Duration::from_secs(5);
 const UPDATE_HINT: &str = "update available · slack update";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +30,39 @@ impl Toast {
     }
 }
 
+/// Someone the live feed saw typing, until their last keystroke ages out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Typing {
+    user: String,
+    until: Instant,
+}
+
 impl App {
+    pub(super) fn mark_typing(&mut self, user: &str) {
+        self.typing = refreshed(&self.typing, user, self.now);
+    }
+
+    /// Sorted, so the line never shuffles names between keystrokes.
+    fn typists(&self) -> Vec<String> {
+        let live = self.typing.iter().filter(|t| self.now < t.until);
+        let mut names: Vec<String> = live.map(|t| self.names.user_label(&t.user)).collect();
+        names.sort();
+        names
+    }
+
+    /// One line under the last message; nothing while search results stand in for the conversation.
+    pub fn typing_line(&self) -> Option<String> {
+        if self.search.is_some() {
+            return None;
+        }
+        match self.typists().as_slice() {
+            [] => None,
+            [one] => Some(format!("{one} is typing···")),
+            [one, two] => Some(format!("{one} and {two} are typing···")),
+            names => Some(format!("{} people are typing···", names.len())),
+        }
+    }
+
     pub(super) fn toast(&mut self, text: impl Into<String>) {
         self.toast = Some(Toast { text: text.into(), until: Until::Time(self.now + TOAST_LIFE) });
     }
@@ -104,4 +137,10 @@ impl App {
             self.seen = Some(reached.ts.clone());
         }
     }
+}
+
+/// Only `user`'s five seconds move; whoever went quiet is left behind.
+fn refreshed(typing: &[Typing], user: &str, now: Instant) -> Vec<Typing> {
+    let others = typing.iter().filter(|t| t.user != user && now < t.until).cloned();
+    others.chain([Typing { user: user.to_owned(), until: now + TYPING_LIFE }]).collect()
 }

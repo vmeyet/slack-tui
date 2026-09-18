@@ -1,4 +1,4 @@
-use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, Thread, Toast};
+use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, Thread, Toast, Typing};
 use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
@@ -38,6 +38,8 @@ pub struct App {
     pub(in crate::tui) buffer: String,
     /// Where the user is; what just happened goes in `toast`.
     pub(in crate::tui) toast: Option<Toast>,
+    /// Who is typing in the open conversation, each until their own keystroke ages out.
+    pub(in crate::tui) typing: Vec<Typing>,
     pub(in crate::tui) loading: bool,
     /// Newest commit of the repo, once the daily check answered.
     pub(in crate::tui) latest: Option<String>,
@@ -87,6 +89,7 @@ impl Default for App {
             input: None,
             buffer: String::new(),
             toast: None,
+            typing: vec![],
             loading: false,
             latest: None,
             names: NameBook::default(),
@@ -140,7 +143,7 @@ impl App {
     /// True while the screen changes with time alone, so the event loop only ticks frames when there is
     /// something to animate.
     pub fn animating(&self) -> bool {
-        self.toast_expires() || self.empty_state_visible()
+        self.toast_expires() || self.typing_line().is_some() || self.empty_state_visible()
     }
 
     fn empty_state_visible(&self) -> bool {
@@ -191,6 +194,7 @@ impl App {
         self.badges.remove(&id);
         self.current_channel = Some(id.clone());
         self.messages.clear();
+        self.typing.clear();
         self.seen = None;
         self.messages_view = ListState::default();
         self.thread_view = ListState::default();
