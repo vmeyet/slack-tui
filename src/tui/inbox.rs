@@ -1,7 +1,7 @@
 use super::motion;
 use super::theme::Theme;
+use crate::blocks;
 use crate::inbox::{Item, Kind, Snooze, State};
-use crate::mrkdwn;
 use crate::render::text;
 use crate::render::time;
 use crate::resolve::NameBook;
@@ -135,7 +135,7 @@ fn item_lines(theme: &Theme, item: &Item, names: &NameBook, width: usize) -> Lis
     let mut lines = vec![head];
     for m in item.unread.iter().rev().take(2).collect::<Vec<_>>().into_iter().rev() {
         let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
-        let styled = text::from_segments(&mrkdwn::parse(&m.text, names), false);
+        let styled = text::from_segments(&blocks::segments(&m.blocks, &m.text, names), false);
         let mut pieces = styled.wrap_styled(width.saturating_sub(6 + author.len()).max(10));
         let first = pieces.drain(..1).next().unwrap_or_default();
         let mut spans = vec![Span::raw("   "), Span::styled(format!("{author}: "), Style::new().fg(theme.mention))];
