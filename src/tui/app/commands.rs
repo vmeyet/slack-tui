@@ -5,6 +5,7 @@ use crate::tui::palette::{self, Command, Format};
 use crate::tui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 /// A command either yields actions or a reason it could not run, shown in the status line.
 type Outcome = Result<Vec<Action>, String>;
@@ -62,11 +63,7 @@ impl App {
             palette::Slot::Channel => channels().collect(),
             palette::Slot::Person => people().collect(),
             palette::Slot::Conversation => channels().chain(people()).collect(),
-            palette::Slot::Emoji => {
-                let mut names: Vec<String> = crate::emoji::names().map(str::to_owned).collect();
-                names.sort();
-                names
-            }
+            palette::Slot::Emoji => emoji_names().to_vec(),
             palette::Slot::Literal(options) => options.iter().map(|o| (*o).to_owned()).collect(),
             palette::Slot::Free => vec![],
         }
@@ -222,6 +219,16 @@ impl App {
         self.should_quit = true;
         vec![]
     }
+}
+
+/// Every shortcode, in name order, for the `:react` slot and the react row.
+pub(super) fn emoji_names() -> &'static [String] {
+    static NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
+        let mut names: Vec<String> = crate::emoji::names().map(str::to_owned).collect();
+        names.sort();
+        names
+    });
+    &NAMES
 }
 
 fn export_path(label: &str, format: Format) -> PathBuf {

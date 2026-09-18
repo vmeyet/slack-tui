@@ -1,6 +1,7 @@
 use super::*;
 use crate::api::{File, Message};
 use crate::inbox::Item;
+use crate::tui::field::Field;
 use crate::tui::images::Thumbs;
 use crate::tui::jump::Target;
 use crate::tui::motion::{FRAME, SPINNER_FRAME};
@@ -80,6 +81,142 @@ fn filter_narrows_channels_live_and_escape_clears() {
 }
 
 #[test]
+fn filter_follows_an_edit_made_mid_text() {
+    let mut app = loaded();
+    app.handle_key(key('/'));
+    for c in "ran".chars() {
+        app.handle_key(key(c));
+    }
+    app.handle_key(code(KeyCode::Left));
+    app.handle_key(key('e'));
+    assert_eq!(app.filter, "raen");
+    assert!(app.visible_channels().is_empty());
+    app.handle_key(code(KeyCode::Backspace));
+    assert_eq!(app.filter, "ran");
+    assert_eq!(app.visible_channels().len(), 1);
+}
+
+#[test]
+fn the_input_row_edits_where_the_cursor_sits() {
+    let mut app = reading();
+    app.handle_key(key('r'));
+    for c in "helo".chars() {
+        app.handle_key(key(c));
+    }
+    app.handle_key(code(KeyCode::Left));
+    app.handle_key(key('l'));
+    assert_eq!(app.buffer.text(), "hello");
+    app.handle_key(code(KeyCode::Home));
+    app.handle_key(code(KeyCode::Delete));
+    app.handle_key(ctrl('e'));
+    app.handle_key(key('!'));
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "ello!".into() }]);
+}
+
+#[test]
+fn ctrl_w_eats_the_word_before_the_cursor_and_ctrl_a_goes_back_to_the_start() {
+    let mut app = reading();
+    app.handle_key(key('r'));
+    for c in "ship it now".chars() {
+        app.handle_key(key(c));
+    }
+    app.handle_key(ctrl('w'));
+    assert_eq!(app.buffer.text(), "ship it ");
+    app.handle_key(ctrl('a'));
+    app.handle_key(key('>'));
+    assert_eq!(app.buffer.text(), ">ship it ");
+    app.handle_key(ctrl('z'));
+    assert_eq!(app.buffer.text(), ">ship it ", "an unbound control key types nothing");
+}
+
+#[test]
+fn an_edit_prefill_starts_with_the_cursor_after_the_last_character() {
+    let mut app = reading();
+    app.apply(history(vec![msg("1", "café")]));
+    palette_run(&mut app, "edit");
+    app.handle_key(key('!'));
+    assert_eq!(app.buffer.text(), "café!");
+    app.handle_key(code(KeyCode::Home));
+    app.handle_key(key('¡'));
+    assert_eq!(app.buffer.text(), "¡café!");
+}
+
+/// The react row on a half-typed name, one key away from `🚀 rocket`.
+fn reacting(typed: &str) -> App {
+    let mut app = reading();
+    app.handle_key(key('e'));
+    for c in typed.chars() {
+        app.handle_key(key(c));
+    }
+    app
+}
+
+#[test]
+fn tab_cycles_emoji_names_and_reacts_with_the_bare_name() {
+    let mut app = reacting("rocke");
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "rocket");
+    let hint = app.input_hint().expect("cycling");
+    assert!(hint.starts_with("[🚀 rocket]"), "the glyph shows next to the name: {hint}");
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "arrows_clockwise");
+    app.handle_key(code(KeyCode::BackTab));
+    assert_eq!(app.buffer.text(), "rocket");
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "rocket".into() }]);
+}
+
+#[test]
+fn an_edit_drops_the_options_being_cycled_and_so_does_leaving_the_row() {
+    let mut app = reacting("rocke");
+    app.handle_key(code(KeyCode::Tab));
+    assert!(app.input_hint().is_some());
+    app.handle_key(code(KeyCode::Backspace));
+    assert_eq!(app.input_hint(), None);
+    assert_eq!(app.buffer.text(), "rocke");
+    app.handle_key(code(KeyCode::Tab));
+    app.handle_key(code(KeyCode::Esc));
+    assert_eq!(app.input_hint(), None, "nothing to cycle once the row is closed");
+}
+
+#[test]
+fn right_takes_the_suggested_end_of_the_name_and_leaves_the_cursor_after_it() {
+    let mut app = reacting("rocke");
+    assert_eq!(app.input_ghost().as_deref(), Some("t"));
+    app.handle_key(code(KeyCode::Right));
+    assert_eq!(app.buffer.text(), "rocket");
+    assert_eq!(app.input_ghost(), None, "a complete name suggests nothing");
+    app.handle_key(key('!'));
+    assert_eq!(app.buffer.text(), "rocket!", "the cursor stayed at the end");
+}
+
+#[test]
+fn the_react_row_suggests_nothing_with_the_cursor_mid_text() {
+    let mut app = reacting("rocke");
+    app.handle_key(code(KeyCode::Left));
+    assert_eq!(app.input_ghost(), None);
+    app.handle_key(code(KeyCode::Right));
+    assert_eq!(app.input_ghost().as_deref(), Some("t"), "back at the end, the suggestion is back");
+}
+
+#[test]
+fn a_reply_row_completes_nothing_and_keeps_its_arrows() {
+    let mut app = reading();
+    app.handle_key(key('r'));
+    for c in "rocke".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(app.input_ghost(), None);
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "rocke", "tab completes nothing in a reply");
+    app.handle_key(code(KeyCode::Left));
+    app.handle_key(code(KeyCode::Right));
+    app.handle_key(key('t'));
+    assert_eq!(app.buffer.text(), "rocket", "→ moved the cursor back to the end");
+}
+
+#[test]
 fn reply_in_channel_sends_and_reloads() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
@@ -117,13 +254,13 @@ fn thread_reply_targets_the_root() {
 fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
-    app.buffer = "half written".into();
+    app.buffer = Field::new("half written");
     let actions = app.handle_key(key('E'));
     assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: None, draft: "half written".into() }]);
     let sent = app.apply(Incoming::Composed { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() });
     assert_eq!(sent, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() }]);
     assert_eq!(app.input, None);
-    assert_eq!(app.buffer, "");
+    assert_eq!(app.buffer.text(), "");
 }
 
 #[test]
@@ -149,7 +286,7 @@ fn empty_reply_is_dropped_and_escape_cancels() {
     app.handle_key(key('z'));
     app.handle_key(code(KeyCode::Esc));
     assert_eq!(app.input, None);
-    assert_eq!(app.buffer, "");
+    assert_eq!(app.buffer.text(), "");
 }
 
 #[test]
@@ -712,7 +849,7 @@ fn edit_prefills_the_message_and_saves_the_change() {
     let mut app = reading();
     assert_eq!(palette_run(&mut app, "edit"), vec![]);
     assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "1".into() }));
-    assert_eq!(app.buffer, "a", "prefilled, with the cursor after the last letter");
+    assert_eq!(app.buffer.text(), "a", "prefilled, with the cursor after the last letter");
     app.handle_key(key('!'));
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::Edit { channel: "C1".into(), ts: "1".into(), text: "a!".into() }]);
@@ -777,7 +914,7 @@ fn edit_and_delete_follow_the_selection_into_a_thread() {
     app.focus = Focus::Thread;
     palette_run(&mut app, "edit");
     assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "3".into() }));
-    assert_eq!(app.buffer, "mine");
+    assert_eq!(app.buffer.text(), "mine");
     app.handle_key(code(KeyCode::Esc));
 
     palette_run(&mut app, "delete");

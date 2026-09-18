@@ -1,4 +1,5 @@
 //! The `:` command line: typed verbs with fuzzy tab completion and history.
+use super::complete::{self, Cycle};
 use crate::fuzzy;
 use crate::inbox::Snooze;
 
@@ -144,14 +145,14 @@ pub struct Palette {
     pub input: String,
     pub history: Vec<String>,
     history_at: Option<usize>,
-    cycle: Option<Cycle>,
+    cycle: Option<Cycling>,
 }
 
+/// A cycle over the last token, and the line before it that stays put.
 #[derive(Debug)]
-struct Cycle {
+struct Cycling {
     prefix: String,
-    options: Vec<String>,
-    at: usize,
+    cycle: Cycle,
 }
 
 impl Palette {
@@ -172,25 +173,18 @@ impl Palette {
     /// Replaces the token being typed with the next candidate; `candidates` supplies the
     /// labels for the slot under the cursor.
     pub fn complete(&mut self, candidates: &[String], backwards: bool) {
-        if self.cycle.is_none() {
-            let (prefix, token) = split_last_token(&self.input);
-            let ranked: Vec<String> = if token.is_empty() {
-                candidates.iter().take(50).cloned().collect()
-            } else {
-                fuzzy::rank(token, candidates.iter().map(|c| (c.clone(), c.clone()))).into_iter().map(|(_, c)| c).take(50).collect()
-            };
-            if ranked.is_empty() {
-                return;
+        match &mut self.cycle {
+            Some(cycling) => cycling.cycle.advance(backwards),
+            None => {
+                let (prefix, token) = split_last_token(&self.input);
+                let Some(cycle) = Cycle::new(token, candidates) else { return };
+                self.cycle = Some(Cycling { prefix: prefix.to_owned(), cycle });
             }
-            self.cycle = Some(Cycle { prefix: prefix.to_owned(), options: ranked, at: 0 });
-        } else if let Some(cycle) = &mut self.cycle {
-            let n = cycle.options.len();
-            cycle.at = if backwards { (cycle.at + n - 1) % n } else { (cycle.at + 1) % n };
         }
-        let cycle = self.cycle.as_ref().expect("set above");
-        let chosen = &cycle.options[cycle.at];
+        let cycling = self.cycle.as_ref().expect("set above");
+        let chosen = cycling.cycle.current();
         let trailing = if chosen.ends_with('=') { "" } else { " " };
-        self.input = format!("{}{chosen}{trailing}", cycle.prefix);
+        self.input = format!("{}{chosen}{trailing}", cycling.prefix);
     }
 
     /// The grey text zsh-style autosuggestion would show after the cursor: the rest of the
@@ -200,13 +194,7 @@ impl Palette {
             return None;
         }
         let (_, token) = split_last_token(&self.input);
-        if token.is_empty() {
-            return None;
-        }
-        let lower = token.to_lowercase();
-        let by_prefix = candidates.iter().find(|c| c.to_lowercase().starts_with(&lower) && c.len() > token.len());
-        let best = by_prefix.cloned().or_else(|| fuzzy::best(token, candidates.iter().map(|c| (c.clone(), c.clone()))))?;
-        if best.to_lowercase().starts_with(&lower) { Some(best[token.len()..].to_owned()) } else { None }
+        complete::ghost(token, candidates)
     }
 
     /// Accepts the ghost text, as `→` does in a shell.
@@ -220,16 +208,7 @@ impl Palette {
     }
 
     pub fn hint(&self) -> Option<String> {
-        let cycle = self.cycle.as_ref()?;
-        let shown: Vec<String> = cycle
-            .options
-            .iter()
-            .enumerate()
-            .skip(cycle.at)
-            .take(4)
-            .map(|(i, o)| if i == cycle.at { format!("[{o}]") } else { o.clone() })
-            .collect();
-        Some(shown.join("  "))
+        Some(self.cycle.as_ref()?.cycle.hint(str::to_owned))
     }
 
     pub fn history_up(&mut self) {

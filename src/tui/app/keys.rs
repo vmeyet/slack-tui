@@ -1,6 +1,9 @@
+use super::commands::emoji_names;
 use super::{Action, App, Focus, Input};
 use crate::api::Message;
 use crate::inbox::Snooze;
+use crate::tui::complete::{self, Cycle};
+use crate::tui::field::Field;
 use crate::tui::firehose::Firehose;
 use crate::tui::jump::{Candidate, Jump, Target};
 use crate::tui::palette::Palette;
@@ -259,32 +262,105 @@ impl App {
     }
 
     fn handle_input_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
                 if self.input == Some(Input::Filter) {
                     self.filter.clear();
                 }
-                self.input = None;
-                self.buffer.clear();
+                self.close_input();
             }
             KeyCode::Enter => return self.submit_input(),
-            KeyCode::Backspace => {
-                self.buffer.pop();
-                self.sync_filter();
+            KeyCode::Tab | KeyCode::BackTab => self.cycle_emoji(key.code == KeyCode::BackTab),
+            KeyCode::Left => self.buffer.left(),
+            KeyCode::Right => {
+                if !self.accept_emoji() {
+                    self.buffer.right();
+                }
             }
-            KeyCode::Char(c) => {
-                self.buffer.push(c);
-                self.sync_filter();
+            KeyCode::Home => self.buffer.start(),
+            KeyCode::End => {
+                if !self.accept_emoji() {
+                    self.buffer.end();
+                }
+            }
+            KeyCode::Char('a') if ctrl => self.buffer.start(),
+            KeyCode::Char('e') if ctrl => self.buffer.end(),
+            KeyCode::Char('w') if ctrl => {
+                self.buffer.delete_word();
+                self.edited();
+            }
+            KeyCode::Backspace => {
+                self.buffer.backspace();
+                self.edited();
+            }
+            KeyCode::Delete => {
+                self.buffer.delete();
+                self.edited();
+            }
+            KeyCode::Char(c) if !ctrl => {
+                self.buffer.insert(c);
+                self.edited();
             }
             _ => {}
         }
         vec![]
     }
 
-    fn sync_filter(&mut self) {
+    fn close_input(&mut self) {
+        self.input = None;
+        self.buffer.clear();
+        self.react_cycle = None;
+    }
+
+    /// After a change to the text: the filter follows it, and any completion in hand is stale.
+    fn edited(&mut self) {
+        self.react_cycle = None;
         if self.input == Some(Input::Filter) {
-            self.filter = self.buffer.clone();
+            self.filter = self.buffer.text().to_owned();
             self.channel_selected = 0;
+        }
+    }
+
+    /// Replaces the half-typed emoji name with the next one that matches it. The react row is the
+    /// only one with something to complete.
+    fn cycle_emoji(&mut self, backwards: bool) {
+        let candidates = self.emoji_candidates();
+        match &mut self.react_cycle {
+            Some(cycle) => cycle.advance(backwards),
+            None => self.react_cycle = Cycle::new(self.buffer.text(), candidates),
+        }
+        let Some(name) = self.react_cycle.as_ref().map(|c| c.current().to_owned()) else { return };
+        self.buffer = Field::new(name);
+    }
+
+    /// Takes the suggested end of the emoji name, as `→` does in a shell, and says whether it did.
+    fn accept_emoji(&mut self) -> bool {
+        let Some(rest) = self.input_ghost() else { return false };
+        for c in rest.chars() {
+            self.buffer.insert(c);
+        }
+        true
+    }
+
+    /// The end of the emoji name being typed, shown in grey after the cursor. Only the react row
+    /// suggests anything, only with the cursor at the end, and never while tab is cycling.
+    pub(in crate::tui) fn input_ghost(&self) -> Option<String> {
+        if self.react_cycle.is_some() || !self.buffer.at_end() {
+            return None;
+        }
+        complete::ghost(self.buffer.text(), self.emoji_candidates()).filter(|rest| !rest.is_empty())
+    }
+
+    /// The options tab is cycling through, each behind its glyph.
+    pub(in crate::tui) fn input_hint(&self) -> Option<String> {
+        Some(self.react_cycle.as_ref()?.hint(|name| format!("{} {name}", crate::emoji::render(name))))
+    }
+
+    fn emoji_candidates(&self) -> &'static [String] {
+        match self.input {
+            Some(Input::React { .. }) => emoji_names(),
+            _ => &[],
         }
     }
 
@@ -300,13 +376,15 @@ impl App {
     }
 
     pub(super) fn start_input(&mut self, input: Input, initial: String) {
-        self.buffer = initial;
+        self.buffer = Field::new(initial);
         self.input = Some(input);
+        self.react_cycle = None;
     }
 
     fn submit_input(&mut self) -> Vec<Action> {
         let Some(input) = self.input.take() else { return vec![] };
-        let text = std::mem::take(&mut self.buffer);
+        let text = self.buffer.take();
+        self.react_cycle = None;
         match input {
             Input::Filter => {
                 self.focus = Focus::Channels;
@@ -363,7 +441,7 @@ impl App {
             self.toast("pick a conversation first");
             return vec![];
         };
-        vec![Action::Compose { channel, thread_ts, draft: self.buffer.clone() }]
+        vec![Action::Compose { channel, thread_ts, draft: self.buffer.text().to_owned() }]
     }
 
     /// The conversation a reply goes to, and the thread it belongs to when it belongs to one.
