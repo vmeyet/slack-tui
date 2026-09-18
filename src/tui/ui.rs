@@ -599,7 +599,11 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
     let status = format!("{} ", app.status_line());
     let room = area.width as usize;
     let used = 1 + dot.len() + text::visible_width(&status);
-    let right = text::truncate(hints, room.saturating_sub(used + 1));
+    let hints = match app.update_hint() {
+        Some(hint) => format!("{hint} · {hints}"),
+        None => hints.to_owned(),
+    };
+    let right = text::truncate(&hints, room.saturating_sub(used + 1));
     let pad = room.saturating_sub(used + text::visible_width(&right));
     let line = Line::from(vec![
         Span::raw(" "),
@@ -885,6 +889,37 @@ mod tests {
         app.now += std::time::Duration::from_secs(2);
         let bar = status_bar(&mut app);
         assert!(bar.contains("C1") && !bar.contains("permalink copied"), "{bar}");
+    }
+
+    #[test]
+    fn a_newer_commit_shows_the_update_hint_next_to_the_key_hints() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        assert!(!status_bar(&mut app).contains("update available"));
+        app.apply(Incoming::Latest(Some("0000000000000000000000000000000000000000".into())));
+        let bar = status_bar(&mut app);
+        assert!(bar.contains("update available · slack update"), "{bar}");
+        assert!(bar.contains("C1"), "{bar}");
+    }
+
+    #[test]
+    fn a_failed_update_check_shows_nothing_and_wakes_nothing() {
+        let mut app = App::new();
+        let redraw_in = app.redraw_in();
+        assert!(app.apply(Incoming::Latest(None)).is_empty());
+        assert!(!status_bar(&mut app).contains("update available"));
+        assert_eq!(app.redraw_in(), redraw_in);
+    }
+
+    #[test]
+    fn a_toast_still_owns_the_left_side_while_the_hint_shows() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        app.apply(Incoming::Latest(Some("0000000000000000000000000000000000000000".into())));
+        app.apply(Incoming::Toast("permalink copied".into()));
+        let bar = status_bar(&mut app);
+        assert!(bar.contains("permalink copied") && !bar.contains("C1"), "{bar}");
+        assert!(bar.contains("update available"), "{bar}");
     }
 
     #[test]

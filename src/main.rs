@@ -26,6 +26,7 @@ async fn run(cli: Cli) -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "slack", &mut std::io::stdout());
             return Ok(());
         }
+        Command::Update(args) => return commands::update::run(args),
         _ => {}
     }
     let mut ctx = Ctx::open(cli.workspace.as_deref(), cli.json)?;
@@ -42,6 +43,6 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Tui => slack::tui::run(ctx).await,
         Command::Inbox(args) => commands::inbox::run(ctx, args).await,
         Command::Firehose(args) => commands::firehose::run(&mut ctx, args).await,
-        Command::Login(_) | Command::Logout { .. } | Command::Completions { .. } => unreachable!(),
+        Command::Login(_) | Command::Logout { .. } | Command::Completions { .. } | Command::Update(_) => unreachable!(),
     }
 }

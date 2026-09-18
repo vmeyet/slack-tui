@@ -1,9 +1,11 @@
 use super::App;
 use crate::inbox::newer;
 use crate::tui::motion::{FRAME, SPINNER_FRAME};
+use crate::{update, version};
 use std::time::{Duration, Instant};
 
 const TOAST_LIFE: Duration = Duration::from_secs(2);
+const UPDATE_HINT: &str = "update available · slack update";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Until {
@@ -63,6 +65,11 @@ impl App {
             return "loading channels…".into();
         }
         format!("{} conversations · ? for help", self.channels.len())
+    }
+
+    /// A quiet note that stays until the user updates; unlike a toast it is never in the way.
+    pub fn update_hint(&self) -> Option<&'static str> {
+        (update::standing(version::COMMIT, self.latest.as_deref()) == update::Standing::Behind).then_some(UPDATE_HINT)
     }
 
     pub(super) fn toast_expires(&self) -> bool {
