@@ -1,6 +1,6 @@
 use crate::cli::UpdateArgs;
 use crate::render::Theme;
-use crate::update::{REPO, Standing, remote_head, standing};
+use crate::update::{self, REPO, Standing, remote_head, standing};
 use crate::version;
 use anyhow::{Context, Result, bail};
 use std::process::Command;
@@ -22,6 +22,9 @@ pub fn decide(installed: &str, latest: Option<&str>, force: bool) -> Action {
 pub fn run(args: UpdateArgs) -> Result<()> {
     let theme = Theme::detect();
     let latest = if args.force { None } else { latest_commit(&theme) };
+    if let Some(commit) = &latest {
+        update::remember(commit);
+    }
     match decide(version::COMMIT, latest.as_deref(), args.force) {
         Action::UpToDate => {
             println!("{} already up to date ({})", theme.ok("✓"), version::label());
