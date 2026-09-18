@@ -37,9 +37,14 @@ pub fn latest_commit() -> Option<String> {
     if !due(last.as_ref(), now) {
         return last.and_then(|c| c.commit);
     }
-    let check = Check { commit: remote_head().ok(), at: now };
+    let check = Check::now(remote_head().ok(), now);
     let _ = cache.save(CHECK_FILE, &check);
     check.commit
+}
+
+/// Remembers what a fresh check found, so the hint agrees with a update that just ran.
+pub fn remember(commit: &str) {
+    let _ = Cache::shared().save(CHECK_FILE, &Check::now(Some(commit.to_owned()), Utc::now().timestamp()));
 }
 
 pub fn remote_head() -> Result<String> {
@@ -54,14 +59,23 @@ pub fn remote_head() -> Result<String> {
 }
 
 /// What the last check found, so a failed one also waits a day before trying again.
+/// `installed` is the binary that asked: a check made by an older one says nothing about this one.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Check {
     commit: Option<String>,
     at: i64,
+    #[serde(default)]
+    installed: String,
+}
+
+impl Check {
+    fn now(commit: Option<String>, at: i64) -> Self {
+        Self { commit, at, installed: version::COMMIT.to_owned() }
+    }
 }
 
 fn due(last: Option<&Check>, now: i64) -> bool {
-    last.is_none_or(|last| now - last.at >= A_DAY)
+    last.is_none_or(|last| last.installed != version::COMMIT || now - last.at >= A_DAY)
 }
 
 #[cfg(test)]
@@ -73,7 +87,7 @@ mod tests {
     const NOON: i64 = 1_789_660_000;
 
     fn checked(at: i64) -> Check {
-        Check { commit: Some(NEWER.into()), at }
+        Check::now(Some(NEWER.into()), at)
     }
 
     #[test]
@@ -114,5 +128,17 @@ mod tests {
     #[test]
     fn a_check_stamped_in_the_future_is_not_due() {
         assert!(!due(Some(&checked(NOON + A_DAY)), NOON));
+    }
+
+    #[test]
+    fn a_check_made_by_another_binary_is_due() {
+        let older = Check { commit: Some(NEWER.into()), at: NOON, installed: INSTALLED.into() };
+        assert!(due(Some(&older), NOON), "an update replaced the binary, so the answer is stale");
+    }
+
+    #[test]
+    fn a_check_without_a_binary_is_due() {
+        let legacy: Check = serde_json::from_str(&format!(r#"{{"commit":"{NEWER}","at":{NOON}}}"#)).unwrap();
+        assert!(due(Some(&legacy), NOON), "a cache written before this field says nothing");
     }
 }
