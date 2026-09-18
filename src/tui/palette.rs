@@ -8,6 +8,7 @@ pub enum Command {
     Leave(Option<String>),
     Go(String),
     Msg { target: String, text: String },
+    Compose,
     React(String),
     Edit,
     Delete,
@@ -29,11 +30,12 @@ pub enum Format {
     Markdown,
 }
 
-pub const VERBS: [(&str, &str); 17] = [
+pub const VERBS: [(&str, &str); 18] = [
     ("join", "join a channel: :join #ops"),
     ("leave", "leave the current channel, or :leave #ops"),
     ("go", "open a conversation: :go #ops, :go @bob"),
     ("msg", "send a message: :msg @bob on my way"),
+    ("compose", "write the message in $EDITOR"),
     ("react", "react to the selected message: :react rocket"),
     ("edit", "rewrite the selected message, yours only"),
     ("delete", "delete the selected message, yours only, after a yes"),
@@ -66,6 +68,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
             }
             Ok(Command::Msg { target: target.to_owned(), text: text.to_owned() })
         }
+        "compose" => Ok(Command::Compose),
         "react" | "r" => Ok(Command::React(need("an emoji name")?.trim_matches(':').to_owned())),
         "edit" => Ok(Command::Edit),
         "delete" | "del" => Ok(Command::Delete),

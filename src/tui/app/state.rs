@@ -230,6 +230,12 @@ impl App {
         }
     }
 
+    pub(super) fn send(&mut self, channel: String, thread_ts: Option<String>, text: String) -> Vec<Action> {
+        self.loading = true;
+        self.toast("sending…");
+        vec![Action::Send { channel, thread_ts, text }]
+    }
+
     pub(super) fn search_for(&mut self, query: String) -> Vec<Action> {
         self.loading = true;
         self.toast("searching…");

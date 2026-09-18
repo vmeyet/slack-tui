@@ -229,6 +229,7 @@ impl App {
             KeyCode::Char('s') => self.start_input(Input::Search, String::new()),
             KeyCode::Char('r') => return self.start_reply(self.focus == Focus::Thread),
             KeyCode::Char('t') => return self.start_reply(true),
+            KeyCode::Char('E') => return self.compose(),
             KeyCode::Char('e') => {
                 if let Some((channel, ts)) = self.selected_ref() {
                     self.start_input(Input::React { channel, ts }, String::new());
@@ -314,11 +315,7 @@ impl App {
             Input::Search if text.trim().is_empty() => vec![],
             Input::Search => self.search_for(text),
             Input::Reply { .. } if text.trim().is_empty() => vec![],
-            Input::Reply { channel, thread_ts, .. } => {
-                self.loading = true;
-                self.toast("sending…");
-                vec![Action::Send { channel, thread_ts, text }]
-            }
+            Input::Reply { channel, thread_ts, .. } => self.send(channel, thread_ts, text),
             Input::React { channel, ts } => {
                 let name = text.trim().trim_matches(':').to_owned();
                 if name.is_empty() { vec![] } else { vec![Action::React { channel, ts, name }] }
@@ -349,22 +346,37 @@ impl App {
     }
 
     fn start_reply(&mut self, in_thread: bool) -> Vec<Action> {
-        let Some(channel) = self.current_channel.clone() else {
+        if self.current_channel.is_none() {
+            self.toast("pick a conversation first");
+            return vec![];
+        }
+        let Some((channel, thread_ts)) = self.reply_target(in_thread) else { return vec![] };
+        let label = self.current_label();
+        let label = if thread_ts.is_some() { format!("{label} thread") } else { label };
+        self.start_input(Input::Reply { channel, thread_ts, label }, String::new());
+        vec![]
+    }
+
+    /// Hands the input row's text to the editor and, once it comes back, sends it where a reply would go.
+    pub(super) fn compose(&mut self) -> Vec<Action> {
+        let Some((channel, thread_ts)) = self.reply_target(self.focus == Focus::Thread) else {
             self.toast("pick a conversation first");
             return vec![];
         };
-        let label = self.current_label();
+        vec![Action::Compose { channel, thread_ts, draft: self.buffer.clone() }]
+    }
+
+    /// The conversation a reply goes to, and the thread it belongs to when it belongs to one.
+    fn reply_target(&self, in_thread: bool) -> Option<(String, Option<String>)> {
+        let channel = self.current_channel.clone()?;
         if !in_thread {
-            self.start_input(Input::Reply { channel, thread_ts: None, label }, String::new());
-            return vec![];
+            return Some((channel, None));
         }
         let root = match self.focus {
             Focus::Thread => self.thread.as_ref().map(|t| t.root_ts.clone()),
             _ => self.messages.get(self.message_selected).map(|m| m.thread_ts.clone().unwrap_or_else(|| m.ts.clone())),
         };
-        let Some(root) = root else { return vec![] };
-        self.start_input(Input::Reply { channel, thread_ts: Some(root), label: format!("{label} thread") }, String::new());
-        vec![]
+        Some((channel, Some(root?)))
     }
 
     /// Right dives in: channel → its messages, message with replies → its thread.

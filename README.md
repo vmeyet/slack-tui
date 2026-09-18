@@ -59,6 +59,7 @@ Whoever is typing in the open conversation shows under the last message.
 | `enter` / `l` | Open the channel or the thread |
 | `h` / `esc` | Go back |
 | `r` / `t` | Reply / reply in thread |
+| `E` | Write the message in `$EDITOR` (`$VISUAL` first, then `vi`); save to send, quit empty to cancel |
 | `e` | React |
 | `o` / `u` | Open the message in Slack / open its first link |
 | `y` | Copy the permalink |
@@ -74,7 +75,7 @@ Whoever is typing in the open conversation shows under the last message.
 `⌘k` also works on terminals that forward it (Ghostty, Kitty, WezTerm, iTerm2 with the kitty keyboard protocol).
 
 **Command line.**
-`:join #ops`, `:leave`, `:go @bob`, `:msg @bob on my way`, `:react rocket`, `:search deploy failed`, `:export md`, `:read`, `:snooze 1h`, `:set theme=nord`, `:help`, `:quit`.
+`:join #ops`, `:leave`, `:go @bob`, `:msg @bob on my way`, `:compose`, `:react rocket`, `:search deploy failed`, `:export md`, `:read`, `:snooze 1h`, `:set theme=nord`, `:help`, `:quit`.
 Tab completes verbs, channels, people and emoji; `↑` recalls history.
 
 **Inbox.**
@@ -157,6 +158,7 @@ SLACK_CLI_DEBUG=1 slack login …  # trace the browser capture
 | `SLACK_WORKSPACE` | Default workspace |
 | `SLACK_CLI_API_URL` | Point at another API host (tests use a mock) |
 | `SLACK_CLI_CONFIG_DIR`, `SLACK_CLI_CACHE_DIR` | Move the config and the cache |
+| `VISUAL`, `EDITOR` | What `E` opens to write a message, arguments allowed (`EDITOR="code -w"`) |
 | `NO_COLOR`, `COLUMNS` | Plain output, fixed width |
 
 ## License

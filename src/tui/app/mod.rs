@@ -69,6 +69,12 @@ pub enum Action {
         thread_ts: Option<String>,
         text: String,
     },
+    /// Run by the event loop itself, never a background task: the editor takes the terminal.
+    Compose {
+        channel: String,
+        thread_ts: Option<String>,
+        draft: String,
+    },
     React {
         channel: String,
         ts: String,
@@ -171,6 +177,12 @@ pub enum Incoming {
     Sent {
         channel: String,
         thread_ts: Option<String>,
+    },
+    /// What came back from the editor, already worth sending.
+    Composed {
+        channel: String,
+        thread_ts: Option<String>,
+        text: String,
     },
     SearchResults(Vec<SearchMatch>),
     Toast(String),
