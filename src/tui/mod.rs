@@ -1,4 +1,5 @@
 pub mod app;
+pub mod compose;
 pub mod firehose;
 pub mod images;
 pub mod inbox;
@@ -17,7 +18,9 @@ use app::{Action, App, ChannelRow, Incoming, Kind, Settings};
 use crossterm::event::{
     Event, EventStream, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
+use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use futures_util::StreamExt;
+use ratatui::DefaultTerminal;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -91,7 +94,19 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
             Wake::Event(Err(e)) => break Err(e.into()),
         };
         for action in actions {
-            spawn(action, backend.clone(), tx.clone());
+            match action {
+                Action::Compose { channel, thread_ts, draft } => {
+                    // The event stream reads stdin from its own thread; it steps aside so the editor gets the keys.
+                    drop(events);
+                    let composed = {
+                        let _paused = Paused::start(&mut terminal, enhanced);
+                        compose::edit(&draft)
+                    };
+                    events = EventStream::new();
+                    let _ = tx.send(composed_outcome(channel, thread_ts, composed));
+                }
+                action => spawn(action, backend.clone(), tx.clone()),
+            }
         }
         if app.should_quit {
             break Ok(());
@@ -110,8 +125,52 @@ fn enable_modifier_keys() -> bool {
     if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
         return false;
     }
+    push_modifier_keys()
+}
+
+fn push_modifier_keys() -> bool {
     let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
     crossterm::execute!(std::io::stdout(), PushKeyboardEnhancementFlags(flags)).is_ok()
+}
+
+/// The shell gets its terminal back — no raw mode, no alternate screen — for as long as this
+/// lives, so a child process inherits a plain stdin and stdout. Dropping it takes the screen
+/// back and repaints, whatever the child did.
+struct Paused<'a> {
+    terminal: &'a mut DefaultTerminal,
+    enhanced: bool,
+}
+
+impl<'a> Paused<'a> {
+    fn start(terminal: &'a mut DefaultTerminal, enhanced: bool) -> Self {
+        if enhanced {
+            let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        }
+        ratatui::restore();
+        Self { terminal, enhanced }
+    }
+}
+
+impl Drop for Paused<'_> {
+    /// Everything `ratatui::init` does except installing a panic hook, which must not stack up
+    /// nor be able to panic here, during an unwind.
+    fn drop(&mut self) {
+        let _ = enable_raw_mode();
+        let _ = crossterm::execute!(std::io::stdout(), EnterAlternateScreen);
+        if self.enhanced {
+            push_modifier_keys();
+        }
+        let _ = self.terminal.clear();
+    }
+}
+
+/// A compose the user backed out of is no event for the app, only a quiet note.
+fn composed_outcome(channel: String, thread_ts: Option<String>, composed: Result<Option<String>>) -> Incoming {
+    match composed {
+        Ok(Some(text)) => Incoming::Composed { channel, thread_ts, text },
+        Ok(None) => Incoming::Toast("nothing sent".into()),
+        Err(e) => Incoming::Error(e.to_string()),
+    }
 }
 
 fn spawn_live(slack: crate::api::Slack, tx: mpsc::UnboundedSender<Incoming>) {
@@ -194,6 +253,7 @@ fn badges(counts: &crate::api::Counts) -> HashMap<String, app::Badge> {
 async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
     let Backend { slack, dir, .. } = backend;
     match action {
+        Action::Compose { .. } => unreachable!("the event loop runs the editor itself"),
         Action::LoadChannels => load_channels(backend).await,
         Action::CheckUpdate => {
             let latest = tokio::task::spawn_blocking(crate::update::latest_commit).await.unwrap_or(None);

@@ -114,6 +114,32 @@ fn thread_reply_targets_the_root() {
 }
 
 #[test]
+fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.buffer = "half written".into();
+    let actions = app.handle_key(key('E'));
+    assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: None, draft: "half written".into() }]);
+    let sent = app.apply(Incoming::Composed { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() });
+    assert_eq!(sent, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() }]);
+    assert_eq!(app.input, None);
+    assert_eq!(app.buffer, "");
+}
+
+#[test]
+fn compose_writes_in_the_open_thread_and_needs_a_conversation() {
+    let mut app = loaded();
+    assert_eq!(app.handle_key(key('E')), vec![]);
+    assert_eq!(app.status_line(), "pick a conversation first");
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(Incoming::Replies { channel: "C1".into(), ts: "1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
+    let actions = app.handle_key(key('E'));
+    assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: Some("1".into()), draft: String::new() }]);
+}
+
+#[test]
 fn empty_reply_is_dropped_and_escape_cancels() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));

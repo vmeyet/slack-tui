@@ -78,6 +78,7 @@ impl App {
             Command::Leave(name) => self.leave(name),
             Command::Go(target) => self.go(&target),
             Command::Msg { target, text } => Ok(self.message(target, text)),
+            Command::Compose => Ok(self.compose()),
             Command::React(name) => Ok(self.react(name)),
             Command::Edit => self.edit_selected(),
             Command::Delete => self.ask_delete(),

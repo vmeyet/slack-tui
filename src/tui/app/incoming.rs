@@ -21,6 +21,7 @@ impl App {
             Incoming::History { channel, messages, names } => return self.history_loaded(&channel, messages, names),
             Incoming::Replies { channel, ts, messages, names } => return self.replies_loaded(channel, ts, messages, names),
             Incoming::Sent { channel, thread_ts } => return self.sent(channel, thread_ts),
+            Incoming::Composed { channel, thread_ts, text } => return self.composed(channel, thread_ts, text),
             Incoming::Channels { rows, people, names, badges, me } => self.channels_loaded(rows, people, names, badges, me),
             Incoming::SearchResults(matches) => self.search_loaded(matches),
             Incoming::Inbox { items, names } => {
@@ -108,6 +109,13 @@ impl App {
         }
         self.thread = Some(Thread { channel, root_ts: ts, messages, selected });
         self.refresh_thumbs()
+    }
+
+    /// The editor replaces the input row: what it wrote is sent, the row goes back to empty.
+    fn composed(&mut self, channel: String, thread_ts: Option<String>, text: String) -> Vec<Action> {
+        self.input = None;
+        self.buffer.clear();
+        self.send(channel, thread_ts, text)
     }
 
     fn sent(&mut self, channel: String, thread_ts: Option<String>) -> Vec<Action> {
