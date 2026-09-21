@@ -167,6 +167,41 @@ fn tab_cycles_emoji_names_and_reacts_with_the_bare_name() {
     assert_eq!(actions, vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "rocket".into() }]);
 }
 
+fn reacted_name(typed: &str) -> String {
+    let actions = reacting(typed).handle_key(code(KeyCode::Enter));
+    match actions.as_slice() {
+        [Action::React { name, .. }] => name.clone(),
+        other => panic!("{typed} reacted with {other:?}"),
+    }
+}
+
+#[test]
+fn a_pasted_glyph_reacts_with_the_name_slack_wants() {
+    assert_eq!(reacted_name("🚀"), "rocket");
+    assert_eq!(reacted_name("👍🏽"), "+1", "a skin tone reacts with the base name");
+    assert_eq!(reacted_name("rocket"), "rocket");
+    assert_eq!(reacted_name(":rocket:"), "rocket");
+    assert_eq!(reacted_name("partyparrot"), "partyparrot", "a custom emoji is a name of its own");
+}
+
+#[test]
+fn the_react_command_takes_a_glyph_too() {
+    let mut app = reacting("");
+    app.handle_key(code(KeyCode::Esc));
+    match palette_run(&mut app, "react 🚀").as_slice() {
+        [Action::React { name, .. }] => assert_eq!(name, "rocket"),
+        other => panic!(":react 🚀 gave {other:?}"),
+    }
+}
+
+#[test]
+fn tab_on_a_pasted_glyph_completes_to_its_name() {
+    let mut app = reacting("🚀");
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "rocket");
+    assert!(app.input_hint().expect("cycling").starts_with("[🚀 rocket]"));
+}
+
 #[test]
 fn an_edit_drops_the_options_being_cycled_and_so_does_leaving_the_row() {
     let mut app = reacting("rocke");

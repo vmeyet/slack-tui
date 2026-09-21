@@ -123,6 +123,7 @@ impl App {
     }
 
     fn react(&self, name: String) -> Vec<Action> {
+        let name = super::keys::shortcode(name.trim().trim_matches(':')).to_owned();
         self.selected_ref().map(|(channel, ts)| vec![Action::React { channel, ts, name }]).unwrap_or_default()
     }
 

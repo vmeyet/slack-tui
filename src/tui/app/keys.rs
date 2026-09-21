@@ -328,7 +328,7 @@ impl App {
         let candidates = self.emoji_candidates();
         match &mut self.react_cycle {
             Some(cycle) => cycle.advance(backwards),
-            None => self.react_cycle = Cycle::new(self.buffer.text(), candidates),
+            None => self.react_cycle = Cycle::new(self.emoji_token(), candidates),
         }
         let Some(name) = self.react_cycle.as_ref().map(|c| c.current().to_owned()) else { return };
         self.buffer = Field::new(name);
@@ -349,7 +349,7 @@ impl App {
         if self.react_cycle.is_some() || !self.buffer.at_end() {
             return None;
         }
-        complete::ghost(self.buffer.text(), self.emoji_candidates()).filter(|rest| !rest.is_empty())
+        complete::ghost(self.emoji_token(), self.emoji_candidates()).filter(|rest| !rest.is_empty())
     }
 
     /// The options tab is cycling through, each behind its glyph.
@@ -362,6 +362,11 @@ impl App {
             Some(Input::React { .. }) => emoji_names(),
             _ => &[],
         }
+    }
+
+    /// What the row is completing, which the candidates are names of.
+    fn emoji_token(&self) -> &str {
+        shortcode(self.buffer.text())
     }
 
     /// A delete cannot be undone, so only `y` goes through and every other key keeps the message.
@@ -395,7 +400,7 @@ impl App {
             Input::Reply { .. } if text.trim().is_empty() => vec![],
             Input::Reply { channel, thread_ts, .. } => self.send(channel, thread_ts, text),
             Input::React { channel, ts } => {
-                let name = text.trim().trim_matches(':').to_owned();
+                let name = shortcode(text.trim().trim_matches(':')).to_owned();
                 if name.is_empty() { vec![] } else { vec![Action::React { channel, ts, name }] }
             }
             Input::Edit { .. } if text.trim().is_empty() => {
@@ -564,6 +569,11 @@ impl App {
             Focus::Thread => vec![],
         }
     }
+}
+
+/// Reactions travel by name, so a pasted 🚀 becomes `rocket`; anything else stands as typed.
+pub(super) fn shortcode(text: &str) -> &str {
+    crate::emoji::name_for(text).unwrap_or(text)
 }
 
 fn first_link(m: &Message) -> Option<String> {
