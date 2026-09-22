@@ -286,7 +286,18 @@ mod tests {
     #[test]
     fn no_raw_colors_outside_the_theme() {
         let sources = [
-            ("ui.rs", include_str!("ui.rs")),
+            ("ui/mod.rs", include_str!("ui/mod.rs")),
+            ("ui/channels.rs", include_str!("ui/channels.rs")),
+            ("ui/confirm.rs", include_str!("ui/confirm.rs")),
+            ("ui/empty.rs", include_str!("ui/empty.rs")),
+            ("ui/help.rs", include_str!("ui/help.rs")),
+            ("ui/input.rs", include_str!("ui/input.rs")),
+            ("ui/items.rs", include_str!("ui/items.rs")),
+            ("ui/messages.rs", include_str!("ui/messages.rs")),
+            ("ui/pictures.rs", include_str!("ui/pictures.rs")),
+            ("ui/status.rs", include_str!("ui/status.rs")),
+            ("ui/style.rs", include_str!("ui/style.rs")),
+            ("ui/thread.rs", include_str!("ui/thread.rs")),
             ("inbox.rs", include_str!("inbox.rs")),
             ("jump.rs", include_str!("jump.rs")),
             ("firehose.rs", include_str!("firehose.rs")),

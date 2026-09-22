@@ -12,7 +12,7 @@ mod palette;
 mod theme;
 mod ui;
 
-use crate::api::rtm;
+use crate::api::{Message, rtm};
 use crate::cache::Cache;
 use crate::ctx::Ctx;
 use crate::markdown;
@@ -27,6 +27,7 @@ use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
 use futures_util::StreamExt;
 use ratatui::DefaultTerminal;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
@@ -284,31 +285,14 @@ fn badges(counts: &crate::api::Counts) -> HashMap<String, app::Badge> {
 }
 
 async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
-    let Backend { slack, dir, .. } = backend;
+    let slack = &backend.slack;
     match action {
         Action::Compose { .. } => bail!("compose is run by the event loop, not here"),
         Action::LoadChannels => load_channels(backend).await,
         Action::CheckUpdate => Ok(Incoming::Latest(crate::update::latest_commit().await)),
-        Action::LoadHistory(channel) => {
-            let messages = slack.history(&channel, 100, None).await?;
-            let mut d = dir.lock().await;
-            d.learn_users(&messages).await?;
-            Ok(Incoming::History { channel, messages, names: d.names() })
-        }
-        Action::LoadReplies { channel, ts } => {
-            let messages = slack.replies(&channel, &ts).await?;
-            let mut d = dir.lock().await;
-            d.learn_users(&messages).await?;
-            Ok(Incoming::Replies { channel, ts, messages, names: d.names() })
-        }
-        Action::Send { channel, thread_ts, text } => {
-            let names = dir.lock().await.names();
-            let rendered = markdown::to_blocks(&text, &names);
-            slack
-                .post_message(&channel, &rendered.text, Some(&serde_json::Value::Array(rendered.blocks)), thread_ts.as_deref(), false)
-                .await?;
-            Ok(Incoming::Sent { channel, thread_ts })
-        }
+        Action::LoadHistory(channel) => load_history(backend, channel).await,
+        Action::LoadReplies { channel, ts } => load_replies(backend, channel, ts).await,
+        Action::Send { channel, thread_ts, text } => send(backend, channel, thread_ts, &text).await,
         Action::React { channel, ts, name } => {
             slack.react(&channel, &ts, &name).await?;
             Ok(Incoming::Toast(format!("reacted :{name}:")))
@@ -321,84 +305,35 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             slack.delete_message(&channel, &ts).await?;
             Ok(Incoming::Toast("deleted ✓".into()))
         }
-        Action::Search(query) => {
-            let result = slack.search(&query, 50).await?;
-            Ok(Incoming::SearchResults(result.matches))
-        }
+        Action::Search(query) => Ok(Incoming::SearchResults(slack.search(&query, 50).await?.matches)),
         Action::Open { channel, ts } => {
-            let url = slack.permalink(&channel, &ts).await?;
-            tokio::process::Command::new("open").arg(&url).spawn()?;
+            open(&slack.permalink(&channel, &ts).await?)?;
             Ok(Incoming::Toast("opened in Slack".into()))
         }
         Action::OpenUrl(url) => {
-            tokio::process::Command::new("open").arg(&url).spawn()?;
+            open(&url)?;
             Ok(Incoming::Toast(format!("opened {url}")))
         }
-        Action::LoadThreads => {
-            let threads = slack.thread_view(30).await.unwrap_or_default();
-            let names = dir.lock().await.names();
-            let candidates = threads
-                .into_iter()
-                .map(|t| {
-                    let preview: String = crate::mrkdwn::plain(&t.root_msg.text, &names).chars().take(60).collect();
-                    jump::Candidate {
-                        label: format!("{} · {}", names.channel_label(&t.root_msg.channel), preview.replace('\n', " ")),
-                        target: jump::Target::Thread { channel: t.root_msg.channel, ts: t.root_msg.ts },
-                    }
-                })
-                .collect();
-            Ok(Incoming::Threads(candidates))
-        }
+        Action::LoadThreads => load_threads(backend).await,
         Action::LearnUsers(ids) => {
-            let mut d = dir.lock().await;
+            let mut d = backend.dir.lock().await;
             d.learn_ids(&ids).await?;
             Ok(Incoming::Names(d.names()))
         }
-        Action::Join(name) => {
-            let mut d = dir.lock().await;
-            let id = d.channel_id(&name).await?;
-            slack.join(&id).await?;
-            d.refresh_channels().await?;
-            Ok(Incoming::Joined(id))
-        }
+        Action::Join(name) => join(backend, &name).await,
         Action::Leave(channel) => {
             slack.leave(&channel).await?;
-            dir.lock().await.refresh_channels().await?;
+            backend.dir.lock().await.refresh_channels().await?;
             Ok(Incoming::Left(channel))
         }
-        Action::SendTo { target, text } => {
-            let mut d = dir.lock().await;
-            let channel = d.channel_id(&target).await?;
-            let rendered = markdown::to_blocks(&text, &d.names());
-            slack.post_message(&channel, &rendered.text, Some(&serde_json::Value::Array(rendered.blocks)), None, false).await?;
-            Ok(Incoming::Toast(format!("sent to {}", d.names().channel_label(&channel))))
-        }
+        Action::SendTo { target, text } => send_to(backend, &target, &text).await,
         Action::MarkChannelRead { channel, ts } => {
             slack.mark_read(&channel, &ts).await?;
             Ok(Incoming::Toast("marked read".into()))
         }
-        Action::Export { path, label, messages, format } => {
-            let names = dir.lock().await.names();
-            let body = match format {
-                palette::Format::Json => serde_json::to_string_pretty(&messages)?,
-                palette::Format::Markdown => {
-                    let theme = crate::render::Theme::plain(100);
-                    crate::render::messages(&theme, &names, &label, &messages, &HashMap::new())
-                }
-            };
-            tokio::fs::write(&path, body).await?;
-            Ok(Incoming::Toast(format!("saved {}", path.display())))
-        }
-        Action::OpenDm(user) => {
-            let channel = slack.open_dm(&user).await?;
-            Ok(Incoming::DmOpened(channel))
-        }
-        Action::LoadInbox => {
-            let me = backend.me().await?;
-            let mut d = dir.lock().await;
-            let items = crate::inbox::fetch(slack, &mut d, &me).await?;
-            Ok(Incoming::Inbox { items, names: d.names() })
-        }
+        Action::Export { path, label, messages, format } => export(backend, &path, &label, &messages, format).await,
+        Action::OpenDm(user) => Ok(Incoming::DmOpened(slack.open_dm(&user).await?)),
+        Action::LoadInbox => load_inbox(backend).await,
         Action::Prioritize(items) => {
             let (jev, names, me) = backend.triage_context().await?;
             let verdicts = crate::inbox::prioritize(jev, &backend.cache, &items, &names, &me).await;
@@ -409,14 +344,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             let tag = crate::firehose::classify(jev, &line.tag_state(&names, &me)).await;
             Ok(judged(tag, |tag| Incoming::Tagged { channel: line.channel, ts: line.ts, tag }))
         }
-        Action::LoadPromises => {
-            let (jev, names, me) = backend.triage_context().await?;
-            let oldest = crate::render::time::since_to_ts(crate::promises::DEFAULT_SINCE).unwrap_or_default();
-            let sent = crate::promises::sent_since(slack, &oldest).await?;
-            let tracked = crate::promises::track(jev, &backend.cache, &sent, &names, &me).await.map_err(|u| anyhow::anyhow!(u.notice()))?;
-            let open: Vec<_> = tracked.into_iter().filter(|p| !p.closed).map(|p| p.message).collect();
-            Ok(if open.is_empty() { Incoming::Toast("no open promises ✓".into()) } else { Incoming::SearchResults(open) })
-        }
+        Action::LoadPromises => load_promises(backend).await,
         Action::MarkRead(item) => {
             crate::inbox::mark_read(slack, &item).await?;
             Ok(Incoming::Toast(String::new()))
@@ -425,28 +353,123 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             state.save(&workspace).await?;
             Ok(Incoming::Toast(String::new()))
         }
-        Action::LoadImage { id, url } => {
-            let image = match slack.download(&url).await {
-                Ok(bytes) => tokio::task::spawn_blocking(move || images::decode(&bytes)).await.unwrap_or(None),
-                Err(_) => None,
-            };
-            Ok(Incoming::Thumb { id, image })
-        }
-        Action::SaveSetting { key, value } => {
-            tokio::task::spawn_blocking(move || {
-                let mut config = crate::config::Config::load()?;
-                config.tui = config.tui.with(&key, &value);
-                config.save()
-            })
-            .await??;
-            Ok(Incoming::Toast(String::new()))
-        }
-        Action::Yank { channel, ts } => {
-            let url = slack.permalink(&channel, &ts).await?;
-            let mut child = tokio::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
-            child.stdin.take().context("piped stdin")?.write_all(url.as_bytes()).await?;
-            child.wait().await?;
-            Ok(Incoming::Toast("permalink copied".into()))
-        }
+        Action::LoadImage { id, url } => Ok(Incoming::Thumb { image: load_image(slack, &url).await, id }),
+        Action::SaveSetting { key, value } => save_setting(key, value).await,
+        Action::Yank { channel, ts } => yank(slack, &channel, &ts).await,
     }
+}
+
+async fn load_history(backend: &Backend, channel: String) -> Result<Incoming> {
+    let messages = backend.slack.history(&channel, 100, None).await?;
+    let mut d = backend.dir.lock().await;
+    d.learn_users(&messages).await?;
+    Ok(Incoming::History { channel, messages, names: d.names() })
+}
+
+async fn load_replies(backend: &Backend, channel: String, ts: String) -> Result<Incoming> {
+    let messages = backend.slack.replies(&channel, &ts).await?;
+    let mut d = backend.dir.lock().await;
+    d.learn_users(&messages).await?;
+    Ok(Incoming::Replies { channel, ts, messages, names: d.names() })
+}
+
+async fn send(backend: &Backend, channel: String, thread_ts: Option<String>, text: &str) -> Result<Incoming> {
+    let names = backend.dir.lock().await.names();
+    post_markdown(&backend.slack, &channel, text, &names, thread_ts.as_deref()).await?;
+    Ok(Incoming::Sent { channel, thread_ts })
+}
+
+async fn post_markdown(slack: &crate::api::Slack, channel: &str, text: &str, names: &NameBook, thread_ts: Option<&str>) -> Result<()> {
+    let rendered = markdown::to_blocks(text, names);
+    slack.post_message(channel, &rendered.text, Some(&serde_json::Value::Array(rendered.blocks)), thread_ts, false).await?;
+    Ok(())
+}
+
+fn open(url: &str) -> Result<()> {
+    tokio::process::Command::new("open").arg(url).spawn()?;
+    Ok(())
+}
+
+async fn load_threads(backend: &Backend) -> Result<Incoming> {
+    let threads = backend.slack.thread_view(30).await.unwrap_or_default();
+    let names = backend.dir.lock().await.names();
+    let candidates = threads
+        .into_iter()
+        .map(|t| {
+            let preview: String = crate::mrkdwn::plain(&t.root_msg.text, &names).chars().take(60).collect();
+            jump::Candidate {
+                label: format!("{} · {}", names.channel_label(&t.root_msg.channel), preview.replace('\n', " ")),
+                target: jump::Target::Thread { channel: t.root_msg.channel, ts: t.root_msg.ts },
+            }
+        })
+        .collect();
+    Ok(Incoming::Threads(candidates))
+}
+
+async fn join(backend: &Backend, name: &str) -> Result<Incoming> {
+    let mut d = backend.dir.lock().await;
+    let id = d.channel_id(name).await?;
+    backend.slack.join(&id).await?;
+    d.refresh_channels().await?;
+    Ok(Incoming::Joined(id))
+}
+
+async fn send_to(backend: &Backend, target: &str, text: &str) -> Result<Incoming> {
+    let mut d = backend.dir.lock().await;
+    let channel = d.channel_id(target).await?;
+    post_markdown(&backend.slack, &channel, text, &d.names(), None).await?;
+    Ok(Incoming::Toast(format!("sent to {}", d.names().channel_label(&channel))))
+}
+
+async fn export(backend: &Backend, path: &Path, label: &str, messages: &[Message], format: palette::Format) -> Result<Incoming> {
+    let names = backend.dir.lock().await.names();
+    let body = match format {
+        palette::Format::Json => serde_json::to_string_pretty(messages)?,
+        palette::Format::Markdown => {
+            let theme = crate::render::Theme::plain(100);
+            crate::render::messages(&theme, &names, label, messages, &HashMap::new())
+        }
+    };
+    tokio::fs::write(path, body).await?;
+    Ok(Incoming::Toast(format!("saved {}", path.display())))
+}
+
+async fn load_inbox(backend: &Backend) -> Result<Incoming> {
+    let me = backend.me().await?;
+    let mut d = backend.dir.lock().await;
+    let items = crate::inbox::fetch(&backend.slack, &mut d, &me).await?;
+    Ok(Incoming::Inbox { items, names: d.names() })
+}
+
+async fn load_promises(backend: &Backend) -> Result<Incoming> {
+    let (jev, names, me) = backend.triage_context().await?;
+    let oldest = crate::render::time::since_to_ts(crate::promises::DEFAULT_SINCE).unwrap_or_default();
+    let sent = crate::promises::sent_since(&backend.slack, &oldest).await?;
+    let tracked = crate::promises::track(jev, &backend.cache, &sent, &names, &me).await.map_err(|u| anyhow::anyhow!(u.notice()))?;
+    let open: Vec<_> = tracked.into_iter().filter(|p| !p.closed).map(|p| p.message).collect();
+    Ok(if open.is_empty() { Incoming::Toast("no open promises ✓".into()) } else { Incoming::SearchResults(open) })
+}
+
+/// A picture that fails to download or decode is no error: it shows as unavailable.
+async fn load_image(slack: &crate::api::Slack, url: &str) -> Option<image::DynamicImage> {
+    let bytes = slack.download(url).await.ok()?;
+    tokio::task::spawn_blocking(move || images::decode(&bytes)).await.unwrap_or(None)
+}
+
+async fn save_setting(key: String, value: String) -> Result<Incoming> {
+    tokio::task::spawn_blocking(move || {
+        let mut config = crate::config::Config::load()?;
+        config.tui = config.tui.with(&key, &value);
+        config.save()
+    })
+    .await??;
+    Ok(Incoming::Toast(String::new()))
+}
+
+async fn yank(slack: &crate::api::Slack, channel: &str, ts: &str) -> Result<Incoming> {
+    let url = slack.permalink(channel, ts).await?;
+    let mut child = tokio::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
+    child.stdin.take().context("piped stdin")?.write_all(url.as_bytes()).await?;
+    child.wait().await?;
+    Ok(Incoming::Toast("permalink copied".into()))
 }
