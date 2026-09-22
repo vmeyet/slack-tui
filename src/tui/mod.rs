@@ -138,7 +138,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
 }
 
 /// Asks terminals speaking the kitty keyboard protocol to report ⌘ and other modifiers,
-/// so ⌘K works where the terminal lets it through (Ghostty, Kitty, WezTerm, iTerm2 with the option on).
+/// so ⌘K works where the terminal lets it through (Ghostty, Kitty, `WezTerm`, iTerm2 with the option on).
 fn enable_modifier_keys() -> bool {
     if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
         return false;
