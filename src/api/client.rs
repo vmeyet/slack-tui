@@ -2,9 +2,9 @@ use super::types::{Channel, Counts, Group, Identity, Message, Posted, SearchResu
 use crate::auth::Credentials;
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::StatusCode;
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::fmt;
 use std::time::Duration;
 
 pub const DEFAULT_API_URL: &str = "https://slack.com/api";
@@ -16,27 +16,56 @@ pub fn params(pairs: &[(&str, &str)]) -> Params {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{method} failed: {code}{}", hint(code))]
 pub struct ApiError {
     pub method: String,
     pub code: String,
 }
 
-impl fmt::Display for ApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} failed: {}", self.method, self.code)?;
-        match self.code.as_str() {
-            "invalid_auth" | "not_authed" | "token_revoked" | "token_expired" => {
-                write!(f, " (session expired? run `slack login`)")
-            }
-            "channel_not_found" => write!(f, " (check the name, or are you a member?)"),
-            "ratelimited" => write!(f, " (slow down a little)"),
-            _ => Ok(()),
-        }
+fn hint(code: &str) -> &'static str {
+    match code {
+        "invalid_auth" | "not_authed" | "token_revoked" | "token_expired" => " (session expired? run `slack login`)",
+        "channel_not_found" => " (check the name, or are you a member?)",
+        "ratelimited" => " (slow down a little)",
+        _ => "",
     }
 }
 
-impl std::error::Error for ApiError {}
+#[derive(Deserialize)]
+struct Envelope {
+    #[serde(default)]
+    ok: bool,
+    error: Option<String>,
+}
+
+/// Slack omits `response_metadata`, or leaves `next_cursor` empty, on the last page.
+#[derive(Deserialize)]
+struct Page {
+    #[serde(default)]
+    response_metadata: ResponseMetadata,
+}
+
+#[derive(Default, Deserialize)]
+struct ResponseMetadata {
+    #[serde(default)]
+    next_cursor: String,
+}
+
+#[derive(Deserialize)]
+struct RtmConnect {
+    url: String,
+}
+
+/// The whole body when `key` is empty, else the value under `key`, which must be there.
+fn read<T: DeserializeOwned>(method: &str, mut body: Value, key: &str) -> Result<T> {
+    let node = if key.is_empty() {
+        body
+    } else {
+        body.get_mut(key).map(Value::take).with_context(|| format!("{method}: no `{key}` in the response"))?
+    };
+    serde_json::from_value(node).with_context(|| format!("{method}: unexpected `{key}` shape"))
+}
 
 #[derive(Clone)]
 pub struct Slack {
@@ -69,33 +98,35 @@ impl Slack {
             }
             let status = response.status();
             let body: Value = response.json().await.with_context(|| format!("{method}: response is not JSON (HTTP {status})"))?;
-            if body["ok"].as_bool() == Some(true) {
+            let envelope = Envelope::deserialize(&body).with_context(|| format!("{method}: unexpected response shape"))?;
+            if envelope.ok {
                 return Ok(body);
             }
-            let code = body["error"].as_str().unwrap_or("unknown_error").to_owned();
+            let code = envelope.error.unwrap_or_else(|| "unknown_error".to_owned());
             return Err(ApiError { method: method.to_owned(), code }.into());
         }
     }
 
     pub async fn call_as<T: DeserializeOwned>(&self, method: &str, params: Params, key: &str) -> Result<T> {
         let body = self.call(method, params).await?;
-        let node = if key.is_empty() { body } else { body[key].clone() };
-        serde_json::from_value(node).with_context(|| format!("{method}: unexpected `{key}` shape"))
+        read(method, body, key)
     }
 
     pub async fn call_pages<T: DeserializeOwned>(&self, method: &str, params: Params, key: &str) -> Result<Vec<T>> {
         let mut items = Vec::new();
-        let mut cursor: Option<String> = None;
+        let mut cursor = String::new();
         loop {
             let mut page = params.clone();
-            if let Some(c) = &cursor {
-                page.push(("cursor".into(), c.clone()));
+            if !cursor.is_empty() {
+                page.push(("cursor".into(), cursor));
             }
             let body = self.call(method, page).await?;
-            let chunk: Vec<T> = serde_json::from_value(body[key].clone()).with_context(|| format!("{method}: unexpected `{key}` shape"))?;
-            items.extend(chunk);
-            cursor = body["response_metadata"]["next_cursor"].as_str().filter(|c| !c.is_empty()).map(str::to_owned);
-            if cursor.is_none() {
+            cursor = Page::deserialize(&body)
+                .with_context(|| format!("{method}: unexpected `response_metadata` shape"))?
+                .response_metadata
+                .next_cursor;
+            items.extend(read::<Vec<T>>(method, body, key)?);
+            if cursor.is_empty() {
                 return Ok(items);
             }
         }
@@ -114,8 +145,7 @@ impl Slack {
     }
 
     pub async fn rtm_url(&self) -> Result<String> {
-        let body = self.call("rtm.connect", vec![]).await?;
-        body["url"].as_str().map(str::to_owned).context("rtm.connect: no url")
+        Ok(self.call_as::<RtmConnect>("rtm.connect", vec![], "").await?.url)
     }
 
     pub async fn auth_test(&self) -> Result<Identity> {
@@ -384,6 +414,15 @@ mod tests {
         assert!(err.to_string().starts_with("chat.postMessage failed: channel_not_found"));
     }
 
+    #[test]
+    fn api_error_message_carries_the_hint_for_its_code() {
+        let message = |code: &str| ApiError { method: "m".into(), code: code.into() }.to_string();
+        assert_eq!(message("token_expired"), "m failed: token_expired (session expired? run `slack login`)");
+        assert_eq!(message("channel_not_found"), "m failed: channel_not_found (check the name, or are you a member?)");
+        assert_eq!(message("ratelimited"), "m failed: ratelimited (slow down a little)");
+        assert_eq!(message("other"), "m failed: other");
+    }
+
     #[tokio::test]
     async fn invalid_auth_hints_login() {
         let server = MockServer::start().await;
@@ -432,6 +471,62 @@ mod tests {
             .await;
         let channels = client(&server).channels().await.unwrap();
         assert_eq!(channels.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["C1", "C2"]);
+    }
+
+    async fn answer(server: &MockServer, api_method: &str, body: Value) {
+        Mock::given(path(format!("/{api_method}"))).respond_with(ResponseTemplate::new(200).set_body_json(body)).mount(server).await;
+    }
+
+    #[tokio::test]
+    async fn replies_follow_the_cursor_until_it_is_empty() {
+        let server = MockServer::start().await;
+        Mock::given(path("/conversations.replies"))
+            .and(body_string_contains("cursor=next"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"ok": true, "messages": [{"ts": "2.0"}], "has_more": false, "response_metadata": {"next_cursor": ""}}),
+            ))
+            .mount(&server)
+            .await;
+        answer(
+            &server,
+            "conversations.replies",
+            serde_json::json!({"ok": true, "messages": [{"ts": "1.0"}], "has_more": true, "response_metadata": {"next_cursor": "next"}}),
+        )
+        .await;
+        let messages = client(&server).replies("C1", "1.0").await.unwrap();
+        assert_eq!(messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1.0", "2.0"]);
+    }
+
+    #[tokio::test]
+    async fn a_page_without_its_items_key_is_an_error() {
+        let server = MockServer::start().await;
+        answer(&server, "conversations.replies", serde_json::json!({"ok": true, "replies": []})).await;
+        let err = client(&server).replies("C1", "1.0").await.unwrap_err();
+        assert_eq!(err.to_string(), "conversations.replies: no `messages` in the response");
+    }
+
+    #[tokio::test]
+    async fn a_cursor_of_the_wrong_type_is_an_error_not_a_last_page() {
+        let server = MockServer::start().await;
+        answer(&server, "users.list", serde_json::json!({"ok": true, "members": [], "response_metadata": {"next_cursor": 7}})).await;
+        let err = client(&server).users().await.unwrap_err();
+        assert!(err.to_string().contains("response_metadata"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn history_without_messages_is_an_error() {
+        let server = MockServer::start().await;
+        answer(&server, "conversations.history", serde_json::json!({"ok": true, "items": []})).await;
+        let err = client(&server).history("C1", 10, None).await.unwrap_err();
+        assert_eq!(err.to_string(), "conversations.history: no `messages` in the response");
+    }
+
+    #[tokio::test]
+    async fn rtm_connect_without_url_is_an_error() {
+        let server = MockServer::start().await;
+        answer(&server, "rtm.connect", serde_json::json!({"ok": true, "uri": "wss://x"})).await;
+        let err = client(&server).rtm_url().await.unwrap_err();
+        assert!(format!("{err:#}").contains("missing field `url`"), "{err:#}");
     }
 
     #[tokio::test]

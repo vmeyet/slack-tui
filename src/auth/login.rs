@@ -1,7 +1,9 @@
-use super::cdp::{self, Cdp};
+use super::cdp::{self, Cdp, Cookie};
 use crate::pattern::regex;
 use anyhow::{Context, Result, bail};
+use indexmap::IndexMap;
 use regex::Regex;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::LazyLock;
@@ -107,11 +109,7 @@ async fn wait_for_session(profile: &Path, workspace: Option<&str>) -> Result<Ses
         let cookies = cdp.cookies().await?;
         debug(&format!(
             "slack cookies: {:?}",
-            cookies
-                .iter()
-                .filter(|c| c["domain"].as_str().is_some_and(|d| d.contains("slack")))
-                .filter_map(|c| c["name"].as_str())
-                .collect::<Vec<_>>()
+            cookies.iter().filter(|c| c.domain.contains("slack")).map(|c| c.name.as_str()).collect::<Vec<_>>()
         ));
         if let Some(cookie) = session_cookie(&cookies) {
             let pages = cdp.pages().await?;
@@ -143,28 +141,28 @@ async fn token_from_client(cdp: &mut Cdp, pages: &[(String, String)], workspace:
     None
 }
 
+#[derive(Deserialize)]
+struct LocalConfig {
+    teams: IndexMap<String, Team>,
+}
+
+#[derive(Deserialize)]
+struct Team {
+    domain: Option<String>,
+    token: Option<String>,
+}
+
 pub fn team_token(local_config: &str, workspace: Option<&str>) -> Option<(String, String)> {
-    let config: serde_json::Value = serde_json::from_str(local_config).ok()?;
-    let teams = config["teams"].as_object()?;
-    let mut found = teams
-        .values()
-        .filter_map(|t| Some((t["domain"].as_str()?.to_owned(), t["token"].as_str()?.to_owned())))
-        .filter(|(_, tok)| tok.starts_with("xox"));
+    let config: LocalConfig = serde_json::from_str(local_config).ok()?;
+    let mut found = config.teams.into_values().filter_map(|t| Some((t.domain?, t.token?))).filter(|(_, tok)| tok.starts_with("xox"));
     match workspace {
         Some(w) => found.find(|(d, _)| d == w),
         None => found.next(),
     }
 }
 
-fn session_cookie(cookies: &[serde_json::Value]) -> Option<String> {
-    cookies
-        .iter()
-        .find(|c| {
-            c["name"] == "d"
-                && c["domain"].as_str().is_some_and(|d| d.ends_with("slack.com"))
-                && c["value"].as_str().is_some_and(|v| v.starts_with("xoxd-"))
-        })
-        .and_then(|c| c["value"].as_str().map(str::to_owned))
+fn session_cookie(cookies: &[Cookie]) -> Option<String> {
+    cookies.iter().find(|c| c.name == "d" && c.domain.ends_with("slack.com") && c.value.starts_with("xoxd-")).map(|c| c.value.clone())
 }
 
 static WORKSPACE_URL: LazyLock<Regex> = LazyLock::new(|| regex(r"^https://([a-z0-9-]+)\.slack\.com(?:/|$)"));
@@ -194,15 +192,14 @@ pub async fn fetch_token(url: &str, cookie: &str) -> Result<Option<String>> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use serde_json::json;
+
+    fn cookie(name: &str, value: &str) -> Cookie {
+        Cookie { name: name.into(), value: value.into(), domain: ".slack.com".into() }
+    }
 
     #[test]
     fn finds_the_session_cookie_only() {
-        let cookies = vec![
-            json!({"name": "d", "domain": ".slack.com", "value": "not-a-session"}),
-            json!({"name": "b", "domain": ".slack.com", "value": "xoxd-nope"}),
-            json!({"name": "d", "domain": ".slack.com", "value": "xoxd-real"}),
-        ];
+        let cookies = vec![cookie("d", "not-a-session"), cookie("b", "xoxd-nope"), cookie("d", "xoxd-real")];
         assert_eq!(session_cookie(&cookies).as_deref(), Some("xoxd-real"));
         assert_eq!(session_cookie(&[]), None);
     }
@@ -221,6 +218,12 @@ mod tests {
         assert_eq!(team_token(cfg, Some("nope")), None);
         assert!(team_token(cfg, None).is_some());
         assert_eq!(team_token("{}", None), None);
+    }
+
+    #[test]
+    fn without_a_workspace_takes_the_first_team_with_a_token_in_file_order() {
+        let cfg = r#"{"teams":{"T9":{"domain":"zeta"},"T5":{"domain":"acme","token":"xoxc-5"},"T1":{"domain":"beta","token":"xoxc-1"}}}"#;
+        assert_eq!(team_token(cfg, None), Some(("acme".into(), "xoxc-5".into())));
     }
 
     #[test]

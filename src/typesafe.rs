@@ -2,7 +2,6 @@
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -18,16 +17,9 @@ const QUOTA_WORDS: [&str; 6] = ["quota", "credit", "billing", "balance", "insuff
 const PARALLEL_REQUESTS: usize = 8;
 
 /// Why `TypeSafe` could not answer: no key, quota, outage, bad request.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
 pub struct Unavailable(pub String);
-
-impl fmt::Display for Unavailable {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Unavailable {}
 
 impl Unavailable {
     /// The one line shown when a caller falls back.

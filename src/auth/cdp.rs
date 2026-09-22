@@ -1,12 +1,47 @@
 //! The few Chrome devtools protocol (CDP) calls the login needs, over one websocket.
 use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+#[derive(Debug, Deserialize)]
+pub struct Cookie {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+}
+
+#[derive(Deserialize)]
+struct Cookies {
+    cookies: Vec<Cookie>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Targets {
+    target_infos: Vec<Target>,
+}
+
+#[derive(Deserialize)]
+struct Target {
+    #[serde(rename = "targetId")]
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    url: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Attached {
+    session_id: String,
+}
 
 pub struct Cdp {
     socket: WebSocketStream<MaybeTlsStream<TcpStream>>,
@@ -24,6 +59,11 @@ impl Cdp {
 
     pub async fn call(&mut self, method: &str, params: Value) -> Result<Value> {
         self.call_in(None, method, params).await
+    }
+
+    async fn call_as<T: DeserializeOwned>(&mut self, method: &str, params: Value) -> Result<T> {
+        let result = self.call(method, params).await?;
+        serde_json::from_value(result).with_context(|| format!("{method}: unexpected result shape"))
     }
 
     pub async fn call_in(&mut self, session: Option<&str>, method: &str, params: Value) -> Result<Value> {
@@ -59,28 +99,21 @@ impl Cdp {
         }
     }
 
-    pub async fn cookies(&mut self) -> Result<Vec<Value>> {
-        let result = self.call("Storage.getCookies", json!({})).await?;
-        Ok(result["cookies"].as_array().cloned().unwrap_or_default())
+    pub async fn cookies(&mut self) -> Result<Vec<Cookie>> {
+        Ok(self.call_as::<Cookies>("Storage.getCookies", json!({})).await?.cookies)
     }
 
     /// Open pages as `(target id, url)`, followed by every URL seen before, newest first.
     pub async fn pages(&mut self) -> Result<Vec<(String, String)>> {
-        let result = self.call("Target.getTargets", json!({})).await?;
-        let targets = result["targetInfos"].as_array().cloned().unwrap_or_default();
-        let current: Vec<(String, String)> = targets
-            .iter()
-            .filter(|t| t["type"] == "page")
-            .filter_map(|t| Some((t["targetId"].as_str()?.to_owned(), t["url"].as_str()?.to_owned())))
-            .collect();
+        let targets = self.call_as::<Targets>("Target.getTargets", json!({})).await?.target_infos;
+        let current = targets.into_iter().filter(|t| t.kind == "page").map(|t| (t.id, t.url));
         let seen = self.seen_urls.iter().rev().map(|u| (String::new(), u.clone()));
-        Ok(current.into_iter().chain(seen).collect())
+        Ok(current.chain(seen).collect())
     }
 
     /// Runs a JS expression in a page and returns its value.
     pub async fn evaluate(&mut self, target_id: &str, expression: &str) -> Result<Value> {
-        let attached = self.call("Target.attachToTarget", json!({"targetId": target_id, "flatten": true})).await?;
-        let session = attached["sessionId"].as_str().context("no session id")?.to_owned();
+        let session = self.call_as::<Attached>("Target.attachToTarget", json!({"targetId": target_id, "flatten": true})).await?.session_id;
         let result = self.call_in(Some(&session), "Runtime.evaluate", json!({"expression": expression, "returnByValue": true})).await;
         let _ = self.call("Target.detachFromTarget", json!({"sessionId": session})).await;
         Ok(result?["result"]["value"].clone())
@@ -117,6 +150,43 @@ pub async fn wait_for_active_port(profile: &Path, timeout: Duration) -> Result<S
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    async fn fake_browser(answering: Value) -> Cdp {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let call: Value = serde_json::from_str(&text).unwrap();
+                let result = answering.get(call["method"].as_str().unwrap()).cloned().unwrap_or_else(|| json!({}));
+                ws.send(Message::Text(json!({"id": call["id"], "result": result}).to_string().into())).await.unwrap();
+            }
+        });
+        Cdp::connect(&url).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn reads_cookies_and_pages_from_the_browser() {
+        let mut cdp = fake_browser(json!({
+            "Storage.getCookies": {"cookies": [{"name": "d", "value": "xoxd-1", "domain": ".slack.com", "path": "/"}]},
+            "Target.getTargets": {"targetInfos": [
+                {"targetId": "T1", "type": "page", "url": "https://app.slack.com/client", "title": "Slack"},
+                {"targetId": "T2", "type": "service_worker", "url": "https://app.slack.com/sw.js", "title": ""}
+            ]}
+        }))
+        .await;
+        let cookies = cdp.cookies().await.unwrap();
+        assert_eq!((cookies[0].name.as_str(), cookies[0].value.as_str()), ("d", "xoxd-1"));
+        assert_eq!(cdp.pages().await.unwrap(), [("T1".to_owned(), "https://app.slack.com/client".to_owned())]);
+    }
+
+    #[tokio::test]
+    async fn a_renamed_result_field_is_an_error_not_an_empty_list() {
+        let mut cdp = fake_browser(json!({"Storage.getCookies": {"items": []}, "Target.getTargets": {"targets": []}})).await;
+        assert!(cdp.cookies().await.unwrap_err().to_string().contains("Storage.getCookies: unexpected result shape"));
+        assert!(cdp.pages().await.unwrap_err().to_string().contains("Target.getTargets: unexpected result shape"));
+    }
 
     #[test]
     fn parses_active_port_file() {
