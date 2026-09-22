@@ -69,7 +69,7 @@ pub async fn track(
     names: &NameBook,
     me: &str,
 ) -> Result<Vec<Promise>, Unavailable> {
-    let known: Verdicts = cache.load(VERDICTS_CACHE).unwrap_or_default();
+    let known: Verdicts = cache.load(VERDICTS_CACHE).await.unwrap_or_default();
     let promise_asks = sent.iter().map(|m| (message_key(m), promise_state(m, names, me))).collect();
     let promised = judge_all(judge, &known, promise_asks, PROMISE_QUESTION, PROMISE_THRESHOLD).await?;
     let promises: Vec<&SearchMatch> = sent.iter().filter(|m| promised[&message_key(m)]).collect();
@@ -80,7 +80,7 @@ pub async fn track(
     let fulfilled = judge_all(judge, &known, fulfils_asks, FULFILS_QUESTION, FULFILS_THRESHOLD).await?;
     let closed = |p: &SearchMatch| later_in_thread(p, sent).any(|later| fulfilled[&fulfils_key(p, later)]);
     let tracked = promises.iter().map(|p| Promise { message: (*p).clone(), closed: closed(p) }).collect();
-    let _ = cache.save(VERDICTS_CACHE, &promised.into_iter().chain(fulfilled).collect::<Verdicts>());
+    let _ = cache.save(VERDICTS_CACHE, &promised.into_iter().chain(fulfilled).collect::<Verdicts>()).await;
     Ok(tracked)
 }
 

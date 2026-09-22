@@ -25,10 +25,10 @@ pub struct Directory {
 }
 
 impl Directory {
-    pub fn new(slack: Slack, cache: Cache) -> Self {
-        let channels = cache.load("channels").unwrap_or_default();
-        let users = cache.load("users").unwrap_or_default();
-        let groups = cache.load("usergroups").unwrap_or_default();
+    pub async fn new(slack: Slack, cache: Cache) -> Self {
+        let channels = cache.load("channels").await.unwrap_or_default();
+        let users = cache.load("users").await.unwrap_or_default();
+        let groups = cache.load("usergroups").await.unwrap_or_default();
         let mut dir = Self {
             slack,
             cache,
@@ -79,20 +79,20 @@ impl Directory {
         let channels = self.slack.channels().await?;
         self.set_channels(channels);
         self.channels_fresh = true;
-        self.cache.save("channels", &self.channels)
+        self.cache.save("channels", &self.channels).await
     }
 
     pub async fn refresh_users(&mut self) -> Result<()> {
         let users = self.slack.users().await?;
         self.set_users(users);
         self.users_fresh = true;
-        self.cache.save("users", &self.users)
+        self.cache.save("users", &self.users).await
     }
 
     async fn refresh_groups(&mut self) -> Result<()> {
         let groups = self.slack.groups().await?;
         self.set_groups(groups);
-        self.cache.save("usergroups", &self.groups)
+        self.cache.save("usergroups", &self.groups).await
     }
 
     pub async fn channels(&mut self) -> Result<&[Channel]> {
@@ -272,7 +272,7 @@ impl Directory {
             }
         }
         self.add_users(found);
-        self.cache.save("users", &self.users)
+        self.cache.save("users", &self.users).await
     }
 
     pub fn names(&self) -> NameBook {
@@ -386,11 +386,11 @@ mod tests {
     use wiremock::matchers::{body_string_contains, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn directory(server: &MockServer) -> Directory {
+    async fn directory(server: &MockServer) -> Directory {
         let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let cache = Cache::new(dir.keep());
-        Directory::new(slack, cache)
+        Directory::new(slack, cache).await
     }
 
     fn ok(body: serde_json::Value) -> ResponseTemplate {
@@ -409,7 +409,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server);
+        let mut d = directory(&server).await;
         assert_eq!(d.channel_id("#general").await.unwrap(), "C1");
         assert_eq!(d.channel_id("general-fr").await.unwrap(), "C2");
         assert_eq!(d.channel_id("C0AAAAAAAA").await.unwrap(), "C0AAAAAAAA");
@@ -431,7 +431,7 @@ mod tests {
             .respond_with(ok(serde_json::json!({"channel": {"id": "D1"}})))
             .mount(&server)
             .await;
-        let mut d = directory(&server);
+        let mut d = directory(&server).await;
         assert_eq!(d.channel_id("@vivien").await.unwrap(), "D1");
         assert_eq!(d.channel_id("@VMEYET").await.unwrap(), "D1");
         assert!(d.channel_id("@ghost").await.unwrap_err().to_string().contains("@ghost"));
@@ -447,7 +447,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server);
+        let mut d = directory(&server).await;
         let messages = vec![Message { ts: "1".into(), user: Some("U9".into()), text: "hi <@U9>".into(), ..Default::default() }];
         d.learn_users(&messages).await.unwrap();
         assert_eq!(d.names().user_label("U9"), "bob");
@@ -469,7 +469,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server);
+        let mut d = directory(&server).await;
         d.learn_users(&mentioning_groups("<!subteam^S1> <!subteam^S2> <!subteam^S3>")).await.unwrap();
         d.learn_users(&mentioning_groups("<!subteam^S3>")).await.unwrap();
         let names = d.names();
@@ -485,16 +485,16 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": false, "error": "missing_scope"})))
             .mount(&server)
             .await;
-        let mut d = directory(&server);
+        let mut d = directory(&server).await;
         d.learn_users(&mentioning_groups("<!subteam^S1>")).await.unwrap();
         assert_eq!(mrkdwn::plain("<!subteam^S1>", &d.names()), "@S1");
     }
 
-    #[test]
-    fn conversations_are_grouped_sorted_and_filtered() {
+    #[tokio::test]
+    async fn conversations_are_grouped_sorted_and_filtered() {
         let slack = Slack::new("http://x", Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let mut d = Directory::new(slack, Cache::new(dir.keep()));
+        let mut d = Directory::new(slack, Cache::new(dir.keep())).await;
         d.add_users(vec![
             User { id: "U1".into(), name: "zoe".into(), ..Default::default() },
             User { id: "U2".into(), name: "gone".into(), deleted: true, ..Default::default() },
@@ -528,7 +528,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server);
+        let mut d = directory(&server).await;
         d.set_channels(vec![
             Channel { id: "D7".into(), is_im: true, user: Some("U7".into()), ..Default::default() },
             Channel { id: "D8".into(), is_im: true, user: Some("USLACKBOT".into()), ..Default::default() },
@@ -539,11 +539,11 @@ mod tests {
         assert!(d.conversations(false).is_empty());
     }
 
-    #[test]
-    fn namebook_maps_both_directions() {
+    #[tokio::test]
+    async fn namebook_maps_both_directions() {
         let slack = Slack::new("http://x", Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let mut d = Directory::new(slack, Cache::new(dir.keep()));
+        let mut d = Directory::new(slack, Cache::new(dir.keep())).await;
         d.add_users(vec![User {
             id: "U1".into(),
             name: "vmeyet".into(),
