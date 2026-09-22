@@ -161,7 +161,7 @@ impl App {
 
     /// Without a live feed, the open conversation is refreshed on every tick.
     fn poll(&mut self) -> Vec<Action> {
-        if self.live == Live::Live || self.loading || self.input.is_some() {
+        if self.live == Live::Connected || self.loading || self.input.is_some() {
             return vec![];
         }
         match &self.current_channel {

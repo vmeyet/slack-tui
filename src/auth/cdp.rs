@@ -115,6 +115,7 @@ pub async fn wait_for_active_port(profile: &Path, timeout: Duration) -> Result<S
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

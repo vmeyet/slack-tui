@@ -191,6 +191,7 @@ fn draw_snooze_picker(f: &mut Frame, theme: &Theme, area: Rect) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::api::Message;
 

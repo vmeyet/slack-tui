@@ -1,3 +1,4 @@
+//! `slack inbox`: unread DMs, mentions and thread replies.
 use crate::cli::InboxArgs;
 use crate::ctx::Ctx;
 use crate::inbox::{self, Item, State};
@@ -6,6 +7,7 @@ use crate::typesafe::TypeSafe;
 use anyhow::Result;
 use std::io::IsTerminal;
 
+/// Opens the interactive inbox, or prints it as a list when asked or piped.
 pub async fn run(mut ctx: Ctx, args: InboxArgs) -> Result<()> {
     let interactive = !args.list && !ctx.json && std::io::stdout().is_terminal();
     if interactive {

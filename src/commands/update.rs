@@ -1,3 +1,4 @@
+//! `slack update`: rebuild and install the latest commit.
 use crate::cli::UpdateArgs;
 use crate::render::Theme;
 use crate::update::{self, REPO, Standing, remote_head, standing};
@@ -6,20 +7,21 @@ use anyhow::{Context, Result, bail};
 use std::process::Command;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Action {
+enum Action {
     Install,
     UpToDate,
 }
 
 /// Only a commit we know we already run spares the rebuild; anything unanswered installs.
-pub fn decide(installed: &str, latest: Option<&str>, force: bool) -> Action {
+fn decide(installed: &str, latest: Option<&str>, force: bool) -> Action {
     match standing(installed, latest) {
         Standing::Current if !force => Action::UpToDate,
         _ => Action::Install,
     }
 }
 
-pub fn run(args: UpdateArgs) -> Result<()> {
+/// Rebuilds and installs the latest commit unless the running binary already is it.
+pub fn run(args: &UpdateArgs) -> Result<()> {
     let theme = Theme::detect();
     let latest = if args.force { None } else { latest_commit(&theme) };
     if let Some(commit) = &latest {
@@ -57,6 +59,7 @@ fn install(theme: &Theme) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     const INSTALLED: &str = "9731436a0e7c4d1b2f3a4b5c6d7e8f9a0b1c2d3e";

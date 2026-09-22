@@ -1,8 +1,6 @@
 use anyhow::{Context, Result, bail};
-use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 
 pub trait SecretStore {
     fn get(&self, account: &str) -> Result<Option<String>>;
@@ -53,7 +51,7 @@ impl SecretStore for SecurityCli {
             .spawn()
             .context("running security")?;
         let line = format!("add-generic-password -a {account} -s {} -U -X {}\n", self.service, hex(secret));
-        child.stdin.take().expect("piped stdin").write_all(line.as_bytes())?;
+        child.stdin.take().context("piped stdin")?.write_all(line.as_bytes())?;
         let output = child.wait_with_output()?;
         if !output.status.success() {
             bail!("keychain write failed: {}", String::from_utf8_lossy(&output.stderr).trim());
@@ -74,11 +72,14 @@ fn hex(s: &str) -> String {
     s.bytes().map(|b| format!("{b:02x}")).collect()
 }
 
+#[cfg(test)]
 #[derive(Default)]
 pub struct MemoryStore {
-    items: Mutex<HashMap<String, String>>,
+    items: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
 impl SecretStore for MemoryStore {
     fn get(&self, account: &str) -> Result<Option<String>> {
         Ok(self.items.lock().unwrap().get(account).cloned())
@@ -97,6 +98,7 @@ impl SecretStore for MemoryStore {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

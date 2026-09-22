@@ -1,3 +1,4 @@
+//! `slack promises`: the follow-ups you promised and have not closed.
 use crate::cli::PromisesArgs;
 use crate::ctx::Ctx;
 use crate::promises::{self, Promise};
@@ -5,6 +6,7 @@ use crate::render::{self, time};
 use crate::typesafe::{TypeSafe, Unavailable};
 use anyhow::{Result, anyhow};
 
+/// Prints the follow-ups Jev found in your own messages.
 pub async fn run(ctx: &mut Ctx, args: PromisesArgs) -> Result<()> {
     let oldest = time::since_to_ts(&args.since).ok_or_else(|| anyhow!("`{}` is not a duration like 3d, 2w or a date", args.since))?;
     let jev = match connect(ctx.config.typesafe.enabled) {
@@ -36,6 +38,7 @@ fn connect(enabled: bool) -> Result<TypeSafe, Unavailable> {
     TypeSafe::connect()
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn skip(ctx: &Ctx, unavailable: &Unavailable) -> Result<()> {
     eprintln!("{}", ctx.theme.dim(&unavailable.notice()));
     Ok(())

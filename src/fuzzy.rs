@@ -5,6 +5,7 @@ const WORD_START: i64 = 10;
 const CONSECUTIVE: i64 = 6;
 const GAP: i64 = 1;
 
+#[cfg(test)]
 pub fn score(query: &str, candidate: &str) -> Option<i64> {
     score_chars(&lowercase_chars(query), candidate)
 }
@@ -92,12 +93,13 @@ pub fn suggestions<'a>(query: &str, candidates: impl IntoIterator<Item = &'a str
 pub fn best<'a, T>(query: &str, items: impl IntoIterator<Item = (&'a str, T)>) -> Option<T> {
     let mut ranked = rank(query, items).into_iter();
     let (top, item) = ranked.next()?;
-    let runner_up = ranked.next().map(|(s, _)| s).unwrap_or(i64::MIN);
+    let runner_up = ranked.next().map_or(i64::MIN, |(s, _)| s);
     (top > 0 && (runner_up <= 0 || top * 3 > runner_up * 4)).then_some(item)
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn order<'a>(query: &str, items: &[&'a str]) -> Vec<&'a str> {

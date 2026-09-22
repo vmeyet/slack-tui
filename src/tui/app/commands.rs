@@ -12,6 +12,7 @@ use std::sync::LazyLock;
 type Outcome = Result<Vec<Action>, String>;
 
 impl App {
+    #[allow(clippy::expect_used)]
     pub(super) fn handle_palette_key(&mut self, key: KeyEvent) -> Vec<Action> {
         let palette = self.palette.as_mut().expect("palette open");
         match key.code {
@@ -63,7 +64,6 @@ impl App {
         match palette::slot(input) {
             palette::Slot::Verb => Cow::Owned(palette::VERBS.iter().map(|(v, _)| (*v).to_owned()).collect()),
             palette::Slot::Channel => Cow::Owned(channels().collect()),
-            palette::Slot::Person => Cow::Owned(people().collect()),
             palette::Slot::Conversation => Cow::Owned(channels().chain(people()).collect()),
             palette::Slot::Emoji => Cow::Borrowed(emoji_names()),
             palette::Slot::Literal(options) => Cow::Owned(options.iter().map(|o| (*o).to_owned()).collect()),
@@ -78,7 +78,7 @@ impl App {
             Command::Go(target) => self.go(&target),
             Command::Msg { target, text } => Ok(self.message(target, text)),
             Command::Compose => Ok(self.compose()),
-            Command::React(name) => Ok(self.react(name)),
+            Command::React(name) => Ok(self.react(&name)),
             Command::Edit => self.edit_selected(),
             Command::Delete => self.ask_delete(),
             Command::Thread => Ok(self.open_thread()),
@@ -88,7 +88,7 @@ impl App {
             Command::Export(format) => self.export(format),
             Command::Read => Ok(self.mark_read()),
             Command::Snooze(preset) => self.snooze(preset),
-            Command::Set { key, value } => self.set(key, value),
+            Command::Set { key, value } => self.set(key, &value),
             Command::Help => Ok(self.show_help()),
             Command::Quit => Ok(self.quit()),
         };
@@ -124,7 +124,7 @@ impl App {
         vec![Action::SendTo { target, text }]
     }
 
-    fn react(&self, name: String) -> Vec<Action> {
+    fn react(&self, name: &str) -> Vec<Action> {
         let name = super::keys::shortcode(name.trim().trim_matches(':')).to_owned();
         self.selected_ref().map(|(channel, ts)| vec![Action::React { channel, ts, name }]).unwrap_or_default()
     }
@@ -176,11 +176,11 @@ impl App {
         Ok(self.persist_inbox())
     }
 
-    fn set(&mut self, key: String, value: String) -> Outcome {
+    fn set(&mut self, key: String, value: &str) -> Outcome {
         let saved = match key.as_str() {
-            "highlight" => self.set_highlight(&value)?,
-            "theme" => self.set_theme(&value)?,
-            "images" => self.set_images(&value)?,
+            "highlight" => self.set_highlight(value)?,
+            "theme" => self.set_theme(value)?,
+            "images" => self.set_images(value)?,
             other => return Err(format!("unknown setting `{other}` (try theme, highlight, images)")),
         };
         let note = if key == "images" && saved == "on" && !self.thumbs.enabled() { " (restart to apply)" } else { "" };

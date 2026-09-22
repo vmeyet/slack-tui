@@ -1,8 +1,10 @@
+//! `slack channels`: the channels and DMs you are in.
 use crate::cli::ChannelsArgs;
 use crate::ctx::Ctx;
 use crate::render;
 use anyhow::Result;
 
+/// Prints the channels you are in, filtered by the query when given.
 pub async fn run(ctx: &mut Ctx, args: ChannelsArgs) -> Result<()> {
     if args.refresh {
         ctx.dir.refresh_channels().await?;

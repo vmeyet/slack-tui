@@ -1,3 +1,5 @@
+//! End-to-end runs of the `slack` binary against a mocked Slack API.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use assert_cmd::Command;
 use serde_json::{Value, json};
 use wiremock::matchers::{body_string_contains, method, path};

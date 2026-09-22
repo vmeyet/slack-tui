@@ -94,7 +94,7 @@ pub fn sidebar_rows(channels: &[&ChannelRow], grouped: bool) -> Vec<SidebarRow> 
                 out.push(SidebarRow::Spacer);
             }
             out.push(SidebarRow::Header(c.section.to_uppercase()));
-            current = c.section.clone();
+            current.clone_from(&c.section);
         }
         out.push(SidebarRow::Channel(i));
     }
@@ -103,6 +103,7 @@ pub fn sidebar_rows(channels: &[&ChannelRow], grouped: bool) -> Vec<SidebarRow> 
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

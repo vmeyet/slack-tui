@@ -1,6 +1,8 @@
+//! The command line: every subcommand and its flags, as clap parses them.
 use crate::version;
 use clap::{Args, Parser, Subcommand};
 
+/// The whole command line: global flags plus the subcommand to run.
 #[derive(Parser, Debug)]
 #[command(name = "slack", version = version::label(), about = "Slack from your terminal, as yourself.", propagate_version = true)]
 pub struct Cli {
@@ -10,16 +12,21 @@ pub struct Cli {
     /// Print machine-readable JSON instead of the pretty output.
     #[arg(long, global = true)]
     pub json: bool,
+    /// What to do.
     #[command(subcommand)]
     pub command: Command,
 }
 
+/// Every subcommand `slack` understands.
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Log in through your browser and store the session in the keychain.
     Login(LoginArgs),
     /// Forget a workspace: keychain entry, config and cache.
-    Logout { workspace: Option<String> },
+    Logout {
+        /// Workspace domain; the default workspace when omitted.
+        workspace: Option<String>,
+    },
     /// Show who you are logged in as.
     Whoami,
     /// Post a message, markdown by default.
@@ -50,11 +57,15 @@ pub enum Command {
     #[command(visible_alias = "todo")]
     Promises(PromisesArgs),
     /// Generate shell completions.
-    Completions { shell: clap_complete::Shell },
+    Completions {
+        /// Which shell to generate for.
+        shell: clap_complete::Shell,
+    },
     /// Rebuild and install the latest `slack` with cargo.
     Update(UpdateArgs),
 }
 
+/// Flags of `slack update`.
 #[derive(Args, Debug)]
 pub struct UpdateArgs {
     /// Install even when the running binary is already the latest commit.
@@ -62,6 +73,7 @@ pub struct UpdateArgs {
     pub force: bool,
 }
 
+/// Flags of `slack login`.
 #[derive(Args, Debug)]
 pub struct LoginArgs {
     /// Workspace domain, e.g. `acme` or `acme.slack.com`. Detected from the browser when omitted.
@@ -83,6 +95,7 @@ pub struct LoginArgs {
     pub timeout: u64,
 }
 
+/// Flags of `slack send`.
 #[derive(Args, Debug)]
 pub struct SendArgs {
     /// `#channel`, `@user`, a channel id, or a message permalink to reply to.
@@ -106,6 +119,7 @@ pub struct SendArgs {
     pub dry_run: bool,
 }
 
+/// Flags of `slack messages`.
 #[derive(Args, Debug)]
 pub struct MessagesArgs {
     /// `#channel`, `@user` or a channel id.
@@ -124,6 +138,7 @@ pub struct MessagesArgs {
     pub follow: bool,
 }
 
+/// A message reference, as `slack thread` takes it.
 #[derive(Args, Debug)]
 pub struct RefArgs {
     /// A message permalink, or `<channel> <ts>`.
@@ -131,6 +146,7 @@ pub struct RefArgs {
     pub reference: Vec<String>,
 }
 
+/// A message reference plus the emoji, as `slack react` takes them.
 #[derive(Args, Debug)]
 pub struct ReactArgs {
     /// A message permalink or `<channel> <ts>`, then the emoji.
@@ -138,8 +154,10 @@ pub struct ReactArgs {
     pub args: Vec<String>,
 }
 
+/// Flags of `slack search`.
 #[derive(Args, Debug)]
 pub struct SearchArgs {
+    /// Words to look for; Slack search syntax works too.
     #[arg(required = true)]
     pub query: Vec<String>,
     /// Limit to a channel.
@@ -154,10 +172,12 @@ pub struct SearchArgs {
     /// Only before this date (YYYY-MM-DD).
     #[arg(long)]
     pub before: Option<String>,
+    /// How many results.
     #[arg(short = 'n', long, default_value_t = 20)]
     pub limit: usize,
 }
 
+/// Flags of `slack channels`.
 #[derive(Args, Debug)]
 pub struct ChannelsArgs {
     /// Filter by substring.
@@ -170,14 +190,17 @@ pub struct ChannelsArgs {
     pub refresh: bool,
 }
 
+/// Flags of `slack users`.
 #[derive(Args, Debug)]
 pub struct UsersArgs {
     /// Filter by substring.
     pub query: Option<String>,
+    /// Refresh the local cache first.
     #[arg(long)]
     pub refresh: bool,
 }
 
+/// Flags of `slack firehose`.
 #[derive(Args, Debug)]
 pub struct FirehoseArgs {
     /// Case-insensitive regex to light up (repeatable, adds to `[firehose] highlight` in config).
@@ -188,6 +211,7 @@ pub struct FirehoseArgs {
     pub hide_noise: bool,
 }
 
+/// Flags of `slack inbox`.
 #[derive(Args, Debug)]
 pub struct InboxArgs {
     /// Print the list instead of opening the interactive view.
@@ -195,6 +219,7 @@ pub struct InboxArgs {
     pub list: bool,
 }
 
+/// Flags of `slack promises`.
 #[derive(Args, Debug)]
 pub struct PromisesArgs {
     /// Look back this far: `3d`, `2w` or `2026-09-01`.
@@ -205,6 +230,7 @@ pub struct PromisesArgs {
     pub all: bool,
 }
 
+/// Flags of `slack api`.
 #[derive(Args, Debug)]
 pub struct ApiArgs {
     /// Method name, e.g. `conversations.info`.
@@ -218,6 +244,7 @@ pub struct ApiArgs {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

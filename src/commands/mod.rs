@@ -1,3 +1,4 @@
+//! One module per subcommand, each exposing a `run` that takes its parsed arguments.
 pub mod api;
 pub mod channels;
 pub mod firehose;
@@ -18,7 +19,7 @@ use crate::permalink::{self, MessageRef};
 use anyhow::{Result, bail};
 
 /// A permalink, or `<channel> <ts>`, to a concrete message.
-pub async fn parse_ref(ctx: &mut Ctx, args: &[String]) -> Result<MessageRef> {
+pub(crate) async fn parse_ref(ctx: &mut Ctx, args: &[String]) -> Result<MessageRef> {
     match args {
         [one] if permalink::is_permalink(one) => permalink::parse(one),
         [one] => bail!("expected a message permalink, got `{one}`"),
@@ -30,7 +31,7 @@ pub async fn parse_ref(ctx: &mut Ctx, args: &[String]) -> Result<MessageRef> {
     }
 }
 
-pub fn read_input(spec: &str) -> Result<String> {
+pub(crate) fn read_input(spec: &str) -> Result<String> {
     if spec == "-" {
         let mut buf = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;

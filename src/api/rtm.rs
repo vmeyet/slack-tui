@@ -134,6 +134,7 @@ async fn session(slack: &Slack, tx: &mpsc::UnboundedSender<Event>) -> Result<()>
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::auth::Credentials;
     use wiremock::matchers::path;

@@ -1,4 +1,5 @@
 //! Slack mrkdwn as received from the API, decoded into styled segments for display.
+use crate::pattern::regex;
 use regex::Regex;
 use std::sync::LazyLock;
 
@@ -36,8 +37,8 @@ impl Names for NoNames {
     }
 }
 
-static ANGLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<([^<>]+)>").unwrap());
-static EMOJI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^:([a-z0-9_+-]+(?:::skin-tone-\d)?):").unwrap());
+static ANGLE: LazyLock<Regex> = LazyLock::new(|| regex(r"<([^<>]+)>"));
+static EMOJI: LazyLock<Regex> = LazyLock::new(|| regex(r"^:([a-z0-9_+-]+(?:::skin-tone-\d)?):"));
 
 pub fn parse(text: &str, names: &dyn Names) -> Vec<Segment> {
     let mut out = Vec::new();
@@ -172,6 +173,7 @@ fn close_of(chars: &[char], open: usize, marker: char) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use Segment::*;
 

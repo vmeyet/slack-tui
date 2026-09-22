@@ -139,7 +139,7 @@ impl App {
 
     pub fn with(settings: Settings) -> Self {
         let Settings { theme, workspace, highlighter, thumbs, triage } = settings;
-        Self { theme, workspace, highlighter, thumbs, triage, ..Self::new() }
+        Self { theme, thumbs, workspace, highlighter, triage, ..Self::new() }
     }
 
     pub fn visible_channels(&self) -> Vec<&ChannelRow> {

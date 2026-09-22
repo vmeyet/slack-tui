@@ -1,3 +1,4 @@
+//! `slack api`: call any Web API method by name.
 use super::read_input;
 use crate::api::Params;
 use crate::cli::ApiArgs;
@@ -5,7 +6,7 @@ use crate::ctx::Ctx;
 use anyhow::{Result, bail};
 use serde_json::Value;
 
-pub fn build_params(pairs: &[String], input: Option<&str>) -> Result<Params> {
+fn build_params(pairs: &[String], input: Option<&str>) -> Result<Params> {
     let mut params = Params::new();
     if let Some(raw) = input {
         let Value::Object(map) = serde_json::from_str::<Value>(raw)? else { bail!("--input must be a JSON object") };
@@ -27,6 +28,7 @@ fn value_to_param(v: &Value) -> String {
     }
 }
 
+/// Calls the Web API method and prints its JSON answer.
 pub async fn run(ctx: &mut Ctx, args: ApiArgs) -> Result<()> {
     let input = args.input.as_deref().map(read_input).transpose()?;
     let params = build_params(&args.params, input.as_deref())?;
@@ -36,6 +38,7 @@ pub async fn run(ctx: &mut Ctx, args: ApiArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

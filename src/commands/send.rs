@@ -1,3 +1,4 @@
+//! `slack send`: post a message, markdown by default.
 use super::read_input;
 use crate::cli::SendArgs;
 use crate::ctx::Ctx;
@@ -7,11 +8,12 @@ use crate::render;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-pub struct Payload {
-    pub text: String,
-    pub blocks: Option<Vec<Value>>,
+struct Payload {
+    text: String,
+    blocks: Option<Vec<Value>>,
 }
 
+/// Posts the message, or the Block Kit payload, to the target.
 pub async fn run(ctx: &mut Ctx, args: SendArgs) -> Result<()> {
     let (channel, thread_ts) = destination(ctx, &args).await?;
     let payload = compose(ctx, &args).await?;
@@ -63,14 +65,13 @@ async fn compose(ctx: &mut Ctx, args: &SendArgs) -> Result<Payload> {
         let text = args.text.clone().unwrap_or_else(|| summary(&blocks));
         return Ok(Payload { text, blocks: Some(blocks) });
     }
-    let text = match &args.text {
-        Some(t) => t.clone(),
-        None => {
-            if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-                eprintln!("{}", ctx.theme.dim("type your message, finish with ctrl-d"));
-            }
-            read_input("-").context("reading the message from stdin")?
+    let text = if let Some(t) = &args.text {
+        t.clone()
+    } else {
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            eprintln!("{}", ctx.theme.dim("type your message, finish with ctrl-d"));
         }
+        read_input("-").context("reading the message from stdin")?
     };
     let text = text.trim_end().to_owned();
     if text.is_empty() {
@@ -102,6 +103,7 @@ fn summary(blocks: &[Value]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

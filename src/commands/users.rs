@@ -1,8 +1,10 @@
+//! `slack users`: the people of the workspace.
 use crate::cli::UsersArgs;
 use crate::ctx::Ctx;
 use crate::render;
 use anyhow::Result;
 
+/// Prints people, filtered by the query when given.
 pub async fn run(ctx: &mut Ctx, args: UsersArgs) -> Result<()> {
     if args.refresh {
         ctx.dir.refresh_users().await?;

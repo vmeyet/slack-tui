@@ -1,4 +1,5 @@
 //! Light markdown typed by a human, turned into Block Kit rich_text blocks.
+use crate::pattern::regex;
 use anyhow::{Result, bail};
 use regex::Regex;
 use serde_json::{Value, json};
@@ -12,8 +13,10 @@ pub trait Mentions {
     fn channel(&self, name: &str) -> Option<String>;
 }
 
+#[cfg(test)]
 pub struct NoMentions;
 
+#[cfg(test)]
 impl Mentions for NoMentions {
     fn user(&self, _: &str) -> Option<String> {
         None
@@ -29,13 +32,13 @@ pub struct Rendered {
     pub text: String,
 }
 
-static LIST_ITEM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^( *)(?:[-*•]|(\d+)[.)]) +(.*)$").unwrap());
-static HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^#{1,6} +(.+?)\s*$").unwrap());
-static URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https?://[^\s<>]+").unwrap());
-static MD_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\[([^\]]+)\]\(([^)\s]+)\)").unwrap());
-static HANDLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9][\w.-]*").unwrap());
-static CHANNEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9_-]*").unwrap());
-static EMOJI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^:([a-z0-9_+-]+):").unwrap());
+static LIST_ITEM: LazyLock<Regex> = LazyLock::new(|| regex(r"^( *)(?:[-*•]|(\d+)[.)]) +(.*)$"));
+static HEADING: LazyLock<Regex> = LazyLock::new(|| regex(r"^#{1,6} +(.+?)\s*$"));
+static URL: LazyLock<Regex> = LazyLock::new(|| regex(r"^https?://[^\s<>]+"));
+static MD_LINK: LazyLock<Regex> = LazyLock::new(|| regex(r"^\[([^\]]+)\]\(([^)\s]+)\)"));
+static HANDLE: LazyLock<Regex> = LazyLock::new(|| regex(r"^[A-Za-z0-9][\w.-]*"));
+static CHANNEL: LazyLock<Regex> = LazyLock::new(|| regex(r"^[a-z0-9][a-z0-9_-]*"));
+static EMOJI: LazyLock<Regex> = LazyLock::new(|| regex(r"^:([a-z0-9_+-]+):"));
 
 pub fn to_blocks(markdown: &str, mentions: &dyn Mentions) -> Rendered {
     let mut doc = Doc { mentions, blocks: vec![], rich: vec![], text: String::new() };
@@ -126,12 +129,14 @@ impl Doc<'_> {
         self.text.push_str(&format!("> {plain}\n"));
     }
 
+    #[allow(clippy::unwrap_used)]
     fn paragraph_break(&mut self) {
         if let Some(last) = self.rich.last_mut().filter(|e| e["type"] == "rich_text_section") {
             last["elements"].as_array_mut().unwrap().push(json!({"type": "text", "text": "\n"}));
         }
     }
 
+    #[allow(clippy::unwrap_used)]
     fn paragraph(&mut self, text: &str) {
         let (elements, plain) = inline(text, self.mentions);
         if let Some(last) = self.rich.last_mut().filter(|e| e["type"] == "rich_text_section") {
@@ -144,6 +149,7 @@ impl Doc<'_> {
         self.text.push_str(&format!("{plain}\n"));
     }
 
+    #[allow(clippy::expect_used)]
     fn list(&mut self, lines: &[&str]) {
         let mut current: Option<(String, usize, Vec<Value>)> = None;
         for line in lines {
@@ -153,10 +159,10 @@ impl Doc<'_> {
             let (elements, plain) = inline(&caps[3], self.mentions);
             self.text.push_str(&format!("{}• {plain}\n", "  ".repeat(indent)));
             match current.as_mut() {
-                Some((s, ind, items)) if s == style && *ind == indent => items.push(section(elements)),
+                Some((s, ind, items)) if s == style && *ind == indent => items.push(section(&elements)),
                 _ => {
                     self.push_list(current.take());
-                    current = Some((style.to_owned(), indent, vec![section(elements)]));
+                    current = Some((style.to_owned(), indent, vec![section(&elements)]));
                 }
             }
         }
@@ -170,7 +176,7 @@ impl Doc<'_> {
     }
 }
 
-fn section(elements: Vec<Value>) -> Value {
+fn section(elements: &[Value]) -> Value {
     json!({"type": "rich_text_section", "elements": elements})
 }
 
@@ -218,15 +224,12 @@ pub fn inline(text: &str, mentions: &dyn Mentions) -> (Vec<Value>, String) {
             i += 2;
         } else if c == '`' {
             let end = chars[i + 1..].iter().position(|&x| x == '`').map(|n| i + 1 + n);
-            match end {
-                Some(end) => {
-                    p.code(&chars[i + 1..end].iter().collect::<String>());
-                    i = end + 1;
-                }
-                None => {
-                    p.buf.push(c);
-                    i += 1;
-                }
+            if let Some(end) = end {
+                p.code(&chars[i + 1..end].iter().collect::<String>());
+                i = end + 1;
+            } else {
+                p.buf.push(c);
+                i += 1;
             }
         } else if rest.starts_with("**") || rest.starts_with("__") {
             p.toggle(|s| s.bold = !s.bold);
@@ -245,26 +248,22 @@ pub fn inline(text: &str, mentions: &dyn Mentions) -> (Vec<Value>, String) {
             p.link(url, url);
             i += url.chars().count();
         } else if c == '@' && at_boundary(prev) {
-            match HANDLE.find(&rest[1..]).and_then(|m| p.mentions.user(m.as_str()).map(|id| (m.as_str().to_owned(), id))) {
-                Some((handle, id)) => {
-                    p.user(&id, &handle);
-                    i += 1 + handle.chars().count();
-                }
-                None => {
-                    p.buf.push(c);
-                    i += 1;
-                }
+            let handle = HANDLE.find(&rest[1..]).and_then(|m| p.mentions.user(m.as_str()).map(|id| (m.as_str().to_owned(), id)));
+            if let Some((handle, id)) = handle {
+                p.user(&id, &handle);
+                i += 1 + handle.chars().count();
+            } else {
+                p.buf.push(c);
+                i += 1;
             }
         } else if c == '#' && at_boundary(prev) {
-            match CHANNEL.find(&rest[1..]).and_then(|m| p.mentions.channel(m.as_str()).map(|id| (m.as_str().to_owned(), id))) {
-                Some((name, id)) => {
-                    p.channel(&id, &name);
-                    i += 1 + name.chars().count();
-                }
-                None => {
-                    p.buf.push(c);
-                    i += 1;
-                }
+            let channel = CHANNEL.find(&rest[1..]).and_then(|m| p.mentions.channel(m.as_str()).map(|id| (m.as_str().to_owned(), id)));
+            if let Some((name, id)) = channel {
+                p.channel(&id, &name);
+                i += 1 + name.chars().count();
+            } else {
+                p.buf.push(c);
+                i += 1;
             }
         } else if let Some(m) = EMOJI.captures(&rest).filter(|_| at_boundary(prev)) {
             p.emoji(&m[1]);
@@ -374,6 +373,7 @@ pub fn validate_blocks(raw: &str) -> Result<Vec<Value>> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     struct Team;

@@ -66,6 +66,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::expect_used)]
     fn handle_firehose_key(&mut self, key: KeyEvent) -> Vec<Action> {
         let view = self.firehose.as_mut().expect("firehose open");
         let lines = view.visible(&self.wall);
@@ -118,6 +119,7 @@ impl App {
         vec![Action::LoadThreads]
     }
 
+    #[allow(clippy::expect_used)]
     fn handle_jump_key(&mut self, key: KeyEvent) -> Vec<Action> {
         let jump = self.jump.as_mut().expect("jump open");
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -156,6 +158,7 @@ impl App {
         vec![]
     }
 
+    #[allow(clippy::expect_used)]
     fn handle_inbox_key(&mut self, key: KeyEvent) -> Vec<Action> {
         let inbox = self.inbox.as_mut().expect("inbox open");
         inbox.flash.clear();
@@ -180,14 +183,14 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => inbox.move_by(-1),
             KeyCode::Char('g') | KeyCode::Home => inbox.move_by(i64::MIN / 2),
             KeyCode::Char('G') | KeyCode::End => inbox.move_by(i64::MAX / 2),
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('d') => {
+            KeyCode::Right | KeyCode::Char('l' | 'd') => {
                 if let Some(item) = inbox.read_selected() {
                     let mut actions = vec![Action::MarkRead(item)];
                     actions.extend(self.persist_inbox());
                     return actions;
                 }
             }
-            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('s') => {
+            KeyCode::Left | KeyCode::Char('h' | 's') => {
                 if inbox.selected_item().is_some() {
                     inbox.picking_snooze = true;
                 }
@@ -564,7 +567,7 @@ impl App {
     pub(super) fn activate(&mut self) -> Vec<Action> {
         match self.focus {
             Focus::Channels => {
-                let Some(row) = self.visible_channels().get(self.channel_selected).cloned().cloned() else { return vec![] };
+                let Some(row) = self.visible_channels().get(self.channel_selected).copied().cloned() else { return vec![] };
                 self.open_channel(row.id)
             }
             Focus::Messages if self.search.is_some() => {

@@ -54,7 +54,7 @@ pub const VERBS: [(&str, &str); 18] = [
 
 pub fn parse(line: &str) -> Result<Command, String> {
     let line = line.trim().trim_start_matches(':').trim();
-    let (verb, rest) = line.split_once(char::is_whitespace).map(|(v, r)| (v, r.trim())).unwrap_or((line, ""));
+    let (verb, rest) = line.split_once(char::is_whitespace).map_or((line, ""), |(v, r)| (v, r.trim()));
     let need =
         |what: &str| -> Result<String, String> { if rest.is_empty() { Err(format!(":{verb} needs {what}")) } else { Ok(rest.to_owned()) } };
     match verb {
@@ -63,7 +63,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "leave" => Ok(Command::Leave((!rest.is_empty()).then(|| rest.to_owned()))),
         "go" | "g" | "c" => Ok(Command::Go(need("a channel or @person")?)),
         "msg" | "m" | "dm" => {
-            let (target, text) = rest.split_once(char::is_whitespace).map(|(t, x)| (t, x.trim())).unwrap_or((rest, ""));
+            let (target, text) = rest.split_once(char::is_whitespace).map_or((rest, ""), |(t, x)| (t, x.trim()));
             if target.is_empty() || text.is_empty() {
                 return Err(":msg needs a target and a message".into());
             }
@@ -98,10 +98,10 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "quit" | "q" | "exit" => Ok(Command::Quit),
         unknown => {
             let close = fuzzy::suggestions(unknown, VERBS.iter().map(|(v, _)| *v), 3);
-            match close.is_empty() {
-                true => Err(format!("unknown command :{unknown}")),
-                false => Err(format!("unknown command :{unknown}, did you mean :{}?", close.join(", :"))),
+            if close.is_empty() {
+                return Err(format!("unknown command :{unknown}"));
             }
+            Err(format!("unknown command :{unknown}, did you mean :{}?", close.join(", :")))
         }
     }
 }
@@ -112,7 +112,6 @@ pub enum Slot {
     Verb,
     Conversation,
     Channel,
-    Person,
     Emoji,
     Literal(&'static [&'static str]),
     Free,
@@ -172,14 +171,14 @@ impl Palette {
 
     /// Replaces the token being typed with the next candidate; `candidates` supplies the
     /// labels for the slot under the cursor.
+    #[allow(clippy::expect_used)]
     pub fn complete(&mut self, candidates: &[String], backwards: bool) {
-        match &mut self.cycle {
-            Some(cycling) => cycling.cycle.advance(backwards),
-            None => {
-                let (prefix, token) = split_last_token(&self.input);
-                let Some(cycle) = Cycle::new(token, candidates) else { return };
-                self.cycle = Some(Cycling { prefix: prefix.to_owned(), cycle });
-            }
+        if let Some(cycling) = &mut self.cycle {
+            cycling.cycle.advance(backwards);
+        } else {
+            let (prefix, token) = split_last_token(&self.input);
+            let Some(cycle) = Cycle::new(token, candidates) else { return };
+            self.cycle = Some(Cycling { prefix: prefix.to_owned(), cycle });
         }
         let cycling = self.cycle.as_ref().expect("set above");
         let chosen = cycling.cycle.current();
@@ -215,7 +214,7 @@ impl Palette {
         if self.history.is_empty() {
             return;
         }
-        let at = self.history_at.map(|i| i.saturating_sub(1)).unwrap_or(self.history.len() - 1);
+        let at = self.history_at.map_or(self.history.len() - 1, |i| i.saturating_sub(1));
         self.history_at = Some(at);
         self.input = self.history[at].clone();
         self.cycle = None;
@@ -247,13 +246,14 @@ impl Palette {
 
 fn split_last_token(input: &str) -> (&str, &str) {
     match input.rfind(char::is_whitespace) {
-        Some(i) => (&input[..i + 1], &input[i + 1..]),
+        Some(i) => (&input[..=i], &input[i + 1..]),
         None => ("", input),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

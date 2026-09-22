@@ -2,10 +2,11 @@
 use crate::api::{Message, ReadState, Slack};
 use crate::cache::Cache;
 use crate::mrkdwn;
+use crate::pattern::regex;
 use crate::resolve::{Directory, NameBook};
 use crate::typesafe::{Judge, Question, Unavailable};
 use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
+use chrono::{DateTime, Datelike, Local, Timelike};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -118,7 +119,7 @@ impl Snooze {
             Snooze::ThreeHours => now + chrono::Duration::hours(3),
             Snooze::Tomorrow => at_nine(now + chrono::Duration::days(1)),
             Snooze::NextWeek => {
-                let days = (7 - now.weekday().num_days_from_monday()) as i64;
+                let days = i64::from(7 - now.weekday().num_days_from_monday());
                 at_nine(now + chrono::Duration::days(if days == 0 { 7 } else { days }))
             }
         }
@@ -187,7 +188,7 @@ pub fn newer(a: &str, b: &str) -> bool {
 }
 
 static MENTION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<(?:@([UW][A-Z0-9]+)|!subteam\^([A-Z0-9]+)|!(?:here|channel|everyone))(?:\|[^>]*)?>").unwrap());
+    LazyLock::new(|| regex(r"<(?:@([UW][A-Z0-9]+)|!subteam\^([A-Z0-9]+)|!(?:here|channel|everyone))(?:\|[^>]*)?>"));
 
 /// `@here` and friends always reach you; a usergroup only when you are in it, and when nobody
 /// could tell us who is in it we keep the mention rather than lose it.
@@ -346,15 +347,13 @@ pub fn local_now() -> DateTime<Local> {
     Local::now()
 }
 
-pub fn at(secs: i64) -> DateTime<Local> {
-    Local.timestamp_opt(secs, 0).single().unwrap_or_else(Local::now)
-}
-
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::auth::Credentials;
     use crate::cache::Cache;
+    use chrono::TimeZone;
     use serde_json::json;
     use wiremock::matchers::{body_string_contains, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -379,11 +378,16 @@ mod tests {
         }
     }
 
+    fn at(secs: i64) -> DateTime<Local> {
+        Local.timestamp_opt(secs, 0).single().unwrap_or_else(Local::now)
+    }
+
     fn priority(needs_reply: bool, urgency: Urgency) -> Priority {
         Priority { needs_reply, urgency }
     }
 
     /// Reads the verdict off the text itself: `reply` and `urgent`/`soon` are the only words that count.
+    #[allow(clippy::unnecessary_wraps)]
     fn keyword_judge(state: &Value) -> Result<Value, Unavailable> {
         let text = state["unread"][0]["text"].as_str().unwrap_or_default();
         let score = if text.contains("urgent") {

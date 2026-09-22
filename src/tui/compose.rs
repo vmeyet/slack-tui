@@ -52,6 +52,7 @@ fn var(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn editor(program: &str, args: &[&str]) -> Editor {
