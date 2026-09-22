@@ -4,7 +4,6 @@ use super::motion;
 use super::theme::Theme;
 use crate::api::File;
 use crate::api::{Message, Reaction, SearchMatch};
-use crate::blocks;
 use crate::mrkdwn;
 use crate::render;
 use crate::render::text::{self, Style as TextStyle, Styled};
@@ -25,6 +24,11 @@ const TIME_W: usize = 5;
 const BORDERS_AND_CURSOR_W: u16 = 3;
 const NAME_W: usize = 12;
 const THREAD_NAME_W: usize = 8;
+
+/// The column a message's text starts on: past the time and the name, with a space after each.
+fn text_start(name_w: usize) -> usize {
+    TIME_W + 1 + name_w + 1
+}
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let input_rows = u16::from(app.input.is_some() || app.palette.is_some());
@@ -149,7 +153,7 @@ fn channel_row(app: &App, c: &app::ChannelRow, width: usize) -> ListItem<'static
         style = style.add_modifier(Modifier::BOLD);
     }
     let label_w = width.saturating_sub(badge_text.width() + if badge_text.is_empty() { 0 } else { 1 });
-    let label = text::visible_fit(&c.label, label_w);
+    let label = render::fit(&c.label, label_w);
     let badge_style = if badge.mentions > 0 { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
     ListItem::new(Line::from(vec![
         Span::raw(" "),
@@ -270,7 +274,7 @@ fn draw_messages(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     if let Some(state) = empty_state(app) {
         draw_empty(f, &app.theme, inner, motion::frame(app.elapsed()), &state);
     }
-    let x = inner.x + 1 + (TIME_W + 1 + NAME_W + 1) as u16;
+    let x = inner.x + 1 + text_start(NAME_W) as u16;
     placements(inner, x, app.messages_view.offset(), &rows)
 }
 
@@ -381,7 +385,7 @@ fn draw_thread(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     let selected = (!thread.messages.is_empty()).then_some(thread.selected);
     app.thread_view.select(selected);
     f.render_stateful_widget(list, area, &mut app.thread_view);
-    let x = inner.x + 1 + (TIME_W + 1 + THREAD_NAME_W + 1) as u16;
+    let x = inner.x + 1 + text_start(THREAD_NAME_W) as u16;
     placements(inner, x, app.thread_view.offset(), &rows)
 }
 
@@ -421,30 +425,38 @@ fn grouped_items(
     selected: usize,
     zen: bool,
 ) -> Vec<(ListItem<'static>, Vec<Slot>)> {
+    let indent = text_start(name_w);
     let mut items = Vec::with_capacity(messages.len());
     let mut prev: Option<&Message> = None;
     let mut last_day = String::new();
+    let mut prev_blank_row = false;
     for (i, m) in messages.iter().enumerate() {
         let day = time::day_label(&m.ts);
         let new_day = day != last_day;
         last_day = day;
         let continued = render::continues(prev, m);
-        let gap = prev.is_some_and(|p| !ends_with_code_block(viewer.names, p)) && (new_day || !continued);
+        let body = body(viewer, m, width.saturating_sub(indent) as u16);
+        let gap = prev.is_some() && !prev_blank_row && (new_day || !continued);
         let row = Row { header: !continued || i == selected, new_day, gap, show_time: !zen || i == selected, selected: i == selected };
-        items.push(message_item(viewer, m, width, name_w, show_meta, row));
+        prev_blank_row = ends_on_a_blank_row(m, &body, show_meta);
+        items.push(message_item(viewer, m, width, name_w, show_meta, row, &body));
         prev = Some(m);
     }
     items
 }
 
-fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_meta: bool, row: Row) -> (ListItem<'static>, Vec<Slot>) {
-    let names = viewer.names;
+fn message_item(
+    viewer: &Viewer,
+    m: &Message,
+    width: usize,
+    name_w: usize,
+    show_meta: bool,
+    row: Row,
+    body: &Body,
+) -> (ListItem<'static>, Vec<Slot>) {
     let theme = viewer.theme;
-    let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
-    let indent = TIME_W + 1 + name_w + 1;
-    let avail = width.saturating_sub(indent) as u16;
-    let (pictures, others): (Vec<&File>, Vec<&File>) = m.files.iter().partition(|f| viewer.thumbs.cells(f, avail).is_some());
-    let styled = body(names, m, others);
+    let author = m.user.as_deref().map(|u| viewer.names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
+    let indent = text_start(name_w);
     let mut lines: Vec<Line> = Vec::new();
     if row.gap {
         lines.push(Line::raw(""));
@@ -459,7 +471,7 @@ fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_
         ]));
     }
     let time_style = if row.selected { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
-    for (i, chunks) in styled.wrap_styled(width.saturating_sub(indent).max(10)).iter().enumerate() {
+    for (i, chunks) in body.styled.wrap_styled(width.saturating_sub(indent).max(10)).iter().enumerate() {
         let mut spans = if i == 0 && row.header {
             vec![
                 Span::styled(if row.show_time { time::hhmm(&m.ts) } else { " ".repeat(TIME_W) }, time_style),
@@ -474,8 +486,7 @@ fn message_item(viewer: &Viewer, m: &Message, width: usize, name_w: usize, show_
         lines.push(Line::from(spans));
     }
     let mut slots = Vec::new();
-    for file in pictures {
-        let size = viewer.thumbs.cells(file, avail).expect("partitioned as a picture");
+    for &(file, size) in &body.pictures {
         let note = match viewer.thumbs.get(&file.id) {
             Some(Thumb::Ready(_)) => String::new(),
             Some(Thumb::Failed) => "image unavailable".to_owned(),
@@ -524,23 +535,30 @@ fn reaction_pills(theme: &Theme, reactions: &[Reaction], me: &str) -> Vec<Span<'
     spans
 }
 
-/// A block already leaves its own blank line behind, so the next message needs no gap.
-fn ends_with_code_block(names: &NameBook, m: &Message) -> bool {
-    body(names, m, &m.files).spans.last().is_some_and(|p| p.style == TextStyle::Block)
+/// What one message shows: its text with a 📎 mark per attachment shown inline, and the files
+/// drawn as pictures instead, each with the cells it takes. Built once per message per frame.
+struct Body<'a> {
+    styled: Styled,
+    pictures: Vec<(&'a File, Size)>,
 }
 
-/// The message text plus a 📎 line per attached file that is not drawn as a picture.
-fn body<'a>(names: &NameBook, m: &Message, files: impl IntoIterator<Item = &'a File>) -> Styled {
-    let text =
-        if m.text.is_empty() { m.attachments.iter().map(|a| a.fallback.clone()).collect::<Vec<_>>().join("\n") } else { m.text.clone() };
-    let mut styled = match m.subtype.as_deref() {
-        Some("channel_join") => Styled::dim("joined the channel"),
-        _ => text::from_segments(&blocks::segments(&m.blocks, &text, names), false),
-    };
-    for file in files {
-        styled.push_dim(&format!(" 📎 {}", file.label()));
+fn body<'a>(viewer: &Viewer, m: &'a Message, text_w: u16) -> Body<'a> {
+    let mut styled = render::body(viewer.names, m, false);
+    let mut pictures = Vec::new();
+    for file in &m.files {
+        match viewer.thumbs.cells(file, text_w) {
+            Some(size) => pictures.push((file, size)),
+            None => styled.push_dim(&format!(" 📎 {}", file.label())),
+        }
     }
-    styled
+    Body { styled, pictures }
+}
+
+/// A code block ends on a blank row, so the next message needs no gap — unless a picture,
+/// the reactions or the reply count were drawn under it.
+fn ends_on_a_blank_row(m: &Message, body: &Body, show_meta: bool) -> bool {
+    let drawn_under = !body.pictures.is_empty() || !m.reactions.is_empty() || (show_meta && m.is_thread_root());
+    !drawn_under && body.styled.spans.last().is_some_and(|p| p.style == TextStyle::Block)
 }
 
 fn search_item(theme: &Theme, m: &SearchMatch, width: usize) -> ListItem<'static> {
@@ -596,6 +614,7 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" : ", Style::new().fg(app.theme.accent).bold()),
         Span::raw(palette.input.clone()),
         Span::styled("▌", Style::new().fg(app.theme.accent)),
+        Span::styled(app.palette_ghost().unwrap_or_default(), Style::new().fg(app.theme.faded)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -725,7 +744,7 @@ fn help_lines(theme: &Theme) -> Vec<Line<'static>> {
         for (key, what) in bindings {
             lines.push(Line::from(vec![
                 Span::raw(" ".repeat(HELP_INDENT)),
-                Span::styled(text::visible_fit(key, key_w), Style::new().fg(theme.accent).bold()),
+                Span::styled(render::fit(key, key_w), Style::new().fg(theme.accent).bold()),
                 Span::raw(" ".repeat(HELP_GUTTER)),
                 Span::styled(*what, Style::new().fg(theme.muted)),
             ]));
@@ -736,16 +755,21 @@ fn help_lines(theme: &Theme) -> Vec<Line<'static>> {
     lines
 }
 
-/// A box of `width` by `height` in the middle of `area`, shrunk to fit when the terminal is smaller.
-fn centered(area: Rect, width: u16, height: u16) -> Rect {
+/// A box of `width` by `height` cells in the middle of `area`, shrunk to fit when the terminal is smaller.
+pub fn centered_cells(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
     Rect { x: area.x + (area.width - width) / 2, y: area.y + (area.height - height) / 2, width, height }
 }
 
+/// A box taking that percentage of `area`, in the middle of it.
+pub fn centered_pct(area: Rect, width: u16, height: u16) -> Rect {
+    centered_cells(area, area.width * width / 100, area.height * height / 100)
+}
+
 fn draw_help(f: &mut Frame, theme: &Theme, area: Rect) {
     let lines = help_lines(theme);
-    let popup = centered(area, help_width() + MODAL_FRAME_W, lines.len() as u16 + MODAL_FRAME_H);
+    let popup = centered_cells(area, help_width() + MODAL_FRAME_W, lines.len() as u16 + MODAL_FRAME_H);
     let block = pane(theme, "keys", true)
         .padding(Padding::new(MODAL_PAD_X, MODAL_PAD_X, MODAL_PAD_Y, MODAL_PAD_Y))
         .title_bottom(Line::from(Span::styled(" esc or ? to close ", Style::new().fg(theme.faded))).right_aligned());
@@ -761,7 +785,7 @@ fn draw_confirm_delete(f: &mut Frame, theme: &Theme, names: &NameBook, message: 
     let room = (CONFIRM_W - MODAL_FRAME_W) as usize;
     let preview = text::truncate(&mrkdwn::plain(&message.text, names).replace('\n', " "), room);
     let lines = vec![Line::from(Span::raw(preview)), Line::raw(""), Line::from(Span::styled(CONFIRM_ANSWER, Style::new().fg(theme.muted)))];
-    let popup = centered(area, CONFIRM_W, lines.len() as u16 + MODAL_FRAME_H);
+    let popup = centered_cells(area, CONFIRM_W, lines.len() as u16 + MODAL_FRAME_H);
     let block = pane(theme, "delete this message?", true).padding(Padding::new(MODAL_PAD_X, MODAL_PAD_X, MODAL_PAD_Y, MODAL_PAD_Y));
     f.render_widget(Clear, popup);
     f.render_widget(Paragraph::new(lines).block(block), popup);
@@ -1045,6 +1069,25 @@ mod tests {
     }
 
     #[test]
+    fn the_palette_shows_the_rest_of_the_command_in_grey_after_the_cursor() {
+        let mut app = App::new();
+        app.apply(Incoming::Channels {
+            rows: vec![ChannelRow::new("C1", "#general", Kind::Public)],
+            people: vec![],
+            names: NameBook::default(),
+            badges: Default::default(),
+            me: "U1".into(),
+        });
+        for c in ":go #gen".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        let row = input_row(&mut app);
+        assert!(shown(&row).contains(" : go #gen▌eral"), "{}", shown(&row));
+        let grey: String = row.iter().filter(|(_, fg, _)| *fg == app.theme.faded).map(|(s, ..)| s.as_str()).collect();
+        assert_eq!(grey, "eral", "only the suggestion is dimmed");
+    }
+
+    #[test]
     fn loading_title_spins_with_the_clock() {
         let mut app = App::new();
         assert!(render(&mut app).contains("messages ⠋ loading"));
@@ -1178,6 +1221,20 @@ mod tests {
         let rich = show(serde_json::from_value(serde_json::json!(sent.blocks)).unwrap());
         assert!(rich.contains("ship it") && rich.contains("▎ ls -la"), "{rich}");
         assert!(!show(vec![]).contains("▎ ls -la"), "the flat text has no code block to show");
+    }
+
+    #[test]
+    fn an_edited_message_carries_its_mark_and_a_bot_post_reads_its_attachment() {
+        let mut app = App::new();
+        app.current_channel = Some("C1".into());
+        app.focus = Focus::Messages;
+        let edited = Message { edited: Some(crate::api::Edited::default()), ..message("1694700000.000100", "U1", "ship it") };
+        let attachment = crate::api::Attachment { title: "Build".into(), text: String::new(), fallback: "deploy failed".into() };
+        let bot = Message { attachments: vec![attachment], ..message("1694700010.000100", "U2", "") };
+        app.apply(Incoming::History { channel: "C1".into(), messages: vec![edited, bot], names: NameBook::default() });
+        let out = render(&mut app);
+        assert!(out.contains("ship it (edited)"), "{out}");
+        assert!(out.contains("deploy failed"), "{out}");
     }
 
     #[test]

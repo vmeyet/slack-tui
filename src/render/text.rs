@@ -107,11 +107,6 @@ pub fn paint(theme: &Theme, piece: &Piece) -> String {
     }
 }
 
-/// Pads or truncates to exactly `width` columns.
-pub fn visible_fit(s: &str, width: usize) -> String {
-    super::fit(s, width)
-}
-
 /// Truncates to at most `width` columns, never pads.
 pub fn truncate(s: &str, width: usize) -> String {
     if s.width() <= width { s.to_owned() } else { super::fit(s, width) }

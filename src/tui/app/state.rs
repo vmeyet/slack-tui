@@ -143,8 +143,11 @@ impl App {
     }
 
     pub fn visible_channels(&self) -> Vec<&ChannelRow> {
-        let f = self.filter.to_lowercase();
-        self.channels.iter().filter(|c| c.label.to_lowercase().contains(&f)).collect()
+        if self.filter.is_empty() {
+            return self.channels.iter().collect();
+        }
+        let filter = self.filter.to_lowercase();
+        self.channels.iter().filter(|c| c.label.to_lowercase().contains(&filter)).collect()
     }
 
     pub fn current_kind(&self) -> Option<Kind> {

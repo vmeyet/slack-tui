@@ -6,11 +6,18 @@ const CONSECUTIVE: i64 = 6;
 const GAP: i64 = 1;
 
 pub fn score(query: &str, candidate: &str) -> Option<i64> {
-    let query: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    score_chars(&lowercase_chars(query), candidate)
+}
+
+fn lowercase_chars(s: &str) -> Vec<char> {
+    s.chars().flat_map(char::to_lowercase).collect()
+}
+
+fn score_chars(query: &[char], candidate: &str) -> Option<i64> {
     if query.is_empty() {
         return Some(0);
     }
-    let text: Vec<char> = candidate.chars().flat_map(char::to_lowercase).collect();
+    let text: Vec<char> = lowercase_chars(candidate);
     let word_start = |i: usize| i == 0 || !text[i - 1].is_alphanumeric();
     // best[i]: best score with the current query char matched at text index i
     let mut best: Vec<Option<i64>> =
@@ -42,8 +49,9 @@ pub fn score(query: &str, candidate: &str) -> Option<i64> {
 }
 
 /// Candidates ordered best first, ties keeping the input order.
-pub fn rank<T>(query: &str, items: impl IntoIterator<Item = (String, T)>) -> Vec<(i64, T)> {
-    let mut scored: Vec<(i64, T)> = items.into_iter().filter_map(|(label, item)| score(query, &label).map(|s| (s, item))).collect();
+pub fn rank<'a, T>(query: &str, items: impl IntoIterator<Item = (&'a str, T)>) -> Vec<(i64, T)> {
+    let query = lowercase_chars(query);
+    let mut scored: Vec<(i64, T)> = items.into_iter().filter_map(|(label, item)| score_chars(&query, label).map(|s| (s, item))).collect();
     scored.sort_by_key(|(s, _)| std::cmp::Reverse(*s));
     scored
 }
@@ -67,7 +75,7 @@ pub fn edit_distance(a: &str, b: &str) -> usize {
 /// Suggestions for a mistyped word: fuzzy matches first, then anything within two edits.
 pub fn suggestions<'a>(query: &str, candidates: impl IntoIterator<Item = &'a str>, limit: usize) -> Vec<&'a str> {
     let candidates: Vec<&str> = candidates.into_iter().collect();
-    let mut out: Vec<&str> = rank(query, candidates.iter().map(|c| ((*c).to_owned(), *c))).into_iter().map(|(_, c)| c).collect();
+    let mut out: Vec<&str> = rank(query, candidates.iter().map(|c| (*c, *c))).into_iter().map(|(_, c)| c).collect();
     let mut close: Vec<(usize, &str)> = candidates
         .iter()
         .filter(|c| !out.contains(c))
@@ -81,7 +89,7 @@ pub fn suggestions<'a>(query: &str, candidates: impl IntoIterator<Item = &'a str
 }
 
 /// The single obvious match, when one candidate clearly beats the rest.
-pub fn best<T>(query: &str, items: impl IntoIterator<Item = (String, T)>) -> Option<T> {
+pub fn best<'a, T>(query: &str, items: impl IntoIterator<Item = (&'a str, T)>) -> Option<T> {
     let mut ranked = rank(query, items).into_iter();
     let (top, item) = ranked.next()?;
     let runner_up = ranked.next().map(|(s, _)| s).unwrap_or(i64::MIN);
@@ -92,8 +100,8 @@ pub fn best<T>(query: &str, items: impl IntoIterator<Item = (String, T)>) -> Opt
 mod tests {
     use super::*;
 
-    fn order(query: &str, items: &[&str]) -> Vec<String> {
-        rank(query, items.iter().map(|i| (i.to_string(), i.to_string()))).into_iter().map(|(_, i)| i).collect()
+    fn order<'a>(query: &str, items: &[&'a str]) -> Vec<&'a str> {
+        rank(query, items.iter().map(|i| (*i, *i))).into_iter().map(|(_, i)| i).collect()
     }
 
     #[test]
@@ -127,8 +135,8 @@ mod tests {
 
     #[test]
     fn best_needs_a_clear_winner() {
-        let items = || ["#general", "#general-fr", "#random"].map(|s| (s.to_string(), s.to_string()));
-        assert_eq!(best("rand", items()).as_deref(), Some("#random"));
+        let items = || ["#general", "#general-fr", "#random"].map(|s| (s, s));
+        assert_eq!(best("rand", items()), Some("#random"));
         assert_eq!(best("gener", items()), None);
         assert_eq!(best("zzz", items()), None);
     }

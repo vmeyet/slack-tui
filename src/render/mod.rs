@@ -5,7 +5,7 @@ pub mod time;
 pub use text::Styled;
 pub use theme::Theme;
 
-use crate::api::{Channel, ChannelKind, Identity, Message, Posted, SearchMatch, User};
+use crate::api::{Attachment, Channel, ChannelKind, Identity, Message, Posted, SearchMatch, User};
 use crate::blocks;
 use crate::mrkdwn;
 use crate::resolve::NameBook;
@@ -117,7 +117,7 @@ fn message_line(t: &Theme, names: &NameBook, m: &Message, indent: usize, continu
     };
     let show_ts = t.width >= 80;
     let text_width = t.width.saturating_sub(indent + TEXT_START + if show_ts { TS_WIDTH + 2 } else { 0 }).max(20);
-    let mut lines = body(t, names, m).wrap_with(text_width, t);
+    let mut lines = body(names, m, t.show_urls).wrap_with(text_width, t);
     if lines.is_empty() {
         lines.push(String::new());
     }
@@ -138,8 +138,7 @@ fn message_line(t: &Theme, names: &NameBook, m: &Message, indent: usize, continu
     }
     let pad = " ".repeat(indent + TEXT_START);
     for f in &m.files {
-        let label = if f.title.is_empty() { &f.name } else { &f.title };
-        out.push_str(&format!("{pad}{} {}\n", t.dim("📎"), t.link_labelled(label, &f.permalink)));
+        out.push_str(&format!("{pad}{} {}\n", t.dim("📎"), t.link_labelled(f.label(), &f.permalink)));
     }
     if !m.reactions.is_empty() {
         let r: Vec<String> = m.reactions.iter().map(|r| format!("{} {}", crate::emoji::render(&r.name), r.count)).collect();
@@ -162,25 +161,23 @@ fn author(names: &NameBook, m: &Message) -> String {
     m.bot_id.clone().map(|_| "bot".to_owned()).unwrap_or_else(|| "?".to_owned())
 }
 
-fn body(t: &Theme, names: &NameBook, m: &Message) -> Styled {
-    let mut text = m.text.clone();
-    if text.is_empty() {
-        text = m
-            .attachments
-            .iter()
-            .map(|a| if a.fallback.is_empty() { format!("{}\n{}", a.title, a.text) } else { a.fallback.clone() })
-            .collect::<Vec<_>>()
-            .join("\n");
-    }
+/// What a message reads as: its own text, or what its attachments say when it has none.
+pub fn body(names: &NameBook, m: &Message, show_urls: bool) -> Styled {
+    let text = if m.text.is_empty() { attachment_text(&m.attachments) } else { m.text.clone() };
     let mut styled = match m.subtype.as_deref() {
         Some("channel_join") => Styled::dim("joined the channel"),
         Some("channel_leave") => Styled::dim("left the channel"),
-        _ => text::from_segments(&blocks::segments(&m.blocks, &text, names), t.show_urls),
+        _ => text::from_segments(&blocks::segments(&m.blocks, &text, names), show_urls),
     };
     if m.edited.is_some() {
         styled.push_dim(" (edited)");
     }
     styled
+}
+
+fn attachment_text(attachments: &[Attachment]) -> String {
+    let say = |a: &Attachment| if a.fallback.is_empty() { format!("{}\n{}", a.title, a.text) } else { a.fallback.clone() };
+    attachments.iter().map(say).collect::<Vec<_>>().join("\n")
 }
 
 pub fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
@@ -258,8 +255,7 @@ pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> Strin
         let indent = " ".repeat(4);
         if let Some(m) = item.unread.last() {
             let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
-            let lines = text::from_segments(&blocks::segments(&m.blocks, &m.text, names), t.show_urls)
-                .wrap_with(t.width.saturating_sub(8 + author.width()).max(20), t);
+            let lines = body(names, m, t.show_urls).wrap_with(t.width.saturating_sub(8 + author.width()).max(20), t);
             out.push_str(&format!("{indent}{} {}\n", t.mention(&format!("{author}:")), lines.first().cloned().unwrap_or_default()));
         }
     }
@@ -360,6 +356,7 @@ pub fn plural(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
+/// Pads or truncates to exactly `width` columns.
 pub fn fit(s: &str, width: usize) -> String {
     if s.width() <= width {
         return pad(s, width);
@@ -458,6 +455,36 @@ mod tests {
         assert!(lines[2].starts_with("✓ C1"), "{out}");
         assert!(out.lines().next().unwrap_or_default().ends_with("1 open"), "{out}");
         assert!(promises(&t, &NameBook::default(), &[]).contains("nothing you promised is still open"));
+    }
+
+    #[test]
+    fn a_body_marks_edits_names_system_notices_and_reads_attachments_when_there_is_no_text() {
+        let names = NameBook::default();
+        let read = |m: &Message| body(&names, m, false).plain_text();
+        let base = msg("1694700000.000000", Some("U1"));
+        assert_eq!(read(&Message { edited: Some(crate::api::Edited::default()), ..base.clone() }), "x (edited)");
+        assert_eq!(read(&Message { subtype: Some("channel_leave".into()), ..base.clone() }), "left the channel");
+        let attachment = Attachment { title: "Build".into(), text: "green".into(), fallback: String::new() };
+        let bot = Message { text: String::new(), attachments: vec![attachment], ..base };
+        assert_eq!(read(&bot), "Build\ngreen");
+    }
+
+    #[test]
+    fn an_inbox_preview_reads_an_attachment_only_message() {
+        let t = Theme::plain(100);
+        let attachment = Attachment { title: "Build".into(), text: String::new(), fallback: "deploy failed".into() };
+        let m = Message { text: String::new(), attachments: vec![attachment], ..msg("1694700000.000000", None) };
+        let item = crate::inbox::Item {
+            key: "C1".into(),
+            kind: crate::inbox::Kind::Dm,
+            channel: "C1".into(),
+            label: "#ops".into(),
+            thread_ts: None,
+            ts: m.ts.clone(),
+            unread: vec![m],
+            priority: None,
+        };
+        assert!(inbox(&t, &NameBook::default(), &[item]).contains("deploy failed"));
     }
 
     #[test]

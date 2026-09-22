@@ -132,7 +132,7 @@ impl Slack {
     }
 
     pub async fn groups(&self) -> Result<Vec<Group>> {
-        self.call_as("usergroups.list", vec![], "usergroups").await
+        self.call_as("usergroups.list", params(&[("include_users", "true")]), "usergroups").await
     }
 
     pub async fn user_info(&self, id: &str) -> Result<User> {

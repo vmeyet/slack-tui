@@ -9,7 +9,7 @@ pub fn rank(token: &str, candidates: &[String]) -> Vec<String> {
     if token.is_empty() {
         return candidates.iter().take(MAX).cloned().collect();
     }
-    fuzzy::rank(token, candidates.iter().map(|c| (c.clone(), c.clone()))).into_iter().map(|(_, c)| c).take(MAX).collect()
+    fuzzy::rank(token, candidates.iter().map(|c| (c.as_str(), c))).into_iter().map(|(_, c)| c.clone()).take(MAX).collect()
 }
 
 /// The grey text a shell shows after the cursor: the rest of the best candidate for `token`,
@@ -21,7 +21,7 @@ pub fn ghost(token: &str, candidates: &[String]) -> Option<String> {
     }
     let lower = token.to_lowercase();
     let by_prefix = candidates.iter().find(|c| c.to_lowercase().starts_with(&lower) && c.len() > token.len());
-    let best = by_prefix.cloned().or_else(|| fuzzy::best(token, candidates.iter().map(|c| (c.clone(), c.clone()))))?;
+    let best = by_prefix.or_else(|| fuzzy::best(token, candidates.iter().map(|c| (c.as_str(), c))))?;
     if best.to_lowercase().starts_with(&lower) { Some(best[token.len()..].to_owned()) } else { None }
 }
 

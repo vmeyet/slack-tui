@@ -10,7 +10,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
@@ -187,10 +187,16 @@ pub fn newer(a: &str, b: &str) -> bool {
 }
 
 static MENTION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<(?:@([UW][A-Z0-9]+)|!(?:here|channel|everyone|subteam\^[A-Z0-9]+))(?:\|[^>]*)?>").unwrap());
+    LazyLock::new(|| Regex::new(r"<(?:@([UW][A-Z0-9]+)|!subteam\^([A-Z0-9]+)|!(?:here|channel|everyone))(?:\|[^>]*)?>").unwrap());
 
-pub fn mentions_me(text: &str, me: &str) -> bool {
-    MENTION.captures_iter(text).any(|c| c.get(1).is_none_or(|u| u.as_str() == me))
+/// `@here` and friends always reach you; a usergroup only when you are in it, and when nobody
+/// could tell us who is in it we keep the mention rather than lose it.
+pub fn mentions_me(text: &str, me: &str, my_groups: Option<&HashSet<String>>) -> bool {
+    MENTION.captures_iter(text).any(|c| match (c.get(1), c.get(2)) {
+        (Some(user), _) => user.as_str() == me,
+        (_, Some(group)) => my_groups.is_none_or(|mine| mine.contains(group.as_str())),
+        _ => true,
+    })
 }
 
 /// Collects every unread item from Slack, newest first.
@@ -236,7 +242,10 @@ async fn dm_item(slack: &Slack, dir: &mut Directory, state: &ReadState) -> Resul
 async fn mention_items(slack: &Slack, dir: &mut Directory, state: &ReadState, me: &str) -> Result<Vec<Item>> {
     dir.channels().await?;
     let recent = slack.history(&state.id, 100, Some(&state.last_read)).await?;
-    let mentions: Vec<Message> = recent.into_iter().filter(|m| newer(&m.ts, &state.last_read) && mentions_me(&m.text, me)).collect();
+    dir.learn_groups(&recent).await;
+    let my_groups = dir.my_groups(me);
+    let mine = |m: &Message| newer(&m.ts, &state.last_read) && mentions_me(&m.text, me, my_groups.as_ref());
+    let mentions: Vec<Message> = recent.into_iter().filter(mine).collect();
     Ok(mentions
         .into_iter()
         .rev()
@@ -485,11 +494,21 @@ mod tests {
 
     #[test]
     fn mention_detection() {
-        assert!(mentions_me("hey <@U1> look", "U1"));
-        assert!(mentions_me("<!here> deploy", "U1"));
-        assert!(mentions_me("<!subteam^S1|@team>", "U1"));
-        assert!(!mentions_me("hey <@U2>", "U1"));
-        assert!(!mentions_me("plain", "U1"));
+        let unknown = None;
+        assert!(mentions_me("hey <@U1> look", "U1", unknown));
+        assert!(mentions_me("<!here> deploy", "U1", unknown));
+        assert!(!mentions_me("hey <@U2>", "U1", unknown));
+        assert!(!mentions_me("plain", "U1", unknown));
+    }
+
+    #[test]
+    fn a_usergroup_mention_only_counts_for_its_members() {
+        let mine: HashSet<String> = ["S1".to_owned()].into();
+        assert!(mentions_me("<!subteam^S1|@team>", "U1", Some(&mine)));
+        assert!(!mentions_me("<!subteam^S2|@others>", "U1", Some(&mine)));
+        assert!(mentions_me("<!subteam^S2> and <@U1>", "U1", Some(&mine)));
+        assert!(mentions_me("<!subteam^S2|@others>", "U1", None), "kept while nobody knows who is in it");
+        assert!(mentions_me("<!here> ship", "U1", Some(&HashSet::new())));
     }
 
     #[test]

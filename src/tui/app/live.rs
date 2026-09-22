@@ -60,7 +60,7 @@ impl App {
         if self.current_channel.as_deref() != Some(&channel) {
             let badge = self.badges.entry(channel.clone()).or_default();
             badge.unread = true;
-            if !self.me.is_empty() && crate::inbox::mentions_me(&message.text, &self.me) {
+            if !self.me.is_empty() && crate::inbox::mentions_me(&message.text, &self.me, None) {
                 badge.mentions += 1;
             }
             self.unread.insert(channel);
