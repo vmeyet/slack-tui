@@ -331,6 +331,10 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             slack.mark_read(&channel, &ts).await?;
             Ok(Incoming::Toast("marked read".into()))
         }
+        Action::SyncRead { channel, ts } => {
+            slack.mark_read(&channel, &ts).await?;
+            Ok(Incoming::Toast(String::new()))
+        }
         Action::Export { path, label, messages, format } => export(backend, &path, &label, &messages, format).await,
         Action::OpenDm(user) => Ok(Incoming::DmOpened(slack.open_dm(&user).await?)),
         Action::LoadInbox => load_inbox(backend).await,
