@@ -80,6 +80,7 @@ fn due(last: Option<&Check>, now: i64) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     const INSTALLED: &str = "43d0edda4dd29c731c39a49023a6cc7ac013ba52";

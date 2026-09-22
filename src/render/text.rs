@@ -47,15 +47,18 @@ impl Styled {
         self.spans.push(Piece::new(s, Style::Dim));
     }
 
+    #[cfg(test)]
     pub fn plain_text(&self) -> String {
         self.spans.iter().map(|p| p.text.as_str()).collect()
     }
 
+    #[cfg(test)]
     pub fn urls(&self) -> Vec<String> {
         self.spans.iter().filter_map(|p| p.url.clone()).collect()
     }
 
     /// Word-wraps to `width` visible columns, returning plain lines carrying no colour.
+    #[cfg(test)]
     pub fn wrap(&self, width: usize) -> Vec<String> {
         self.wrap_with(width, &Theme::plain(width))
     }
@@ -181,6 +184,7 @@ fn wrap_spans(spans: &[Piece], width: usize) -> Vec<Chunks> {
 /// Splits on newlines; a code block always owns whole lines, one paragraph per line,
 /// with one padded row inside the surface and one blank line of margin outside, on both
 /// sides. The margin below is kept even at the end so whatever follows never touches the block.
+#[allow(clippy::expect_used)]
 fn paragraphs(spans: &[Piece]) -> Vec<Chunks> {
     let mut out: Vec<Chunks> = vec![Vec::new()];
     let mut after_block = false;
@@ -193,7 +197,7 @@ fn paragraphs(spans: &[Piece]) -> Vec<Chunks> {
                 out.extend([Vec::new(), Vec::new()]);
             }
             let padding = vec![Piece::new("", Style::Block)];
-            *out.last_mut().expect("one paragraph") = padding.clone();
+            out.last_mut().expect("one paragraph").clone_from(&padding);
             out.extend(piece.text.split('\n').map(|part| vec![Piece::new(part, Style::Block)]));
             out.push(padding);
             out.push(Vec::new());
@@ -220,6 +224,7 @@ fn paragraphs(spans: &[Piece]) -> Vec<Chunks> {
     out
 }
 
+#[allow(clippy::expect_used)]
 fn words(paragraph: &Chunks) -> Vec<Word> {
     let mut words: Vec<Word> = Vec::new();
     let mut open = false;
@@ -263,7 +268,7 @@ fn split_words(s: &str) -> Vec<&str> {
             if start < i {
                 words.push(&s[start..i]);
             }
-            words.push(&s[i..i + 1]);
+            words.push(&s[i..=i]);
             start = i + 1;
         }
     }
@@ -275,6 +280,7 @@ fn split_words(s: &str) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

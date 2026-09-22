@@ -6,7 +6,7 @@ pub fn parse_ts(ts: &str) -> Option<DateTime<Local>> {
 }
 
 pub fn hhmm(ts: &str) -> String {
-    parse_ts(ts).map(|d| d.format("%H:%M").to_string()).unwrap_or_else(|| "??:??".into())
+    parse_ts(ts).map_or_else(|| "??:??".into(), |d| d.format("%H:%M").to_string())
 }
 
 pub fn day_label(ts: &str) -> String {
@@ -57,6 +57,7 @@ pub fn since_to_ts(spec: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

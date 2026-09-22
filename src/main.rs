@@ -1,3 +1,4 @@
+//! The `slack` binary: parses the command line and runs the matching command.
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use slack::cli::{Cli, Command};
@@ -26,7 +27,7 @@ async fn run(cli: Cli) -> Result<()> {
             clap_complete::generate(shell, &mut Cli::command(), "slack", &mut std::io::stdout());
             return Ok(());
         }
-        Command::Update(args) => return commands::update::run(args),
+        Command::Update(args) => return commands::update::run(&args),
         _ => {}
     }
     let mut ctx = Ctx::open(cli.workspace.as_deref(), cli.json)?;

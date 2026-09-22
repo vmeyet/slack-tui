@@ -1,6 +1,7 @@
 use super::app::{self, App, Focus, Input, Kind, Live, SidebarRow};
 use super::images::{Thumb, Thumbs};
 use super::motion;
+use super::palette::Palette;
 use super::theme::Theme;
 use crate::api::File;
 use crate::api::{Message, Reaction, SearchMatch};
@@ -152,7 +153,7 @@ fn channel_row(app: &App, c: &app::ChannelRow, width: usize) -> ListItem<'static
     } else if current || unread {
         style = style.add_modifier(Modifier::BOLD);
     }
-    let label_w = width.saturating_sub(badge_text.width() + if badge_text.is_empty() { 0 } else { 1 });
+    let label_w = width.saturating_sub(badge_text.width() + usize::from(!badge_text.is_empty()));
     let label = render::fit(&c.label, label_w);
     let badge_style = if badge.mentions > 0 { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
     ListItem::new(Line::from(vec![
@@ -403,6 +404,7 @@ fn viewer(app: &App) -> Viewer<'_> {
 }
 
 /// How one message sits in its list.
+#[derive(Clone, Copy)]
 struct Row {
     /// Time and author on the first line; continuations drop it, the selected row always shows it.
     header: bool,
@@ -522,7 +524,7 @@ fn reaction_pills(theme: &Theme, reactions: &[Reaction], me: &str) -> Vec<Span<'
     let pill = |r: &Reaction| {
         let mine = !me.is_empty() && r.users.iter().any(|u| u == me);
         let style = if mine { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };
-        let glyph = crate::emoji::glyph(&r.name).map(str::to_owned).unwrap_or_else(|| r.name.clone());
+        let glyph = crate::emoji::glyph(&r.name).map_or_else(|| r.name.clone(), str::to_owned);
         Span::styled(format!("{glyph} {}", r.count), style)
     };
     let mut spans = Vec::with_capacity(reactions.len() * 2);
@@ -628,10 +630,10 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         (None, Focus::Messages) => "j/k move · enter thread · r reply · e react · ? more",
         (None, Focus::Thread) => "j/k move · r reply · e react · esc close · ? more",
     };
-    let cycling = app.palette.as_ref().and_then(|p| p.hint()).or_else(|| app.input_hint());
+    let cycling = app.palette.as_ref().and_then(Palette::hint).or_else(|| app.input_hint());
     let hints = cycling.as_deref().unwrap_or(keys);
     let (dot, dot_style) = match &app.live {
-        Live::Live => ("● ", Style::new().fg(app.theme.success)),
+        Live::Connected => ("● ", Style::new().fg(app.theme.success)),
         Live::Connecting => ("○ ", Style::new().fg(app.theme.muted)),
         Live::Polling(_) => ("↻ ", Style::new().fg(app.theme.warn)),
     };
@@ -827,6 +829,7 @@ pub fn user_style(theme: &Theme, name: &str) -> Style {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::api::Reaction;
     use crate::tui::app::{ChannelRow, Incoming, Thread};
@@ -834,6 +837,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use std::collections::HashMap;
 
     fn message(ts: &str, user: &str, text: &str) -> Message {
         Message { ts: ts.into(), user: Some(user.into()), text: text.into(), ..Default::default() }
@@ -935,7 +939,7 @@ mod tests {
             rows: vec![ChannelRow::new("D1", "@bob", Kind::Dm)],
             people: vec![],
             names: NameBook::default(),
-            badges: Default::default(),
+            badges: HashMap::new(),
             me: "U1".into(),
         });
         app.current_channel = Some("D1".into());
@@ -1075,7 +1079,7 @@ mod tests {
             rows: vec![ChannelRow::new("C1", "#general", Kind::Public)],
             people: vec![],
             names: NameBook::default(),
-            badges: Default::default(),
+            badges: HashMap::new(),
             me: "U1".into(),
         });
         for c in ":go #gen".chars() {

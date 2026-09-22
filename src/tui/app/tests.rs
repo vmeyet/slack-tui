@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 use super::*;
 use crate::api::{File, Message};
 use crate::inbox::Item;
@@ -513,7 +514,7 @@ fn live_message_appends_and_follows_bottom() {
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
     live(&mut app, rtm::Event::Connected);
-    assert_eq!(app.live, Live::Live);
+    assert_eq!(app.live, Live::Connected);
     live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
     assert_eq!(app.messages.len(), 2);
     assert_eq!(app.message_selected, 1);

@@ -129,6 +129,7 @@ fn tag_look(theme: &Theme, tag: Option<Tag>) -> (Span<'static>, Style) {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn line(n: u64) -> LiveLine {

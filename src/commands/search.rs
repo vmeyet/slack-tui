@@ -1,9 +1,10 @@
+//! `slack search`: message search.
 use crate::cli::SearchArgs;
 use crate::ctx::Ctx;
 use crate::render;
 use anyhow::Result;
 
-pub fn build_query(args: &SearchArgs) -> String {
+fn build_query(args: &SearchArgs) -> String {
     let mut parts = vec![args.query.join(" ")];
     if let Some(c) = &args.channel {
         parts.push(format!("in:#{}", c.trim_start_matches('#')));
@@ -20,6 +21,7 @@ pub fn build_query(args: &SearchArgs) -> String {
     parts.join(" ")
 }
 
+/// Searches messages and prints the matches.
 pub async fn run(ctx: &mut Ctx, args: SearchArgs) -> Result<()> {
     let query = build_query(&args);
     let result = ctx.slack.search(&query, args.limit).await?;
@@ -32,6 +34,7 @@ pub async fn run(ctx: &mut Ctx, args: SearchArgs) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

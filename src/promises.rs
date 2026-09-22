@@ -111,7 +111,7 @@ fn later_in_thread<'a>(promise: &'a SearchMatch, sent: &'a [SearchMatch]) -> imp
 }
 
 fn thread_root(m: &SearchMatch) -> String {
-    permalink::parse(&m.permalink).map(|r| r.thread_root().to_owned()).unwrap_or_else(|_| m.ts.clone())
+    permalink::parse(&m.permalink).map_or_else(|_| m.ts.clone(), |r| r.thread_root().to_owned())
 }
 
 fn message_key(m: &SearchMatch) -> String {
@@ -137,6 +137,7 @@ fn fulfils_state(promise: &SearchMatch, later: &SearchMatch, names: &NameBook, m
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::api::SearchChannel;
     use crate::auth::Credentials;
@@ -159,6 +160,7 @@ mod tests {
     }
 
     /// `I'll` makes a promise, `done` fulfils one; nothing else counts.
+    #[allow(clippy::unnecessary_wraps)]
     fn keyword_judge(state: &Value) -> Result<Value, Unavailable> {
         let noul = match (state["text"].as_str(), state["later"].as_str()) {
             (Some(text), _) if text.contains("I'll") => 0.9,

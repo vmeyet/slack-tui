@@ -1,15 +1,16 @@
-pub mod app;
-pub mod complete;
-pub mod compose;
-pub mod field;
-pub mod firehose;
-pub mod images;
-pub mod inbox;
-pub mod jump;
-pub mod motion;
-pub mod palette;
-pub mod theme;
-pub mod ui;
+//! The interactive terminal client.
+mod app;
+mod complete;
+mod compose;
+mod field;
+mod firehose;
+mod images;
+mod inbox;
+mod jump;
+mod motion;
+mod palette;
+mod theme;
+mod ui;
 
 use crate::api::rtm;
 use crate::cache::Cache;
@@ -17,7 +18,7 @@ use crate::ctx::Ctx;
 use crate::markdown;
 use crate::resolve::{Directory, NameBook};
 use crate::typesafe::{TypeSafe, Unavailable};
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use app::{Action, App, ChannelRow, Incoming, Kind, Settings};
 use crossterm::event::{
     Event, EventStream, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -30,11 +31,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, OnceCell, mpsc};
 
+/// Opens the interactive client and returns when the user quits.
 pub async fn run(ctx: Ctx) -> Result<()> {
     run_with(ctx, false).await
 }
 
-pub async fn run_inbox(ctx: Ctx) -> Result<()> {
+pub(crate) async fn run_inbox(ctx: Ctx) -> Result<()> {
     run_with(ctx, true).await
 }
 
@@ -98,7 +100,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
         let redraw_in = app.redraw_in();
         let wake = tokio::select! {
             Some(incoming) = rx.recv() => Wake::Incoming(incoming),
-            _ = tokio::time::sleep(redraw_in.unwrap_or_default()), if redraw_in.is_some() => Wake::Frame,
+            () = tokio::time::sleep(redraw_in.unwrap_or_default()), if redraw_in.is_some() => Wake::Frame,
             Some(event) = events.next() => Wake::Event(event),
         };
         app.now = Instant::now();
@@ -441,7 +443,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
         Action::Yank { channel, ts } => {
             let url = slack.permalink(&channel, &ts).await?;
             let mut child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
-            std::io::Write::write_all(child.stdin.as_mut().expect("piped"), url.as_bytes())?;
+            std::io::Write::write_all(child.stdin.as_mut().context("piped stdin")?, url.as_bytes())?;
             child.wait()?;
             Ok(Incoming::Toast("permalink copied".into()))
         }

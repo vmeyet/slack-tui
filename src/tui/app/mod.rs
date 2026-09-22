@@ -147,7 +147,7 @@ pub enum Action {
 pub enum Live {
     #[default]
     Connecting,
-    Live,
+    Connected,
     Polling(String),
 }
 

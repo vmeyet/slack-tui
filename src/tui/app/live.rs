@@ -7,7 +7,7 @@ use crate::tui::firehose;
 impl App {
     pub(super) fn apply_live(&mut self, event: rtm::Event) -> Vec<Action> {
         match event {
-            rtm::Event::Connected => self.live = Live::Live,
+            rtm::Event::Connected => self.live = Live::Connected,
             rtm::Event::Disconnected(_) => self.live = Live::Connecting,
             rtm::Event::GaveUp(reason) => self.live = Live::Polling(reason),
             rtm::Event::Message { channel, message } => {
@@ -26,8 +26,8 @@ impl App {
             rtm::Event::Changed { channel, message } => {
                 if self.current_channel.as_deref() == Some(&channel) {
                     for m in self.all_messages_mut().into_iter().filter(|m| m.ts == message.ts) {
-                        m.text = message.text.clone();
-                        m.edited = message.edited.clone();
+                        m.text.clone_from(&message.text);
+                        m.edited.clone_from(&message.edited);
                     }
                 }
             }
@@ -130,6 +130,7 @@ fn adjust_reaction(reactions: &mut Vec<Reaction>, name: &str, user: &str, added:
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

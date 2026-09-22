@@ -13,6 +13,7 @@ impl Credentials {
         Self { token: token.to_owned(), cookie: cookie.map(str::to_owned) }
     }
 
+    #[allow(clippy::expect_used)]
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).expect("credentials serialize")
     }
@@ -28,6 +29,7 @@ impl Credentials {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

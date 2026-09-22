@@ -152,6 +152,7 @@ pub fn config_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn acme() -> Workspace {

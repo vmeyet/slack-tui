@@ -77,10 +77,12 @@ struct Content {
     text: String,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_unset(b: &bool) -> bool {
     !b
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(n: &usize) -> bool {
     *n == 0
 }
@@ -157,10 +159,10 @@ fn element(e: &Element, names: &dyn Names) -> Segment {
 
 /// A usergroup element usually carries its id alone, so the handle has to be looked up.
 fn group_name(e: &Element, names: &dyn Names) -> String {
-    match e.name.is_empty() {
-        true => names.group(&e.usergroup_id).unwrap_or_else(|| e.usergroup_id.clone()),
-        false => e.name.clone(),
+    if e.name.is_empty() {
+        return names.group(&e.usergroup_id).unwrap_or_else(|| e.usergroup_id.clone());
     }
+    e.name.clone()
 }
 
 fn marked(e: &Element) -> Segment {
@@ -203,6 +205,7 @@ fn is_blank(s: &Segment) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::markdown::{self, NoMentions};
     use crate::mrkdwn::NoNames;
@@ -226,12 +229,12 @@ mod tests {
         serde_json::from_value(value).expect("blocks")
     }
 
-    fn rich(elements: Value) -> Vec<Block> {
+    fn rich(elements: &Value) -> Vec<Block> {
         blocks(json!([{"type": "rich_text", "elements": elements}]))
     }
 
-    fn section(elements: Value) -> Vec<Block> {
-        rich(json!([{"type": "rich_text_section", "elements": elements}]))
+    fn section(elements: &Value) -> Vec<Block> {
+        rich(&json!([{"type": "rich_text_section", "elements": elements}]))
     }
 
     fn read(blocks: &[Block]) -> Vec<Segment> {
@@ -245,7 +248,7 @@ mod tests {
 
     #[test]
     fn text_styles_become_their_segments() {
-        let b = section(json!([
+        let b = section(&json!([
             {"type": "text", "text": "b", "style": {"bold": true}},
             {"type": "text", "text": "i", "style": {"italic": true}},
             {"type": "text", "text": "s", "style": {"strike": true}},
@@ -257,7 +260,7 @@ mod tests {
 
     #[test]
     fn mentions_links_and_emoji_resolve_like_mrkdwn() {
-        let b = section(json!([
+        let b = section(&json!([
             {"type": "user", "user_id": "U1"},
             {"type": "text", "text": " "},
             {"type": "user", "user_id": "U9"},
@@ -294,7 +297,7 @@ mod tests {
 
     #[test]
     fn usergroups_resolve_to_their_handle() {
-        let b = section(json!([
+        let b = section(&json!([
             {"type": "usergroup", "usergroup_id": "S1"},
             {"type": "text", "text": " "},
             {"type": "usergroup", "usergroup_id": "S9"},
@@ -309,7 +312,7 @@ mod tests {
 
     #[test]
     fn preformatted_and_quote_keep_their_shape() {
-        let b = rich(json!([
+        let b = rich(&json!([
             {"type": "rich_text_preformatted", "elements": [{"type": "text", "text": "ls -la\necho hi"}]},
             {"type": "rich_text_quote", "elements": [{"type": "text", "text": "wise\nwords"}]},
         ]));
@@ -319,7 +322,7 @@ mod tests {
     #[test]
     fn both_list_kinds_get_their_markers() {
         let item = |t: &str| json!({"type": "rich_text_section", "elements": [{"type": "text", "text": t}]});
-        let b = rich(json!([
+        let b = rich(&json!([
             {"type": "rich_text_list", "style": "bullet", "indent": 0, "elements": [item("one"), item("two")]},
             {"type": "rich_text_list", "style": "bullet", "indent": 1, "elements": [item("deep")]},
             {"type": "rich_text_list", "style": "ordered", "indent": 0, "elements": [item("first"), item("second")]},
@@ -357,7 +360,7 @@ mod tests {
         let fallback = vec![Text("fallback".into())];
         assert_eq!(read(&[]), fallback);
         assert_eq!(read(&blocks(json!([{"type": "divider"}]))), fallback);
-        assert_eq!(read(&section(json!([{"type": "text", "text": "  "}]))), fallback);
+        assert_eq!(read(&section(&json!([{"type": "text", "text": "  "}]))), fallback);
         assert_eq!(read(&blocks(json!([{"type": "rich_text"}]))), fallback);
         assert_eq!(segments(&blocks(json!([{"type": "divider"}])), "", &Fake), vec![]);
     }

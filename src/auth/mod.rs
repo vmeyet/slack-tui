@@ -4,7 +4,9 @@ pub mod login;
 pub mod store;
 
 pub use credentials::Credentials;
-pub use store::{MemoryStore, SecretStore, SecurityCli};
+#[cfg(test)]
+pub use store::MemoryStore;
+pub use store::{SecretStore, SecurityCli};
 
 use crate::config::Config;
 use anyhow::{Result, bail};
@@ -46,6 +48,7 @@ pub fn resolve(env: &Env, store: &dyn SecretStore, config: &Config, workspace: O
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn no_env() -> Env {

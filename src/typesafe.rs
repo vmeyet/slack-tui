@@ -193,9 +193,7 @@ async fn read_error_message(response: reqwest::Response) -> String {
     let fallback = response.status().canonical_reason().unwrap_or("error").to_owned();
     let Ok(body) = response.json::<Value>().await else { return fallback };
     match &body["detail"] {
-        Value::Object(detail) => {
-            detail.get("message").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| body["detail"].to_string())
-        }
+        Value::Object(detail) => detail.get("message").and_then(Value::as_str).map_or_else(|| body["detail"].to_string(), str::to_owned),
         Value::String(detail) => detail.clone(),
         Value::Null => fallback,
         other => other.to_string(),
@@ -227,6 +225,7 @@ fn read_api_key() -> Result<String, Unavailable> {
 
 #[cfg(test)]
 pub mod stub {
+    #![allow(clippy::expect_used)]
     use super::*;
 
     /// Answers every request from the state alone, with no network.
@@ -242,6 +241,7 @@ pub mod stub {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use wiremock::matchers::{body_partial_json, header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};

@@ -1,4 +1,4 @@
-use super::types::*;
+use super::types::{Channel, Counts, Group, Identity, Message, Posted, SearchResult, Section, ThreadView, User};
 use crate::auth::Credentials;
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::StatusCode;
@@ -291,17 +291,17 @@ fn retry_after(response: &reqwest::Response) -> Duration {
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(1))
+        .map_or(Duration::from_secs(1), Duration::from_secs)
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    async fn client(server: &MockServer) -> Slack {
+    fn client(server: &MockServer) -> Slack {
         Slack::new(&server.uri(), Credentials::new("xoxc-1", Some("xoxd-1"))).unwrap()
     }
 
@@ -320,7 +320,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 11 * 1024 * 1024]))
             .mount(&server)
             .await;
-        let slack = client(&server).await;
+        let slack = client(&server);
         assert_eq!(slack.download(&format!("{}/files/a.png", server.uri())).await.unwrap(), b"PNG");
         let err = slack.download("https://evil.example.com/a.png").await.unwrap_err().to_string();
         assert!(err.contains("refusing"), "{err}");
@@ -343,7 +343,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let posted = client(&server).await.post_message("C1", "hi", None, None, false).await.unwrap();
+        let posted = client(&server).post_message("C1", "hi", None, None, false).await.unwrap();
         assert_eq!(posted.ts, "1.2");
     }
 
@@ -366,7 +366,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let slack = client(&server).await;
+        let slack = client(&server);
         slack.update_message("C1", "1700000000.000100", "fixed").await.unwrap();
         slack.delete_message("C1", "1700000000.000100").await.unwrap();
     }
@@ -378,7 +378,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": false, "error": "channel_not_found"})))
             .mount(&server)
             .await;
-        let err = client(&server).await.call("chat.postMessage", vec![]).await.unwrap_err();
+        let err = client(&server).call("chat.postMessage", vec![]).await.unwrap_err();
         let api = err.downcast_ref::<ApiError>().unwrap();
         assert_eq!(api.code, "channel_not_found");
         assert!(err.to_string().starts_with("chat.postMessage failed: channel_not_found"));
@@ -391,7 +391,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": false, "error": "invalid_auth"})))
             .mount(&server)
             .await;
-        let err = client(&server).await.auth_test().await.unwrap_err();
+        let err = client(&server).auth_test().await.unwrap_err();
         assert!(err.to_string().contains("slack login"));
     }
 
@@ -410,7 +410,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let me = client(&server).await.auth_test().await.unwrap();
+        let me = client(&server).auth_test().await.unwrap();
         assert_eq!(me.user, "vivien");
     }
 
@@ -430,7 +430,7 @@ mod tests {
             ))
             .mount(&server)
             .await;
-        let channels = client(&server).await.channels().await.unwrap();
+        let channels = client(&server).channels().await.unwrap();
         assert_eq!(channels.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["C1", "C2"]);
     }
 
@@ -444,7 +444,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let messages = client(&server).await.history("C1", 10, None).await.unwrap();
+        let messages = client(&server).history("C1", 10, None).await.unwrap();
         assert_eq!(messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1.0", "2.0"]);
     }
 
@@ -457,6 +457,6 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        client(&server).await.react("C1", "1.0", ":tada:").await.unwrap();
+        client(&server).react("C1", "1.0", ":tada:").await.unwrap();
     }
 }

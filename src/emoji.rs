@@ -61,11 +61,12 @@ pub fn names() -> impl Iterator<Item = &'static str> {
 }
 
 pub fn render(name: &str) -> String {
-    glyph(name).map(str::to_owned).unwrap_or_else(|| format!(":{name}:"))
+    glyph(name).map_or_else(|| format!(":{name}:"), str::to_owned)
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

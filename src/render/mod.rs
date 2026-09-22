@@ -1,8 +1,9 @@
-pub mod text;
-pub mod theme;
-pub mod time;
+//! Pretty output for the command line: messages, threads, lists and search results.
+pub(crate) mod text;
+mod theme;
+pub(crate) mod time;
 
-pub use text::Styled;
+pub(crate) use text::Styled;
 pub use theme::Theme;
 
 use crate::api::{Attachment, Channel, ChannelKind, Identity, Message, Posted, SearchMatch, User};
@@ -21,7 +22,7 @@ const GROUP_WINDOW_SECS: f64 = 5.0 * 60.0;
 
 /// Slack-style grouping: a message continues the previous one when the same author
 /// sent it within a few minutes, on the same day, and neither is a system notice.
-pub fn continues(prev: Option<&Message>, m: &Message) -> bool {
+pub(crate) fn continues(prev: Option<&Message>, m: &Message) -> bool {
     let Some(prev) = prev else { return false };
     let same_author = match (&m.user, &prev.user) {
         (Some(a), Some(b)) => a == b,
@@ -36,29 +37,29 @@ pub fn continues(prev: Option<&Message>, m: &Message) -> bool {
         && time::day_label(&m.ts) == time::day_label(&prev.ts)
 }
 
-pub fn day_separator(t: &Theme, ts: &str, width: usize) -> String {
+pub(crate) fn day_separator(t: &Theme, ts: &str, width: usize) -> String {
     let label = time::day_label(ts);
     let dashes = "─".repeat(width.saturating_sub(label.width() + 4).clamp(2, 6));
     t.dim(&format!("── {label} {dashes}"))
 }
 
-pub fn whoami(t: &Theme, me: &Identity, workspace: Option<&str>) -> String {
-    let host = workspace.map(|w| format!("{w}.slack.com")).unwrap_or_else(|| me.url.clone());
+pub(crate) fn whoami(t: &Theme, me: &Identity, workspace: Option<&str>) -> String {
+    let host = workspace.map_or_else(|| me.url.clone(), |w| format!("{w}.slack.com"));
     format!("{} {} @ {} {}\n", t.ok("✓"), t.bold(&me.user), t.accent(&me.team), t.dim(&format!("({host} · {})", me.user_id)))
 }
 
-pub fn posted(t: &Theme, label: &str, posted: &Posted, in_thread: bool) -> String {
+pub(crate) fn posted(t: &Theme, label: &str, posted: &Posted, in_thread: bool) -> String {
     let what = if in_thread { "replied in" } else { "sent to" };
     format!("{} {what} {} {}\n", t.ok("✓"), t.accent(label), t.link(&posted.permalink))
 }
 
-pub fn title_bar(t: &Theme, title: &str, right: &str) -> String {
+pub(crate) fn title_bar(t: &Theme, title: &str, right: &str) -> String {
     let used = title.width() + right.width() + 6;
     let fill = t.width.saturating_sub(used).max(3);
     format!("{} {} {} {}\n", t.dim("──"), t.title(title), t.dim(&"─".repeat(fill)), t.dim(right))
 }
 
-pub fn messages(t: &Theme, names: &NameBook, title: &str, messages: &[Message], replies: &HashMap<String, Vec<Message>>) -> String {
+pub(crate) fn messages(t: &Theme, names: &NameBook, title: &str, messages: &[Message], replies: &HashMap<String, Vec<Message>>) -> String {
     let mut out = title_bar(t, title, &format!("{} messages", messages.len()));
     if messages.is_empty() {
         out.push_str(&format!("{}\n", t.dim("  nothing here yet")));
@@ -91,7 +92,7 @@ pub fn messages(t: &Theme, names: &NameBook, title: &str, messages: &[Message], 
     out
 }
 
-pub fn thread(t: &Theme, names: &NameBook, channel: &str, messages: &[Message]) -> String {
+pub(crate) fn thread(t: &Theme, names: &NameBook, channel: &str, messages: &[Message]) -> String {
     let Some(root) = messages.first() else {
         return title_bar(t, channel, "empty thread");
     };
@@ -103,7 +104,7 @@ pub fn thread(t: &Theme, names: &NameBook, channel: &str, messages: &[Message]) 
     out
 }
 
-pub fn message(t: &Theme, names: &NameBook, m: &Message, indent: usize) -> String {
+pub(crate) fn message(t: &Theme, names: &NameBook, m: &Message, indent: usize) -> String {
     message_line(t, names, m, indent, false)
 }
 
@@ -158,11 +159,11 @@ fn author(names: &NameBook, m: &Message) -> String {
     if let Some(u) = &m.username {
         return u.clone();
     }
-    m.bot_id.clone().map(|_| "bot".to_owned()).unwrap_or_else(|| "?".to_owned())
+    if m.bot_id.is_some() { "bot" } else { "?" }.to_owned()
 }
 
 /// What a message reads as: its own text, or what its attachments say when it has none.
-pub fn body(names: &NameBook, m: &Message, show_urls: bool) -> Styled {
+pub(crate) fn body(names: &NameBook, m: &Message, show_urls: bool) -> Styled {
     let text = if m.text.is_empty() { attachment_text(&m.attachments) } else { m.text.clone() };
     let mut styled = match m.subtype.as_deref() {
         Some("channel_join") => Styled::dim("joined the channel"),
@@ -180,7 +181,7 @@ fn attachment_text(attachments: &[Attachment]) -> String {
     attachments.iter().map(say).collect::<Vec<_>>().join("\n")
 }
 
-pub fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
+pub(crate) fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
     let mut out = title_bar(t, "search", &format!("{} of {result_total}", matches.len()));
     let mut current = String::new();
     for m in matches {
@@ -207,7 +208,7 @@ pub fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
     out
 }
 
-pub fn firehose_line(t: &Theme, names: &NameBook, line: &crate::firehose::Line, hl: &crate::firehose::Highlighter) -> String {
+pub(crate) fn firehose_line(t: &Theme, names: &NameBook, line: &crate::firehose::Line, hl: &crate::firehose::Highlighter) -> String {
     let label = fit(&names.channel_label(&line.channel), 16);
     let author = line.author(names);
     let text = line.flat_text(names);
@@ -229,7 +230,7 @@ fn tag_mark(t: &Theme, tag: crate::firehose::Tag) -> String {
     }
 }
 
-pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> String {
+pub(crate) fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> String {
     use crate::inbox::Kind;
     let mut out = title_bar(t, "inbox", &plural(items.len() as u64, "item", "items"));
     if items.is_empty() {
@@ -274,7 +275,7 @@ fn priority_marks(t: &Theme, priority: crate::inbox::Priority) -> String {
 }
 
 /// One promise per entry: where, how old, the start of what you said, then the link to it.
-pub fn promises(t: &Theme, names: &NameBook, promises: &[crate::promises::Promise]) -> String {
+pub(crate) fn promises(t: &Theme, names: &NameBook, promises: &[crate::promises::Promise]) -> String {
     let open = promises.iter().filter(|p| !p.closed).count();
     let mut out = title_bar(t, "promises", &format!("{open} open"));
     if promises.is_empty() {
@@ -295,7 +296,7 @@ pub fn promises(t: &Theme, names: &NameBook, promises: &[crate::promises::Promis
     out
 }
 
-pub fn channels(t: &Theme, channels: &[(&Channel, String)]) -> String {
+pub(crate) fn channels(t: &Theme, channels: &[(&Channel, String)]) -> String {
     let mut out = String::new();
     let name_width = channels.iter().map(|(_, n)| n.width()).max().unwrap_or(10).min(40);
     for (c, label) in channels {
@@ -327,7 +328,7 @@ pub fn channels(t: &Theme, channels: &[(&Channel, String)]) -> String {
     out
 }
 
-pub fn users(t: &Theme, users: &[User]) -> String {
+pub(crate) fn users(t: &Theme, users: &[User]) -> String {
     let mut out = String::new();
     let handle_width = users.iter().map(|u| u.handle().width() + 1).max().unwrap_or(10).min(30);
     for u in users {
@@ -347,17 +348,17 @@ pub fn users(t: &Theme, users: &[User]) -> String {
 }
 
 /// Truncates or left-pads to exactly `width` columns, for a right-aligned gutter.
-pub fn fit_right(s: &str, width: usize) -> String {
+pub(crate) fn fit_right(s: &str, width: usize) -> String {
     let text = if s.width() > width { fit(s, width) } else { s.to_owned() };
     format!("{}{text}", " ".repeat(width.saturating_sub(text.width())))
 }
 
-pub fn plural(n: u64, one: &str, many: &str) -> String {
+pub(crate) fn plural(n: u64, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// Pads or truncates to exactly `width` columns.
-pub fn fit(s: &str, width: usize) -> String {
+pub(crate) fn fit(s: &str, width: usize) -> String {
     if s.width() <= width {
         return pad(s, width);
     }
@@ -377,6 +378,7 @@ fn pad(s: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn msg(ts: &str, user: Option<&str>) -> Message {

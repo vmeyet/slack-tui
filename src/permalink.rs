@@ -1,3 +1,4 @@
+use crate::pattern::regex;
 use anyhow::{Result, bail};
 use regex::Regex;
 use std::sync::LazyLock;
@@ -16,8 +17,8 @@ impl MessageRef {
     }
 }
 
-static PERMALINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https://[^/]+/archives/([A-Z0-9]+)/p(\d{16,})(?:\?(.*))?$").unwrap());
-static TS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\d{10}\.\d{6}$").unwrap());
+static PERMALINK: LazyLock<Regex> = LazyLock::new(|| regex(r"^https://[^/]+/archives/([A-Z0-9]+)/p(\d{16,})(?:\?(.*))?$"));
+static TS: LazyLock<Regex> = LazyLock::new(|| regex(r"^\d{10}\.\d{6}$"));
 
 pub fn is_permalink(s: &str) -> bool {
     PERMALINK.is_match(s)
@@ -43,6 +44,7 @@ fn query_value(query: &str, key: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

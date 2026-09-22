@@ -1,4 +1,5 @@
 use super::cdp::{self, Cdp};
+use crate::pattern::regex;
 use anyhow::{Context, Result, bail};
 use regex::Regex;
 use std::path::{Path, PathBuf};
@@ -39,7 +40,7 @@ pub async fn capture(options: &LoginOptions) -> Result<Session> {
     let binary = find_browser(options.browser.as_deref())?;
     let scratch = tempfile::Builder::new().prefix("slack-login-").tempdir()?;
     let profile = options.profile.clone().unwrap_or_else(|| scratch.path().to_path_buf());
-    let start_url = options.workspace.as_deref().map(workspace_url).unwrap_or_else(|| "https://slack.com/signin".to_owned());
+    let start_url = options.workspace.as_deref().map_or_else(|| "https://slack.com/signin".to_owned(), workspace_url);
     let mut child = launch(&binary, &profile, &start_url, options.headless)?;
     let result = tokio::time::timeout(options.timeout, wait_for_session(&profile, options.workspace.as_deref())).await;
     let _ = child.start_kill();
@@ -166,14 +167,14 @@ fn session_cookie(cookies: &[serde_json::Value]) -> Option<String> {
         .and_then(|c| c["value"].as_str().map(str::to_owned))
 }
 
-static WORKSPACE_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^https://([a-z0-9-]+)\.slack\.com(?:/|$)").unwrap());
+static WORKSPACE_URL: LazyLock<Regex> = LazyLock::new(|| regex(r"^https://([a-z0-9-]+)\.slack\.com(?:/|$)"));
 const NOT_WORKSPACES: [&str; 6] = ["app", "www", "slack", "api", "a", "files"];
 
 pub fn pick_workspace(urls: &[String]) -> Option<String> {
     urls.iter().filter_map(|u| WORKSPACE_URL.captures(u).map(|c| c[1].to_owned())).find(|d| !NOT_WORKSPACES.contains(&d.as_str()))
 }
 
-static API_TOKEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""api_token"\s*:\s*"(xox[a-z]-[A-Za-z0-9-]+)""#).unwrap());
+static API_TOKEN: LazyLock<Regex> = LazyLock::new(|| regex(r#""api_token"\s*:\s*"(xox[a-z]-[A-Za-z0-9-]+)""#));
 
 pub fn token_in_html(html: &str) -> Option<String> {
     API_TOKEN.captures(html).map(|c| c[1].to_owned())
@@ -191,6 +192,7 @@ pub async fn fetch_token(url: &str, cookie: &str) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use serde_json::json;
 

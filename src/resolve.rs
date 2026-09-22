@@ -1,13 +1,14 @@
 use crate::api::{Channel, ChannelKind, Group, Message, Slack, User};
 use crate::cache::Cache;
+use crate::pattern::regex;
 use crate::{fuzzy, markdown, mrkdwn};
 use anyhow::{Result, bail};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 
-static CHANNEL_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[CDG][A-Z0-9]{8,}$").unwrap());
-static USER_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[UW][A-Z0-9]{8,}$").unwrap());
+static CHANNEL_ID: LazyLock<Regex> = LazyLock::new(|| regex(r"^[CDG][A-Z0-9]{8,}$"));
+static USER_ID: LazyLock<Regex> = LazyLock::new(|| regex(r"^[UW][A-Z0-9]{8,}$"));
 
 /// Channels, users and usergroups of one workspace, cached on disk and refreshed on a miss.
 pub struct Directory {
@@ -134,10 +135,10 @@ impl Directory {
             return Ok(c.id.clone());
         }
         let close: Vec<String> = fuzzy::rank(name, named()).into_iter().map(|(_, c)| format!("#{}", c.name)).take(5).collect();
-        match close.is_empty() {
-            true => bail!("channel `{target}` not found (are you a member?)"),
-            false => bail!("channel `{target}` not found. Did you mean: {}", close.join(", ")),
+        if close.is_empty() {
+            bail!("channel `{target}` not found (are you a member?)");
         }
+        bail!("channel `{target}` not found. Did you mean: {}", close.join(", "))
     }
 
     fn find_channel(&self, name: &str) -> Option<String> {
@@ -167,10 +168,10 @@ impl Directory {
             return Ok(u.id.clone());
         }
         let close: Vec<String> = fuzzy::rank(handle, people()).into_iter().map(|(_, u)| format!("@{}", u.handle())).take(5).collect();
-        match close.is_empty() {
-            true => bail!("user `@{handle}` not found"),
-            false => bail!("user `@{handle}` not found. Did you mean: {}", close.join(", ")),
+        if close.is_empty() {
+            bail!("user `@{handle}` not found");
         }
+        bail!("user `@{handle}` not found. Did you mean: {}", close.join(", "))
     }
 
     pub fn people(&self) -> Vec<(String, String)> {
@@ -321,13 +322,13 @@ fn kind_rank(kind: ChannelKind) -> u8 {
     }
 }
 
-static MENTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>").unwrap());
+static MENTION: LazyLock<Regex> = LazyLock::new(|| regex(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>"));
 
 fn mentioned_users(text: &str) -> Vec<String> {
     MENTION.captures_iter(text).map(|c| c[1].to_owned()).collect()
 }
 
-static GROUP_MENTION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<!subteam\^([A-Z0-9]+)").unwrap());
+static GROUP_MENTION: LazyLock<Regex> = LazyLock::new(|| regex(r"<!subteam\^([A-Z0-9]+)"));
 
 fn mentioned_groups(text: &str) -> Vec<String> {
     GROUP_MENTION.captures_iter(text).map(|c| c[1].to_owned()).collect()
@@ -379,12 +380,13 @@ impl markdown::Mentions for NameBook {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::auth::Credentials;
     use wiremock::matchers::{body_string_contains, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    async fn directory(server: &MockServer) -> Directory {
+    fn directory(server: &MockServer) -> Directory {
         let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let cache = Cache::new(dir.keep());
@@ -407,7 +409,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let mut d = directory(&server);
         assert_eq!(d.channel_id("#general").await.unwrap(), "C1");
         assert_eq!(d.channel_id("general-fr").await.unwrap(), "C2");
         assert_eq!(d.channel_id("C0AAAAAAAA").await.unwrap(), "C0AAAAAAAA");
@@ -429,7 +431,7 @@ mod tests {
             .respond_with(ok(serde_json::json!({"channel": {"id": "D1"}})))
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let mut d = directory(&server);
         assert_eq!(d.channel_id("@vivien").await.unwrap(), "D1");
         assert_eq!(d.channel_id("@VMEYET").await.unwrap(), "D1");
         assert!(d.channel_id("@ghost").await.unwrap_err().to_string().contains("@ghost"));
@@ -445,7 +447,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let mut d = directory(&server);
         let messages = vec![Message { ts: "1".into(), user: Some("U9".into()), text: "hi <@U9>".into(), ..Default::default() }];
         d.learn_users(&messages).await.unwrap();
         assert_eq!(d.names().user_label("U9"), "bob");
@@ -467,7 +469,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let mut d = directory(&server);
         d.learn_users(&mentioning_groups("<!subteam^S1> <!subteam^S2> <!subteam^S3>")).await.unwrap();
         d.learn_users(&mentioning_groups("<!subteam^S3>")).await.unwrap();
         let names = d.names();
@@ -483,7 +485,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": false, "error": "missing_scope"})))
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let mut d = directory(&server);
         d.learn_users(&mentioning_groups("<!subteam^S1>")).await.unwrap();
         assert_eq!(mrkdwn::plain("<!subteam^S1>", &d.names()), "@S1");
     }
@@ -526,7 +528,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let mut d = directory(&server);
         d.set_channels(vec![
             Channel { id: "D7".into(), is_im: true, user: Some("U7".into()), ..Default::default() },
             Channel { id: "D8".into(), is_im: true, user: Some("USLACKBOT".into()), ..Default::default() },

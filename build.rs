@@ -1,3 +1,4 @@
+//! Embeds the git commit the binary was built from, so `slack update` knows what it runs.
 use std::path::Path;
 use std::process::Command;
 

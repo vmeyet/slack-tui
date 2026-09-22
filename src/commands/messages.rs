@@ -1,12 +1,15 @@
+//! `slack messages`: the latest messages of a channel or DM.
 use crate::api::{Message, rtm};
 use crate::cli::MessagesArgs;
 use crate::ctx::Ctx;
 use crate::render::{self, time};
 use anyhow::{Result, bail};
 use std::collections::HashMap;
+use std::io::Write;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// Prints the latest messages of a channel, following new ones when asked.
 pub async fn run(ctx: &mut Ctx, args: MessagesArgs) -> Result<()> {
     let oldest = match &args.since {
         Some(spec) => Some(time::since_to_ts(spec).ok_or_else(|| anyhow::anyhow!("`{spec}` is not a duration like 2h, 3d, 1w or a date"))?),
@@ -31,7 +34,7 @@ pub async fn run(ctx: &mut Ctx, args: MessagesArgs) -> Result<()> {
         bail!("no messages since {since}");
     }
     if args.follow {
-        let last = messages.last().map(|m| m.ts.clone()).unwrap_or_else(|| format!("{}.000000", chrono::Utc::now().timestamp()));
+        let last = messages.last().map_or_else(|| format!("{}.000000", chrono::Utc::now().timestamp()), |m| m.ts.clone());
         return follow(ctx, &channel, last).await;
     }
     Ok(())
@@ -81,7 +84,6 @@ async fn print_live(ctx: &mut Ctx, messages: &[Message]) -> Result<()> {
             print!("{}", render::message(&ctx.theme, &names, m, 0));
         }
     }
-    use std::io::Write;
     std::io::stdout().flush()?;
     Ok(())
 }

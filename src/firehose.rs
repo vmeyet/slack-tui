@@ -132,6 +132,7 @@ impl Highlighter {
         Ok(Self { patterns })
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.patterns.is_empty()
     }
@@ -162,6 +163,7 @@ impl Highlighter {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]

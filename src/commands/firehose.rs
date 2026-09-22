@@ -1,3 +1,4 @@
+//! `slack firehose`: every message from every conversation as one ticker.
 use crate::api::rtm;
 use crate::cli::FirehoseArgs;
 use crate::ctx::Ctx;
@@ -18,6 +19,7 @@ struct Tagger {
     me: String,
 }
 
+/// Streams every conversation to the terminal until ctrl-c.
 pub async fn run(ctx: &mut Ctx, args: FirehoseArgs) -> Result<()> {
     let patterns: Vec<String> = ctx.config.firehose.highlight.iter().cloned().chain(args.highlight).collect();
     let hl = Highlighter::new(&patterns)?;

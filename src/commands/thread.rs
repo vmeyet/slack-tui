@@ -1,9 +1,11 @@
+//! `slack thread`: one thread in full.
 use super::parse_ref;
 use crate::cli::RefArgs;
 use crate::ctx::Ctx;
 use crate::render;
 use anyhow::Result;
 
+/// Prints the whole thread the reference points to.
 pub async fn run(ctx: &mut Ctx, args: RefArgs) -> Result<()> {
     let r = parse_ref(ctx, &args.reference).await?;
     let messages = ctx.slack.replies(&r.channel, r.thread_root()).await?;

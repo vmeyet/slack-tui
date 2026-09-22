@@ -1,3 +1,4 @@
+//! `slack login` and `slack logout`: browser sign-in and keychain storage.
 use crate::api::Slack;
 use crate::auth::login::{self, LoginOptions};
 use crate::auth::{self, Credentials, SecretStore, SecurityCli};
@@ -8,6 +9,7 @@ use crate::render::Theme;
 use anyhow::{Result, bail};
 use std::time::Duration;
 
+/// Signs in through the browser (or a pasted cookie) and stores the session in the keychain.
 pub async fn run(args: LoginArgs, json: bool) -> Result<()> {
     let theme = Theme::detect();
     let workspace = args.workspace.as_deref().map(normalize_domain).transpose()?;
@@ -47,6 +49,7 @@ pub async fn run(args: LoginArgs, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Forgets a workspace: keychain entry, config and cache.
 pub fn logout(workspace: Option<String>) -> Result<()> {
     let config = Config::load()?;
     let Some(domain) = workspace.or_else(|| config.default.clone()) else { bail!("nothing to log out from") };
@@ -57,7 +60,7 @@ pub fn logout(workspace: Option<String>) -> Result<()> {
     Ok(())
 }
 
-pub fn normalize_domain(input: &str) -> Result<String> {
+fn normalize_domain(input: &str) -> Result<String> {
     let s = input.trim().trim_start_matches("https://").trim_start_matches("http://");
     let domain = s.split('/').next().unwrap_or("").trim_end_matches(".slack.com").to_lowercase();
     if domain.is_empty() || !domain.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
@@ -68,6 +71,7 @@ pub fn normalize_domain(input: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     #[test]
