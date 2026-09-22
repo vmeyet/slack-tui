@@ -2,12 +2,11 @@
 use super::parse_ref;
 use crate::cli::ReactArgs;
 use crate::ctx::Ctx;
-use anyhow::Result;
+use anyhow::{Context, Result};
 
-#[allow(clippy::expect_used)]
 /// Adds the emoji reaction to the referenced message.
 pub async fn run(ctx: &mut Ctx, args: ReactArgs) -> Result<()> {
-    let (emoji, reference) = args.args.split_last().expect("clap enforces 2..=3 args");
+    let (emoji, reference) = args.args.split_last().context("expected a message reference and an emoji")?;
     let r = parse_ref(ctx, reference).await?;
     let name = emoji.trim_matches(':');
     ctx.slack.react(&r.channel, &r.ts, name).await?;
