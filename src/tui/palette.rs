@@ -129,8 +129,7 @@ pub fn slot(line: &str) -> Slot {
     let arg_index = if line.ends_with(char::is_whitespace) { args_done } else { args_done.saturating_sub(1) };
     match (verb, arg_index) {
         ("join" | "j" | "leave", 0) => Slot::Channel,
-        ("go" | "g" | "c", 0) => Slot::Conversation,
-        ("msg" | "m" | "dm", 0) => Slot::Conversation,
+        ("go" | "g" | "c" | "msg" | "m" | "dm", 0) => Slot::Conversation,
         ("react" | "r", 0) => Slot::Emoji,
         ("export" | "e", 0) => Slot::Literal(&["json", "md"]),
         ("snooze" | "z", 0) => Slot::Literal(&["1h", "3h", "tomorrow", "monday"]),

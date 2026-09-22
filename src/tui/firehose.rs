@@ -134,7 +134,7 @@ mod tests {
 
     fn line(n: u64) -> LiveLine {
         LiveLine {
-            ts: format!("{}.000000", 1694700000 + n),
+            ts: format!("{}.000000", 1_694_700_000 + n),
             channel: "C1".into(),
             user: None,
             username: Some("bot".into()),

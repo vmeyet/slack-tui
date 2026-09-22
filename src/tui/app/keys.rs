@@ -414,9 +414,8 @@ impl App {
                 self.focus = Focus::Channels;
                 vec![]
             }
-            Input::Search if text.trim().is_empty() => vec![],
+            Input::Search | Input::Reply { .. } | Input::InboxReply { .. } if text.trim().is_empty() => vec![],
             Input::Search => self.search_for(text),
-            Input::Reply { .. } if text.trim().is_empty() => vec![],
             Input::Reply { channel, thread_ts, .. } => self.send(channel, thread_ts, text),
             Input::React { channel, ts } => {
                 let name = shortcode(text.trim().trim_matches(':')).to_owned();
@@ -430,7 +429,6 @@ impl App {
                 self.toast("saving…");
                 vec![Action::Edit { channel, ts, text }]
             }
-            Input::InboxReply { .. } if text.trim().is_empty() => vec![],
             Input::InboxReply { item } => {
                 let mut actions = vec![Action::Send { channel: item.channel.clone(), thread_ts: item.reply_thread(), text }];
                 if let Some(inbox) = &mut self.inbox
@@ -484,12 +482,11 @@ impl App {
     /// Right dives in: channel → its messages, message with replies → its thread.
     fn go_right(&mut self) -> Vec<Action> {
         match self.focus {
-            Focus::Channels => self.activate(),
             Focus::Messages if self.search.is_none() => match self.messages.get(self.message_selected) {
                 Some(m) if m.is_thread_root() || m.is_reply() => self.activate(),
                 _ => vec![],
             },
-            Focus::Messages => self.activate(),
+            Focus::Channels | Focus::Messages => self.activate(),
             Focus::Thread => vec![],
         }
     }
@@ -517,9 +514,8 @@ impl App {
     fn prev_focus(&self) -> Focus {
         match (self.focus, self.thread.is_some()) {
             (Focus::Channels, true) => Focus::Thread,
-            (Focus::Channels, false) => Focus::Messages,
+            (Focus::Channels, false) | (Focus::Thread, _) => Focus::Messages,
             (Focus::Messages, _) => Focus::Channels,
-            (Focus::Thread, _) => Focus::Messages,
         }
     }
 

@@ -1,4 +1,4 @@
-//! The few Chrome DevTools Protocol calls the login needs, over one websocket.
+//! The few Chrome devtools protocol (CDP) calls the login needs, over one websocket.
 use anyhow::{Context, Result, bail};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};

@@ -1,4 +1,4 @@
-//! Light markdown typed by a human, turned into Block Kit rich_text blocks.
+//! Light markdown typed by a human, turned into Block Kit `rich_text` blocks.
 use crate::pattern::regex;
 use anyhow::{Result, bail};
 use regex::Regex;

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use std::fmt::Write as _;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -69,7 +70,10 @@ impl SecretStore for SecurityCli {
 }
 
 fn hex(s: &str) -> String {
-    s.bytes().map(|b| format!("{b:02x}")).collect()
+    s.bytes().fold(String::with_capacity(s.len() * 2), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }
 
 #[cfg(test)]

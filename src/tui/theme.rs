@@ -1,6 +1,7 @@
 //! One palette for the whole TUI, so a terminal never mixes theme colors with hardcoded ones.
 //! Themes only set foregrounds and row surfaces; the terminal keeps painting its own background,
 //! so pick the theme that matches the terminal's.
+#![allow(clippy::unreadable_literal)]
 use ratatui::style::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

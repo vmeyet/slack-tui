@@ -1,4 +1,4 @@
-//! Typed judgments from TypeSafe's Jev model. Every failure is `Unavailable`, so callers keep their old behaviour.
+//! Typed judgments from Jev, the `TypeSafe` model. Every failure is `Unavailable`, so callers keep their old behaviour.
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -17,7 +17,7 @@ const QUOTA_STATUS: u16 = 402;
 const QUOTA_WORDS: [&str; 6] = ["quota", "credit", "billing", "balance", "insufficient", "exceeded"];
 const PARALLEL_REQUESTS: usize = 8;
 
-/// Why TypeSafe could not answer: no key, quota, outage, bad request.
+/// Why `TypeSafe` could not answer: no key, quota, outage, bad request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unavailable(pub String);
 
@@ -108,7 +108,7 @@ pub struct TypeSafe {
 }
 
 impl TypeSafe {
-    /// Fails fast when TypeSafe is switched off or has no key, before anything is sent.
+    /// Fails fast when `TypeSafe` is switched off or has no key, before anything is sent.
     pub fn connect() -> Result<Self, Unavailable> {
         if let Some(reason) = disabled_reason() {
             return Err(Unavailable(reason.into()));

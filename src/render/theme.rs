@@ -35,6 +35,7 @@ impl Theme {
     }
 
     /// Sets whether links print their URL next to the label.
+    #[must_use]
     pub fn with_show_urls(mut self, show_urls: bool) -> Self {
         self.show_urls = show_urls;
         self

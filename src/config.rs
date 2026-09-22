@@ -21,7 +21,7 @@ pub struct Config {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Typesafe {
-    /// Rank the inbox, tag the firehose and find your promises with TypeSafe's Jev model. Off by default: it sends message text to api.typesafe.ai.
+    /// Rank the inbox, tag the firehose and find your promises with Jev, the `TypeSafe` model. Off by default: it sends message text to api.typesafe.ai.
     #[serde(default)]
     pub enabled: bool,
 }
@@ -66,7 +66,7 @@ pub struct Tui {
     /// Fill under the selected row; by default only the `▎` bar marks it. A name (`darkgray`), `#rrggbb`, or a 0-255 index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<String>,
-    /// Show image thumbnails inline on terminals that can draw them (Kitty, Ghostty, WezTerm, iTerm2). On by default.
+    /// Show image thumbnails inline on terminals that can draw them (Kitty, Ghostty, `WezTerm`, iTerm2). On by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
 }

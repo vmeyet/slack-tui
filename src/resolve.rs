@@ -464,7 +464,7 @@ mod tests {
         Mock::given(path("/usergroups.list"))
             .respond_with(ok(serde_json::json!({"usergroups": [
                 {"id": "S1", "handle": "team-x", "date_delete": 0},
-                {"id": "S2", "handle": "team-gone", "date_delete": 1700000000},
+                {"id": "S2", "handle": "team-gone", "date_delete": 1_700_000_000},
             ]})))
             .expect(1)
             .mount(&server)
