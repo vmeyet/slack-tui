@@ -1,5 +1,5 @@
 use super::theme::Theme;
-use crate::firehose::{Highlighter, Line as LiveLine};
+use crate::firehose::{Highlighter, Line as LiveLine, Tag};
 use crate::render::text;
 use crate::render::time;
 use crate::resolve::NameBook;
@@ -17,9 +17,15 @@ pub const CAPACITY: usize = 1000;
 pub struct Firehose {
     pub selected: Option<usize>,
     pub view: ListState,
+    pub show_noise: bool,
 }
 
 impl Firehose {
+    /// The lines on screen: what Jev tagged as noise stays out unless asked for.
+    pub fn visible<'a>(&self, wall: &'a VecDeque<LiveLine>) -> Vec<&'a LiveLine> {
+        wall.iter().filter(|l| self.show_noise || !l.is_noise()).collect()
+    }
+
     pub fn following(&self) -> bool {
         self.selected.is_none()
     }
@@ -46,21 +52,34 @@ pub fn push(wall: &mut VecDeque<LiveLine>, line: LiveLine) {
     wall.push_back(line);
 }
 
+/// A tag lands on its line if the line is still on the wall.
+pub fn tag(wall: &mut VecDeque<LiveLine>, channel: &str, ts: &str, tag: Tag) {
+    if let Some(line) = wall.iter_mut().find(|l| l.channel == channel && l.ts == ts) {
+        line.tag = Some(tag);
+    }
+}
+
 pub fn draw(f: &mut Frame, view: &mut Firehose, wall: &VecDeque<LiveLine>, names: &NameBook, hl: &Highlighter, area: Rect, theme: &Theme) {
+    let lines = view.visible(wall);
     let status = if view.following() { "live" } else { "paused · G to follow" };
-    let block = super::ui::pane(theme, &format!("firehose · {} · {status}", wall.len()), true);
+    let noise = match (view.show_noise, wall.len() - lines.len()) {
+        (true, _) => " · n hides noise".to_owned(),
+        (false, 0) => String::new(),
+        (false, hidden) => format!(" · {hidden} noise hidden · n shows"),
+    };
+    let block = super::ui::pane(theme, &format!("firehose · {} · {status}{noise}", lines.len()), true);
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
-    let items: Vec<ListItem> = wall.iter().map(|l| row(theme, l, names, hl, width)).collect();
-    let selected = if wall.is_empty() { None } else { Some(view.selected.unwrap_or(wall.len() - 1)) };
+    let items: Vec<ListItem> = lines.iter().map(|l| row(theme, l, names, hl, width)).collect();
+    let selected = if lines.is_empty() { None } else { Some(view.selected.unwrap_or(lines.len() - 1)) };
     let list = List::new(items)
         .highlight_symbol(super::ui::cursor_bar(theme, !view.following()))
         .highlight_spacing(HighlightSpacing::Always)
         .highlight_style(if view.following() { Style::new() } else { super::ui::row_highlight(theme, true).bold() });
     view.view.select(selected);
     f.render_stateful_widget(list, inner, &mut view.view);
-    if wall.is_empty() {
+    if lines.is_empty() {
         f.render_widget(ratatui::widgets::Paragraph::new("  waiting for messages…".fg(theme.muted)), Rect { y: inner.y + 1, ..inner });
     }
 }
@@ -68,15 +87,17 @@ pub fn draw(f: &mut Frame, view: &mut Firehose, wall: &VecDeque<LiveLine>, names
 fn row(theme: &Theme, l: &LiveLine, names: &NameBook, hl: &Highlighter, width: usize) -> ListItem<'static> {
     let hit_style = Style::new().fg(theme.base).bg(theme.warn).bold();
     let label = names.channel_label(&l.channel);
-    let author = l.user.as_deref().map(|u| names.user_label(u)).or_else(|| l.username.clone()).unwrap_or_else(|| "bot".into());
+    let author = l.author(names);
     let text = l.flat_text(names);
     let hit = hl.hits(&text);
-    let head_width = 2 + 5 + 1 + 16 + 1 + 10 + 1 + if l.in_thread { 2 } else { 0 };
+    let (mark, body_style) = tag_look(theme, l.tag);
+    let head_width = 2 + 5 + 1 + 2 + 16 + 1 + 10 + 1 + if l.in_thread { 2 } else { 0 };
     let body = text::truncate(&text, width.saturating_sub(head_width).max(10));
     let mut spans = vec![
         Span::styled(if hit { "! " } else { "  " }, hit_style),
         Span::styled(time::hhmm(&l.ts), Style::new().fg(theme.muted)),
         Span::raw(" "),
+        mark,
         Span::styled(text::visible_fit(&label, 16), Style::new().fg(theme.user(&label))),
         Span::raw(" "),
         Span::styled(text::visible_fit(&author, 10), super::ui::user_style(theme, &author)),
@@ -86,12 +107,23 @@ fn row(theme: &Theme, l: &LiveLine, names: &NameBook, hl: &Highlighter, width: u
         spans.push(Span::styled("↳ ", Style::new().fg(theme.muted)));
     }
     for (piece, h) in hl.split(&body) {
-        spans.push(if h { Span::styled(piece, hit_style) } else { Span::raw(piece) });
+        spans.push(Span::styled(piece, if h { hit_style } else { body_style }));
     }
     if !hit {
         spans[0] = Span::raw("  ");
     }
     ListItem::new(Line::from(spans))
+}
+
+/// A two-column mark before the channel, and the style of the text: incidents in red, noise receded.
+fn tag_look(theme: &Theme, tag: Option<Tag>) -> (Span<'static>, Style) {
+    let danger = Style::new().fg(theme.danger).bold();
+    match tag {
+        Some(Tag::Incident) => (Span::styled("▲ ", danger), danger),
+        Some(Tag::QuestionForMe) => (Span::styled("? ", Style::new().fg(theme.accent).bold()), Style::new()),
+        Some(Tag::Noise) => (Span::raw("  "), Style::new().fg(theme.faded)),
+        Some(Tag::Fyi) | None => (Span::raw("  "), Style::new()),
+    }
 }
 
 #[cfg(test)]
@@ -107,6 +139,7 @@ mod tests {
             text: format!("event {n} on prod"),
             in_thread: n % 2 == 1,
             thread_ts: None,
+            tag: None,
         }
     }
 
@@ -146,5 +179,30 @@ mod tests {
         assert!(out.contains("! "));
         assert!(out.contains("↳ event 1 on prod"));
         assert!(out.contains("quiet"));
+    }
+
+    #[test]
+    fn noise_hides_until_shown_and_incidents_are_marked() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut wall = VecDeque::new();
+        push(&mut wall, LiveLine { text: "lunch anyone".into(), ..line(2) });
+        push(&mut wall, LiveLine { text: "db is down".into(), ..line(4) });
+        tag(&mut wall, "C1", &line(2).ts, Tag::Noise);
+        tag(&mut wall, "C1", &line(4).ts, Tag::Incident);
+        tag(&mut wall, "C1", "gone", Tag::Fyi);
+        let mut view = Firehose::default();
+        let draw_wall = |view: &mut Firehose| {
+            let mut terminal = Terminal::new(TestBackend::new(90, 6)).unwrap();
+            terminal.draw(|f| draw(f, view, &wall, &NameBook::default(), &Highlighter::default(), f.area(), &Theme::default())).unwrap();
+            terminal.backend().to_string()
+        };
+        let out = draw_wall(&mut view);
+        assert!(out.contains("firehose · 1 · live · 1 noise hidden · n shows"), "{out}");
+        assert!(out.contains("▲ C1"), "{out}");
+        assert!(!out.contains("lunch anyone"));
+        view.show_noise = true;
+        let out = draw_wall(&mut view);
+        assert!(out.contains("lunch anyone") && out.contains("n hides noise"), "{out}");
     }
 }

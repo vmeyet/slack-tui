@@ -1,6 +1,8 @@
 use super::{Action, App, Badge, ChannelRow, Focus, Incoming, Live, Thread};
 use crate::api::{Message, SearchMatch};
+use crate::inbox::Item;
 use crate::resolve::NameBook;
+use crate::tui::firehose;
 use ratatui::widgets::ListState;
 use std::collections::HashMap;
 
@@ -24,10 +26,16 @@ impl App {
             Incoming::Composed { channel, thread_ts, text } => return self.composed(channel, thread_ts, text),
             Incoming::Channels { rows, people, names, badges, me } => self.channels_loaded(rows, people, names, badges, me),
             Incoming::SearchResults(matches) => self.search_loaded(matches),
-            Incoming::Inbox { items, names } => {
-                self.names = names;
+            Incoming::Inbox { items, names } => return self.inbox_loaded(items, names),
+            Incoming::Priorities(verdicts) => {
                 if let Some(inbox) = &mut self.inbox {
-                    inbox.set_items(items);
+                    inbox.rank(&verdicts);
+                }
+            }
+            Incoming::Tagged { channel, ts, tag } => firehose::tag(&mut self.wall, &channel, &ts, tag),
+            Incoming::TriageUnavailable(unavailable) => {
+                if std::mem::take(&mut self.triage) {
+                    self.toast(unavailable.notice());
                 }
             }
             Incoming::Threads(candidates) => {
@@ -49,6 +57,16 @@ impl App {
             }
         }
         vec![]
+    }
+
+    fn inbox_loaded(&mut self, items: Vec<Item>, names: NameBook) -> Vec<Action> {
+        self.names = names;
+        let Some(inbox) = &mut self.inbox else { return vec![] };
+        inbox.set_items(items);
+        if !self.triage || inbox.items.is_empty() {
+            return vec![];
+        }
+        vec![Action::Prioritize(inbox.items.clone())]
     }
 
     fn joined(&mut self, channel: String) -> Vec<Action> {

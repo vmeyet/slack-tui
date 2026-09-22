@@ -16,8 +16,10 @@ use super::jump::Candidate;
 use super::palette;
 use crate::api::rtm;
 use crate::api::{Message, SearchMatch};
-use crate::inbox::{Item, State};
+use crate::firehose::{Line as LiveLine, Tag};
+use crate::inbox::{Item, State, Verdicts};
 use crate::resolve::NameBook;
+use crate::typesafe::Unavailable;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -100,6 +102,10 @@ pub enum Action {
         ts: String,
     },
     LoadInbox,
+    /// Ask Jev how pressing each inbox item is.
+    Prioritize(Vec<Item>),
+    /// Ask Jev what kind of live message this is.
+    Classify(LiveLine),
     LoadThreads,
     Join(String),
     Leave(String),
@@ -151,6 +157,14 @@ pub enum Incoming {
         items: Vec<Item>,
         names: NameBook,
     },
+    Priorities(Verdicts),
+    Tagged {
+        channel: String,
+        ts: String,
+        tag: Tag,
+    },
+    /// Jev could not answer; triage stays off for the rest of the session.
+    TriageUnavailable(Unavailable),
     Threads(Vec<Candidate>),
     DmOpened(String),
     Names(NameBook),

@@ -180,6 +180,9 @@ pub struct FirehoseArgs {
     /// Case-insensitive regex to light up (repeatable, adds to `[firehose] highlight` in config).
     #[arg(short = 'H', long = "highlight", value_name = "REGEX")]
     pub highlight: Vec<String>,
+    /// Drop what Jev tags as noise (needs `[typesafe] enabled`).
+    #[arg(long)]
+    pub hide_noise: bool,
 }
 
 #[derive(Args, Debug)]
@@ -228,6 +231,14 @@ mod tests {
         let cli = Cli::parse_from(["slack", "update", "-f"]);
         let Command::Update(args) = cli.command else { panic!() };
         assert!(args.force);
+    }
+
+    #[test]
+    fn firehose_can_hide_noise() {
+        let cli = Cli::parse_from(["slack", "firehose", "--hide-noise", "-H", "prod"]);
+        let Command::Firehose(args) = cli.command else { panic!() };
+        assert!(args.hide_noise);
+        assert_eq!(args.highlight, ["prod"]);
     }
 
     #[test]

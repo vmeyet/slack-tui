@@ -68,9 +68,14 @@ impl App {
 
     fn handle_firehose_key(&mut self, key: KeyEvent) -> Vec<Action> {
         let view = self.firehose.as_mut().expect("firehose open");
-        let len = self.wall.len();
+        let lines = view.visible(&self.wall);
+        let len = lines.len();
         match key.code {
             KeyCode::Esc | KeyCode::Char('f') => self.firehose = None,
+            KeyCode::Char('n') => {
+                view.show_noise = !view.show_noise;
+                view.follow();
+            }
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => view.move_by(1, len),
             KeyCode::Char('k') | KeyCode::Up => view.move_by(-1, len),
@@ -79,7 +84,7 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => view.move_by(i64::MIN / 2, len),
             KeyCode::Char('G') | KeyCode::End => view.follow(),
             KeyCode::Enter => {
-                let Some(line) = view.selected.or_else(|| len.checked_sub(1)).and_then(|i| self.wall.get(i)).cloned() else {
+                let Some(line) = view.selected.or_else(|| len.checked_sub(1)).and_then(|i| lines.get(i)).map(|l| (*l).clone()) else {
                     return vec![];
                 };
                 self.firehose = None;

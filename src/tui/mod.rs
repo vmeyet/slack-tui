@@ -12,9 +12,11 @@ pub mod theme;
 pub mod ui;
 
 use crate::api::rtm;
+use crate::cache::Cache;
 use crate::ctx::Ctx;
 use crate::markdown;
-use crate::resolve::Directory;
+use crate::resolve::{Directory, NameBook};
+use crate::typesafe::{TypeSafe, Unavailable};
 use anyhow::{Result, bail};
 use app::{Action, App, ChannelRow, Incoming, Kind, Settings};
 use crossterm::event::{
@@ -61,14 +63,25 @@ enum Wake {
 
 async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let workspace = ctx.workspace.clone().unwrap_or_else(|| "env".into());
-    let backend = Backend { slack: ctx.slack.clone(), dir: Arc::new(Mutex::new(ctx.dir)), me: Arc::new(OnceCell::new()) };
+    let triage = ctx.config.typesafe.enabled;
+    let jev = triage.then(TypeSafe::connect);
+    let backend = Backend {
+        slack: ctx.slack.clone(),
+        dir: Arc::new(Mutex::new(ctx.dir)),
+        me: Arc::new(OnceCell::new()),
+        cache: ctx.cache,
+        jev: jev.clone().and_then(Result::ok),
+    };
     let (tx, mut rx) = mpsc::unbounded_channel();
+    if let Some(Err(unavailable)) = jev {
+        let _ = tx.send(Incoming::TriageUnavailable(unavailable));
+    }
     let theme = theme_from(&ctx.config.tui)?;
     let highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
     let mut terminal = ratatui::init();
     let enhanced = enable_modifier_keys();
     let thumbs = if ctx.config.tui.images.unwrap_or(true) { images::Thumbs::from_terminal() } else { images::Thumbs::off() };
-    let mut app = App::with(Settings { theme, workspace, highlighter, thumbs });
+    let mut app = App::with(Settings { theme, workspace, highlighter, thumbs, triage });
     spawn(Action::LoadChannels, backend.clone(), tx.clone());
     spawn(Action::CheckUpdate, backend.clone(), tx.clone());
     if open_inbox {
@@ -198,18 +211,33 @@ fn spawn_live(slack: crate::api::Slack, tx: mpsc::UnboundedSender<Incoming>) {
     });
 }
 
-/// What the background tasks share: the API client, the directory, and who is signed in.
+/// What the background tasks share: the API client, the directory, who is signed in, and Jev when it is on.
 #[derive(Clone)]
 struct Backend {
     slack: crate::api::Slack,
     dir: Arc<Mutex<Directory>>,
     me: Arc<OnceCell<String>>,
+    cache: Cache,
+    jev: Option<TypeSafe>,
 }
 
 impl Backend {
     async fn me(&self) -> Result<String> {
         self.me.get_or_try_init(|| async { Ok(self.slack.auth_test().await?.user_id) }).await.cloned()
     }
+
+    /// What Jev needs besides the question: the client, the names, and the handle of whoever `me` is.
+    async fn triage_context(&self) -> Result<(&TypeSafe, NameBook, String)> {
+        let jev = self.jev.as_ref().ok_or_else(|| Unavailable("not connected".into()))?;
+        let names = self.dir.lock().await.names();
+        let me = names.user_label(&self.me().await?);
+        Ok((jev, names, me))
+    }
+}
+
+/// A failed judgment is no error for the app: it turns triage off with one notice.
+fn judged<T>(outcome: std::result::Result<T, Unavailable>, arrived: impl FnOnce(T) -> Incoming) -> Incoming {
+    outcome.map_or_else(Incoming::TriageUnavailable, arrived)
 }
 
 fn spawn(action: Action, backend: Backend, tx: mpsc::UnboundedSender<Incoming>) {
@@ -370,6 +398,16 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             let mut d = dir.lock().await;
             let items = crate::inbox::fetch(slack, &mut d, &me).await?;
             Ok(Incoming::Inbox { items, names: d.names() })
+        }
+        Action::Prioritize(items) => {
+            let (jev, names, me) = backend.triage_context().await?;
+            let verdicts = crate::inbox::prioritize(jev, &backend.cache, &items, &names, &me).await;
+            Ok(judged(verdicts, Incoming::Priorities))
+        }
+        Action::Classify(line) => {
+            let (jev, names, me) = backend.triage_context().await?;
+            let tag = crate::firehose::classify(jev, &line.tag_state(&names, &me)).await;
+            Ok(judged(tag, |tag| Incoming::Tagged { channel: line.channel, ts: line.ts, tag }))
         }
         Action::MarkRead(item) => {
             crate::inbox::mark_read(slack, &item).await?;

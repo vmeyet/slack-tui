@@ -212,13 +212,24 @@ pub fn search(t: &Theme, result_total: u64, matches: &[SearchMatch]) -> String {
 
 pub fn firehose_line(t: &Theme, names: &NameBook, line: &crate::firehose::Line, hl: &crate::firehose::Highlighter) -> String {
     let label = fit(&names.channel_label(&line.channel), 16);
-    let author = line.user.as_deref().map(|u| names.user_label(u)).or_else(|| line.username.clone()).unwrap_or_else(|| "bot".into());
+    let author = line.author(names);
     let text = line.flat_text(names);
     let hit = hl.hits(&text);
     let marker = if hit { t.highlight("!") } else { " ".into() };
+    let tag = line.tag.map(|tag| format!("{} ", tag_mark(t, tag))).unwrap_or_default();
     let arrow = if line.in_thread { t.dim("↳ ") } else { String::new() };
     let body: String = hl.split(&text).into_iter().map(|(piece, h)| if h { t.highlight(&piece) } else { piece }).collect();
-    format!("{marker}{} {} {} {arrow}{body}\n", t.time(&time::hhmm(&line.ts)), t.channel(&label), t.user(&fit(&author, 10)))
+    format!("{marker}{} {} {} {tag}{arrow}{body}\n", t.time(&time::hhmm(&line.ts)), t.channel(&label), t.user(&fit(&author, 10)))
+}
+
+fn tag_mark(t: &Theme, tag: crate::firehose::Tag) -> String {
+    use crate::firehose::Tag;
+    let mark = format!("[{}]", tag.label());
+    match tag {
+        Tag::Incident => t.err(&mark),
+        Tag::QuestionForMe => t.accent(&mark),
+        Tag::Fyi | Tag::Noise => t.dim(&mark),
+    }
 }
 
 pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> String {
@@ -236,8 +247,9 @@ pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> Strin
             Kind::Thread => ("⤷", plural(item.unread.len() as u64, "new reply", "new replies")),
         };
         let when = time::relative(&item.ts);
+        let marks = item.priority.map(|p| priority_marks(t, p)).unwrap_or_default();
         out.push_str(&format!(
-            "{} {}  {}  {}\n",
+            "{} {}  {}  {}{marks}\n",
             t.accent(icon),
             t.bold(&fit(&item.label, label_width)),
             t.dim(&format!("{when:>8}")),
@@ -252,6 +264,17 @@ pub fn inbox(t: &Theme, names: &NameBook, items: &[crate::inbox::Item]) -> Strin
         }
     }
     out
+}
+
+fn priority_marks(t: &Theme, priority: crate::inbox::Priority) -> String {
+    use crate::inbox::Urgency;
+    let reply = if priority.needs_reply { format!("  {}", t.accent("↩ needs reply")) } else { String::new() };
+    let urgency = match priority.urgency {
+        Urgency::High => format!("  {}", t.err("‼ urgent")),
+        Urgency::Medium => format!("  {}", t.highlight("! soon")),
+        Urgency::Low => String::new(),
+    };
+    format!("{reply}{urgency}")
 }
 
 pub fn channels(t: &Theme, channels: &[(&Channel, String)]) -> String {
@@ -354,12 +377,41 @@ mod tests {
             text: "deploy to prod\ndone".into(),
             in_thread: true,
             thread_ts: None,
+            tag: None,
         };
         let out = firehose_line(&t, &NameBook::default(), &line, &hl);
         assert!(out.starts_with('!'), "{out}");
         assert!(out.ends_with("deploybot  ↳ deploy to prod done\n"), "{out}");
-        let quiet = Line { text: "all good".into(), in_thread: false, ..line };
+        let quiet = Line { text: "all good".into(), in_thread: false, ..line.clone() };
         assert!(firehose_line(&t, &NameBook::default(), &quiet, &hl).starts_with(' '));
+        let tagged = Line { tag: Some(crate::firehose::Tag::Incident), ..line };
+        assert!(firehose_line(&t, &NameBook::default(), &tagged, &hl).ends_with("deploybot  [incident] ↳ deploy to prod done\n"));
+    }
+
+    #[test]
+    fn inbox_marks_what_needs_a_reply_and_what_is_urgent() {
+        use crate::inbox::{Item, Kind, Priority, Urgency};
+        let t = Theme::plain(100);
+        let item = |key: &str, priority| Item {
+            key: key.into(),
+            kind: Kind::Mention,
+            channel: "C1".into(),
+            label: format!("#{key}"),
+            thread_ts: None,
+            ts: "1694700000.000000".into(),
+            unread: vec![msg("1694700000.000000", None)],
+            priority,
+        };
+        let items = [
+            item("ops", Some(Priority { needs_reply: true, urgency: Urgency::High })),
+            item("dev", Some(Priority { needs_reply: false, urgency: Urgency::Medium })),
+            item("fun", None),
+        ];
+        let out = inbox(&t, &NameBook::default(), &items);
+        let heads: Vec<&str> = out.lines().filter(|l| l.starts_with('@')).map(str::trim_end).collect();
+        assert!(heads[0].ends_with("mention  ↩ needs reply  ‼ urgent"), "{out}");
+        assert!(heads[1].ends_with("mention  ! soon"), "{out}");
+        assert!(heads[2].ends_with("mention"), "{out}");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::motion;
 use super::theme::Theme;
 use crate::blocks;
-use crate::inbox::{Item, Kind, Snooze, State};
+use crate::inbox::{Item, Kind, Priority, Snooze, State, Urgency, Verdicts};
 use crate::render::text;
 use crate::render::time;
 use crate::resolve::NameBook;
@@ -46,6 +46,13 @@ impl Inbox {
         self.items = self.state.visible(items, crate::inbox::local_now());
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
         self.loading = false;
+    }
+
+    /// Reorders by Jev's verdicts; the cursor stays on the item it was on.
+    pub fn rank(&mut self, verdicts: &Verdicts) {
+        let selected = self.selected_item().map(|i| i.key.clone());
+        self.items = crate::inbox::rank(std::mem::take(&mut self.items), verdicts);
+        self.selected = selected.and_then(|key| self.items.iter().position(|i| i.key == key)).unwrap_or(0);
     }
 
     pub fn move_by(&mut self, delta: i64) {
@@ -127,11 +134,13 @@ fn item_lines(theme: &Theme, item: &Item, names: &NameBook, width: usize) -> Lis
         Kind::Mention => ("@", "mention".to_owned()),
         Kind::Thread => ("⤷", format!("{} new in thread", item.unread.len())),
     };
-    let head = Line::from(vec![
+    let mut head = vec![
         Span::styled(format!(" {icon} "), Style::new().fg(theme.accent).bold()),
         Span::styled(item.label.clone(), Style::new().bold()),
         Span::styled(format!("  {}  ·  {what}", time::relative(&item.ts)), Style::new().fg(theme.muted)),
-    ]);
+    ];
+    head.extend(item.priority.map(|p| priority_spans(theme, p)).unwrap_or_default());
+    let head = Line::from(head);
     let mut lines = vec![head];
     for m in item.unread.iter().rev().take(2).collect::<Vec<_>>().into_iter().rev() {
         let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
@@ -147,6 +156,16 @@ fn item_lines(theme: &Theme, item: &Item, names: &NameBook, width: usize) -> Lis
     }
     lines.push(Line::raw(""));
     ListItem::new(lines)
+}
+
+fn priority_spans(theme: &Theme, priority: Priority) -> Vec<Span<'static>> {
+    let reply = priority.needs_reply.then(|| Span::styled("  ↩ needs reply", Style::new().fg(theme.accent).bold()));
+    let urgency = match priority.urgency {
+        Urgency::High => Some(Span::styled("  ‼ urgent", Style::new().fg(theme.danger).bold())),
+        Urgency::Medium => Some(Span::styled("  ! soon", Style::new().fg(theme.warn))),
+        Urgency::Low => None,
+    };
+    reply.into_iter().chain(urgency).collect()
 }
 
 fn draw_snooze_picker(f: &mut Frame, theme: &Theme, area: Rect) {
@@ -196,6 +215,7 @@ mod tests {
             thread_ts: None,
             ts: "5.0".into(),
             unread: vec![Message { ts: "5.0".into(), text: "hi".into(), ..Default::default() }],
+            priority: None,
         }
     }
 
@@ -230,6 +250,21 @@ mod tests {
         let out = terminal.backend().to_string();
         assert!(out.contains("inbox · 1"));
         assert!(out.contains("snooze for"));
+    }
+
+    #[test]
+    fn ranked_items_show_what_needs_a_reply_and_how_urgent() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let mut inbox = Inbox::new(State::default());
+        inbox.set_items(vec![item("a", Kind::Dm), Item { channel: "C2".into(), ..item("b", Kind::Mention) }]);
+        inbox.rank(&[("C2/5.0".to_owned(), Priority { needs_reply: true, urgency: Urgency::High })].into());
+        let mut terminal = Terminal::new(TestBackend::new(90, 12)).unwrap();
+        terminal.draw(|f| draw(f, &mut inbox, &NameBook::default(), f.area(), &Theme::default(), Duration::ZERO)).unwrap();
+        let out = terminal.backend().to_string();
+        let first = out.lines().find(|l| l.contains("#b")).unwrap_or_default();
+        assert!(first.contains("mention  ↩ needs reply  ‼ urgent"), "{out}");
+        assert!(out.find("#b") < out.find("#a"), "{out}");
     }
 
     #[test]
