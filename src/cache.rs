@@ -33,6 +33,13 @@ impl Cache {
         tokio::fs::write(&path, serde_json::to_vec(value)?).await.with_context(|| format!("writing {}", path.display()))
     }
 
+    /// A folder for files that are not JSON, created on first use.
+    pub async fn folder(&self, name: &str) -> Result<PathBuf> {
+        let path = self.dir.join(name);
+        tokio::fs::create_dir_all(&path).await.with_context(|| format!("creating {}", path.display()))?;
+        Ok(path)
+    }
+
     pub async fn clear(&self) -> Result<()> {
         match tokio::fs::remove_dir_all(&self.dir).await {
             Ok(()) => Ok(()),
@@ -53,6 +60,16 @@ fn root() -> PathBuf {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[tokio::test]
+    async fn folder_is_created_once_and_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::new(dir.path().join("root"));
+        let first = cache.folder("build").await.unwrap();
+        let second = cache.folder("build").await.unwrap();
+        assert!(first.is_dir());
+        assert_eq!(first, second);
+    }
 
     #[tokio::test]
     async fn round_trip_and_clear() {
