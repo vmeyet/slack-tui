@@ -68,6 +68,7 @@ Whoever is typing in the open conversation shows under the last message.
 | `ctrl-k` | Fuzzy jump to a channel, a person or a followed thread; start with `>` to search Slack |
 | `i` | Inbox |
 | `f` | Firehose: every conversation as one live wall |
+| `p` | Promises: follow-ups you said you would do and have not closed (needs triage) |
 | `z` | Reading mode: one centered column, nothing else |
 | `:` | Command line |
 | `?` | Every key |
@@ -86,6 +87,7 @@ Unread DMs, mentions and thread replies in one list.
 With `[typesafe] enabled = true`, TypeSafe's Jev model ranks the inbox (`↩ needs reply` first, then `‼ urgent` and `! soon`) and tags each firehose line as incident, question-for-me, fyi or noise.
 The firehose hides noise (`n` shows it) and paints incidents red.
 Lines show at once; the tag lands when Jev answers.
+`slack promises` (or `p`) asks Jev which of your own messages promised a follow-up, and whether a later reply of yours in the same thread closed it.
 If Jev cannot answer, you get one `⚠ typesafe unavailable` notice and the plain views.
 
 **No live feed?**
@@ -112,6 +114,7 @@ slack users [filter]
 slack inbox                                     # a list when piped or with --list
 slack firehose -H 'error|failed' -H prod        # live ticker, -H highlights a regex
 slack firehose --hide-noise                     # drop what Jev tags as noise
+slack promises --since 2w [--all]               # follow-ups you promised, still open (alias: todo)
 slack api conversations.info channel=C0123      # any Web API method
 ```
 
@@ -136,7 +139,7 @@ show_url = false        # true prints `label (url)`; false keeps a clickable lab
 highlight = ["prod", "error|failed", "@bob"]   # case-insensitive regexes
 
 [typesafe]
-enabled = false         # true sends unread and live message text to api.typesafe.ai to rank and tag them
+enabled = false         # true sends unread, live and your own message text to api.typesafe.ai to rank, tag and find promises
 ```
 
 The TypeSafe key comes from `TYPESAFE_API_KEY`, else the keychain service `typesafe`.

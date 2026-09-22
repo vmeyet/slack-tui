@@ -46,6 +46,9 @@ pub enum Command {
     Inbox(InboxArgs),
     /// Stream every message from every conversation as one ticker, like tailing logs.
     Firehose(FirehoseArgs),
+    /// Follow-ups you promised in your own messages and have not closed yet (needs `[typesafe] enabled`).
+    #[command(visible_alias = "todo")]
+    Promises(PromisesArgs),
     /// Generate shell completions.
     Completions { shell: clap_complete::Shell },
     /// Rebuild and install the latest `slack` with cargo.
@@ -193,6 +196,16 @@ pub struct InboxArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct PromisesArgs {
+    /// Look back this far: `3d`, `2w` or `2026-09-01`.
+    #[arg(long, default_value = crate::promises::DEFAULT_SINCE)]
+    pub since: String,
+    /// Also list the promises a later reply already closed.
+    #[arg(short, long)]
+    pub all: bool,
+}
+
+#[derive(Args, Debug)]
 pub struct ApiArgs {
     /// Method name, e.g. `conversations.info`.
     pub method: String,
@@ -239,6 +252,14 @@ mod tests {
         let Command::Firehose(args) = cli.command else { panic!() };
         assert!(args.hide_noise);
         assert_eq!(args.highlight, ["prod"]);
+    }
+
+    #[test]
+    fn promises_look_back_two_weeks_unless_told() {
+        let Command::Promises(args) = Cli::parse_from(["slack", "todo"]).command else { panic!() };
+        assert_eq!((args.since.as_str(), args.all), ("14d", false));
+        let Command::Promises(args) = Cli::parse_from(["slack", "promises", "--since", "3d", "-a"]).command else { panic!() };
+        assert_eq!((args.since.as_str(), args.all), ("3d", true));
     }
 
     #[test]

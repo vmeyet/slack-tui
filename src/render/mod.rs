@@ -277,6 +277,28 @@ fn priority_marks(t: &Theme, priority: crate::inbox::Priority) -> String {
     format!("{reply}{urgency}")
 }
 
+/// One promise per entry: where, how old, the start of what you said, then the link to it.
+pub fn promises(t: &Theme, names: &NameBook, promises: &[crate::promises::Promise]) -> String {
+    let open = promises.iter().filter(|p| !p.closed).count();
+    let mut out = title_bar(t, "promises", &format!("{open} open"));
+    if promises.is_empty() {
+        out.push_str(&format!("{}\n", t.dim("  nothing you promised is still open")));
+        return out;
+    }
+    let labels: Vec<String> = promises.iter().map(|p| names.channel_label(&p.message.channel.id)).collect();
+    let label_width = labels.iter().map(|l| l.width()).max().unwrap_or(10).min(24);
+    for (promise, label) in promises.iter().zip(&labels) {
+        let mark = if promise.closed { t.ok("✓") } else { t.accent("○") };
+        let when = time::relative(&promise.message.ts);
+        let snippet = text::from_segments(&mrkdwn::parse(&promise.message.text, names), t.show_urls)
+            .wrap_with(t.width.saturating_sub(label_width + 16).max(20), t);
+        let first = snippet.first().cloned().unwrap_or_default();
+        out.push_str(&format!("{mark} {}  {}  {first}\n", t.bold(&fit(label, label_width)), t.dim(&format!("{when:>8}"))));
+        out.push_str(&format!("    {}\n", t.link(&promise.message.permalink)));
+    }
+    out
+}
+
 pub fn channels(t: &Theme, channels: &[(&Channel, String)]) -> String {
     let mut out = String::new();
     let name_width = channels.iter().map(|(_, n)| n.width()).max().unwrap_or(10).min(40);
@@ -412,6 +434,30 @@ mod tests {
         assert!(heads[0].ends_with("mention  ↩ needs reply  ‼ urgent"), "{out}");
         assert!(heads[1].ends_with("mention  ! soon"), "{out}");
         assert!(heads[2].ends_with("mention"), "{out}");
+    }
+
+    #[test]
+    fn promises_show_where_what_and_the_link() {
+        use crate::api::{SearchChannel, SearchMatch};
+        use crate::promises::Promise;
+        let t = Theme::plain(100);
+        let promise = |text: &str, closed| Promise {
+            message: SearchMatch {
+                ts: "1694700000.000000".into(),
+                text: text.into(),
+                permalink: "https://acme.slack.com/archives/C1/p1694700000000000".into(),
+                channel: SearchChannel { id: "C1".into(), name: "ops".into() },
+                ..Default::default()
+            },
+            closed,
+        };
+        let out = promises(&t, &NameBook::default(), &[promise("I'll *check* it", false), promise("will send", true)]);
+        let lines: Vec<&str> = out.lines().skip(1).map(str::trim_end).collect();
+        assert!(lines[0].starts_with("○ C1") && lines[0].ends_with("I'll check it"), "{out}");
+        assert_eq!(lines[1], "    https://acme.slack.com/archives/C1/p1694700000000000");
+        assert!(lines[2].starts_with("✓ C1"), "{out}");
+        assert!(out.lines().next().unwrap_or_default().ends_with("1 open"), "{out}");
+        assert!(promises(&t, &NameBook::default(), &[]).contains("nothing you promised is still open"));
     }
 
     #[test]

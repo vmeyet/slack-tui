@@ -4,6 +4,7 @@ pub mod firehose;
 pub mod inbox;
 pub mod login;
 pub mod messages;
+pub mod promises;
 pub mod react;
 pub mod search;
 pub mod send;

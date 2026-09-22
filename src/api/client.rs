@@ -274,7 +274,13 @@ impl Slack {
     }
 
     pub async fn search(&self, query: &str, count: usize) -> Result<SearchResult> {
-        let p = params(&[("query", query), ("count", &count.to_string()), ("sort", "timestamp"), ("sort_dir", "desc")]);
+        self.search_page(query, count, 1).await
+    }
+
+    /// Newest first; `page` starts at 1.
+    pub async fn search_page(&self, query: &str, count: usize, page: usize) -> Result<SearchResult> {
+        let (count, page) = (count.to_string(), page.to_string());
+        let p = params(&[("query", query), ("count", &count), ("page", &page), ("sort", "timestamp"), ("sort_dir", "desc")]);
         self.call_as("search.messages", p, "messages").await
     }
 }

@@ -825,6 +825,21 @@ fn triage_failure_turns_it_off_with_one_notice() {
 }
 
 #[test]
+fn promises_need_triage_and_open_as_results_to_jump_to() {
+    let mut app = loaded();
+    assert!(app.handle_key(key('p')).is_empty());
+    assert_eq!(app.status_line(), "promises need Jev: set `[typesafe] enabled = true`");
+    app.triage = true;
+    assert_eq!(app.handle_key(key('p')), vec![Action::LoadPromises]);
+    assert!(app.loading);
+    let promise =
+        SearchMatch { ts: "7".into(), channel: crate::api::SearchChannel { id: "C2".into(), ..Default::default() }, ..Default::default() };
+    app.apply(Incoming::SearchResults(vec![promise]));
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "7".into() }]);
+}
+
+#[test]
 fn unknown_live_authors_are_learned_once_seen() {
     let mut app = loaded();
     let actions =

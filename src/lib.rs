@@ -13,6 +13,7 @@ pub mod inbox;
 pub mod markdown;
 pub mod mrkdwn;
 pub mod permalink;
+pub mod promises;
 pub mod render;
 pub mod resolve;
 pub mod tui;

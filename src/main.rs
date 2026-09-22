@@ -43,6 +43,7 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Tui => slack::tui::run(ctx).await,
         Command::Inbox(args) => commands::inbox::run(ctx, args).await,
         Command::Firehose(args) => commands::firehose::run(&mut ctx, args).await,
+        Command::Promises(args) => commands::promises::run(&mut ctx, args).await,
         Command::Login(_) | Command::Logout { .. } | Command::Completions { .. } | Command::Update(_) => unreachable!(),
     }
 }
