@@ -21,7 +21,7 @@ pub struct Config {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Typesafe {
-    /// Rank the inbox and tag the firehose with TypeSafe's Jev model. Off by default: it sends message text to api.typesafe.ai.
+    /// Rank the inbox, tag the firehose and find your promises with TypeSafe's Jev model. Off by default: it sends message text to api.typesafe.ai.
     #[serde(default)]
     pub enabled: bool,
 }

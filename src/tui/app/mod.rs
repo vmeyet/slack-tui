@@ -106,6 +106,8 @@ pub enum Action {
     Prioritize(Vec<Item>),
     /// Ask Jev what kind of live message this is.
     Classify(LiveLine),
+    /// Ask Jev which of your recent messages promised a follow-up you have not closed.
+    LoadPromises,
     LoadThreads,
     Join(String),
     Leave(String),

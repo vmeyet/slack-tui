@@ -409,6 +409,14 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             let tag = crate::firehose::classify(jev, &line.tag_state(&names, &me)).await;
             Ok(judged(tag, |tag| Incoming::Tagged { channel: line.channel, ts: line.ts, tag }))
         }
+        Action::LoadPromises => {
+            let (jev, names, me) = backend.triage_context().await?;
+            let oldest = crate::render::time::since_to_ts(crate::promises::DEFAULT_SINCE).unwrap_or_default();
+            let sent = crate::promises::sent_since(slack, &oldest).await?;
+            let tracked = crate::promises::track(jev, &backend.cache, &sent, &names, &me).await.map_err(|u| anyhow::anyhow!(u.notice()))?;
+            let open: Vec<_> = tracked.into_iter().filter(|p| !p.closed).map(|p| p.message).collect();
+            Ok(if open.is_empty() { Incoming::Toast("no open promises ✓".into()) } else { Incoming::SearchResults(open) })
+        }
         Action::MarkRead(item) => {
             crate::inbox::mark_read(slack, &item).await?;
             Ok(Incoming::Toast(String::new()))

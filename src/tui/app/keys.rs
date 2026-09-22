@@ -100,6 +100,16 @@ impl App {
         vec![]
     }
 
+    fn load_promises(&mut self) -> Vec<Action> {
+        if !self.triage {
+            self.toast("promises need Jev: set `[typesafe] enabled = true`");
+            return vec![];
+        }
+        self.loading = true;
+        self.toast("looking for your open promises…");
+        vec![Action::LoadPromises]
+    }
+
     fn open_jump(&mut self) -> Vec<Action> {
         let channels = self.channels.iter().map(|c| Candidate { label: c.label.clone(), target: Target::Channel(c.id.clone()) }).collect();
         let people =
@@ -259,6 +269,7 @@ impl App {
             }
             KeyCode::Char('R') => return self.refresh(),
             KeyCode::Char('i') => return self.open_inbox(),
+            KeyCode::Char('p') => return self.load_promises(),
             KeyCode::Char('f') => self.firehose = Some(Firehose::default()),
             KeyCode::Char('z') => self.toggle_reading(),
             _ => {}
