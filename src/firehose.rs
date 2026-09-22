@@ -2,9 +2,55 @@
 use crate::api::Message;
 use crate::api::rtm::Event;
 use crate::mrkdwn::{self, Names, Segment};
+use crate::resolve::NameBook;
+use crate::typesafe::{Judge, Question, Unavailable};
 use anyhow::{Context, Result};
 use regex::{Regex, RegexBuilder};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+const STATE_TEXT_CHARS: usize = 2000;
+const TAG_QUESTION: [(&str, Question); 1] = [(
+    "tag",
+    Question::Choice(
+        "How should `me` treat this live Slack message?",
+        &[
+            ("incident", "Something is broken or on fire: an outage, failed deploy, alert or escalation."),
+            ("question-for-me", "A question or request aimed at `me`, by name or by a clear role."),
+            ("fyi", "Worth knowing but asks nothing: news, updates, decisions."),
+            ("noise", "Chatter, bots and routine notices nobody needs to read."),
+        ],
+    ),
+)];
+
+/// What Jev made of a live message; `noise` hides by default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Tag {
+    Incident,
+    QuestionForMe,
+    Fyi,
+    Noise,
+}
+
+impl Tag {
+    const ALL: [Tag; 4] = [Tag::Incident, Tag::QuestionForMe, Tag::Fyi, Tag::Noise];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tag::Incident => "incident",
+            Tag::QuestionForMe => "question-for-me",
+            Tag::Fyi => "fyi",
+            Tag::Noise => "noise",
+        }
+    }
+}
+
+pub async fn classify(judge: &impl Judge, state: &Value) -> Result<Tag, Unavailable> {
+    let answers = judge.ask(state, &TAG_QUESTION).await?;
+    let name = answers.choice("tag")?;
+    Tag::ALL.into_iter().find(|t| t.label() == name).ok_or_else(|| Unavailable(format!("unknown tag `{name}`")))
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Line {
@@ -15,6 +61,9 @@ pub struct Line {
     pub text: String,
     pub in_thread: bool,
     pub thread_ts: Option<String>,
+    /// Arrives after the line, once Jev answered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<Tag>,
 }
 
 impl Line {
@@ -32,7 +81,23 @@ impl Line {
             text: m.text.clone(),
             in_thread: m.is_reply(),
             thread_ts: m.thread_ts.clone(),
+            tag: None,
         }
+    }
+
+    pub fn author(&self, names: &NameBook) -> String {
+        self.user.as_deref().map(|u| names.user_label(u)).or_else(|| self.username.clone()).unwrap_or_else(|| "bot".into())
+    }
+
+    pub fn is_noise(&self) -> bool {
+        self.tag == Some(Tag::Noise)
+    }
+
+    /// What Jev reads to tag the line: who `me` is, and who said what where.
+    pub fn tag_state(&self, names: &NameBook, me: &str) -> Value {
+        let text: String = self.flat_text(names).chars().take(STATE_TEXT_CHARS).collect();
+        let channel = names.channel_label(&self.channel);
+        json!({"me": me, "channel": channel, "author": self.author(names), "in_thread": self.in_thread, "text": text})
     }
 
     /// The text as one line, mentions decoded and links reduced to their label.
@@ -136,5 +201,22 @@ mod tests {
         assert!(line.in_thread);
         assert_eq!(line.flat_text(&mrkdwn::NoNames), "hello world");
         assert!(Line::from_event(&Event::Connected).is_none());
+    }
+
+    #[tokio::test]
+    async fn classify_reads_the_chosen_tag() {
+        use crate::typesafe::stub::Stub;
+        let pick = |state: &Value| {
+            let choice = if state["text"].as_str().unwrap_or_default().contains("down") { "incident" } else { "noise" };
+            Ok(json!({"tag": {"choice": choice}}))
+        };
+        let line = Line { text: "prod is down".into(), ..Line::from_message("C1", &Message { ts: "1".into(), ..Default::default() }) };
+        let state = line.tag_state(&NameBook::default(), "vivien");
+        assert_eq!(state, json!({"me": "vivien", "channel": "C1", "author": "bot", "in_thread": false, "text": "prod is down"}));
+        assert_eq!(classify(&Stub(pick), &state).await, Ok(Tag::Incident));
+        assert_eq!(classify(&Stub(pick), &json!({"text": "lunch"})).await, Ok(Tag::Noise));
+        let odd = Stub(|_| Ok(json!({"tag": {"choice": "spam"}})));
+        assert_eq!(classify(&odd, &state).await, Err(Unavailable("unknown tag `spam`".into())));
+        assert_eq!(serde_json::to_value(Tag::QuestionForMe).unwrap(), json!("question-for-me"));
     }
 }

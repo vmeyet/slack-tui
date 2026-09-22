@@ -82,6 +82,12 @@ Tab completes verbs, channels, people and emoji; `↑` recalls history.
 Unread DMs, mentions and thread replies in one list.
 `→` marks read, `←` snoozes (1h, 3h, tomorrow, monday), `r` replies in place, `enter` opens the conversation, `a` clears everything.
 
+**Triage (opt-in).**
+With `[typesafe] enabled = true`, TypeSafe's Jev model ranks the inbox (`↩ needs reply` first, then `‼ urgent` and `! soon`) and tags each firehose line as incident, question-for-me, fyi or noise.
+The firehose hides noise (`n` shows it) and paints incidents red.
+Lines show at once; the tag lands when Jev answers.
+If Jev cannot answer, you get one `⚠ typesafe unavailable` notice and the plain views.
+
 **No live feed?**
 If the workspace refuses the RTM websocket, the open conversation is polled every 10 seconds (`↻` in the status bar).
 
@@ -105,6 +111,7 @@ slack channels [filter] [--all]
 slack users [filter]
 slack inbox                                     # a list when piped or with --list
 slack firehose -H 'error|failed' -H prod        # live ticker, -H highlights a regex
+slack firehose --hide-noise                     # drop what Jev tags as noise
 slack api conversations.info channel=C0123      # any Web API method
 ```
 
@@ -127,7 +134,13 @@ show_url = false        # true prints `label (url)`; false keeps a clickable lab
 
 [firehose]
 highlight = ["prod", "error|failed", "@bob"]   # case-insensitive regexes
+
+[typesafe]
+enabled = false         # true sends unread and live message text to api.typesafe.ai to rank and tag them
 ```
+
+The TypeSafe key comes from `TYPESAFE_API_KEY`, else the keychain service `typesafe`.
+`TYPESAFE_DISABLED=1` or `~/.agents/typesafe/disabled` turns it off without touching the config.
 
 `:set theme=…`, `:set highlight=…` and `:set images=on|off` write this file from the TUI.
 

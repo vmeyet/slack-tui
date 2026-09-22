@@ -21,6 +21,7 @@ pub struct Settings {
     pub workspace: String,
     pub highlighter: Highlighter,
     pub thumbs: Thumbs,
+    pub triage: bool,
 }
 
 #[derive(Debug)]
@@ -68,6 +69,8 @@ pub struct App {
     pub(in crate::tui) wall: VecDeque<LiveLine>,
     pub(in crate::tui) firehose: Option<Firehose>,
     pub(in crate::tui) highlighter: Highlighter,
+    /// Jev ranks the inbox and tags the firehose: on with `[typesafe] enabled`, off for good once it fails.
+    pub(in crate::tui) triage: bool,
     /// Reading mode: only the conversation, centered, times shown on the selected row.
     pub(in crate::tui) zen: bool,
     pub(in crate::tui) palette: Option<Palette>,
@@ -118,6 +121,7 @@ impl Default for App {
             wall: VecDeque::new(),
             firehose: None,
             highlighter: Highlighter::default(),
+            triage: false,
             zen: false,
             palette: None,
             palette_history: vec![],
@@ -134,8 +138,8 @@ impl App {
     }
 
     pub fn with(settings: Settings) -> Self {
-        let Settings { theme, workspace, highlighter, thumbs } = settings;
-        Self { theme, workspace, highlighter, thumbs, ..Self::new() }
+        let Settings { theme, workspace, highlighter, thumbs, triage } = settings;
+        Self { theme, workspace, highlighter, thumbs, triage, ..Self::new() }
     }
 
     pub fn visible_channels(&self) -> Vec<&ChannelRow> {

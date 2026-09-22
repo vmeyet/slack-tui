@@ -25,6 +25,8 @@ pub struct Theme {
     pub mention: Color,
     pub success: Color,
     pub warn: Color,
+    /// Incidents in the firehose.
+    pub danger: Color,
     /// Author names, picked by a hash of the name.
     pub users: [Color; 6],
 }
@@ -93,6 +95,7 @@ const DEFAULT: Theme = Theme {
     mention: Color::Magenta,
     success: Color::Green,
     warn: Color::Yellow,
+    danger: Color::Red,
     users: [Color::Cyan, Color::Green, Color::Yellow, Color::Magenta, Color::Blue, Color::LightRed],
 };
 
@@ -110,6 +113,7 @@ const DRACULA: Theme = Theme {
     mention: rgb(0xff79c6),
     success: rgb(0x50fa7b),
     warn: rgb(0xffb86c),
+    danger: rgb(0xff5555),
     users: [rgb(0x8be9fd), rgb(0x50fa7b), rgb(0xf1fa8c), rgb(0xff79c6), rgb(0xbd93f9), rgb(0xffb86c)],
 };
 
@@ -127,6 +131,7 @@ const CATPPUCCIN: Theme = Theme {
     mention: rgb(0xcba6f7),
     success: rgb(0xa6e3a1),
     warn: rgb(0xfab387),
+    danger: rgb(0xf38ba8),
     users: [rgb(0x89dceb), rgb(0xa6e3a1), rgb(0xf9e2af), rgb(0xf5c2e7), rgb(0x89b4fa), rgb(0xf38ba8)],
 };
 
@@ -144,6 +149,7 @@ const CATPPUCCIN_LATTE: Theme = Theme {
     mention: rgb(0x8839ef),
     success: rgb(0x40a02b),
     warn: rgb(0xfe640b),
+    danger: rgb(0xd20f39),
     users: [rgb(0x04a5e5), rgb(0x40a02b), rgb(0xdf8e1d), rgb(0xea76cb), rgb(0x1e66f5), rgb(0xd20f39)],
 };
 
@@ -161,6 +167,7 @@ const ROSEPINE: Theme = Theme {
     mention: rgb(0xebbcba),
     success: rgb(0x31748f),
     warn: rgb(0xf6c177),
+    danger: rgb(0xeb6f92),
     users: [rgb(0x9ccfd8), rgb(0x31748f), rgb(0xf6c177), rgb(0xeb6f92), rgb(0xc4a7e7), rgb(0xebbcba)],
 };
 
@@ -178,6 +185,7 @@ const ROSEPINE_DAWN: Theme = Theme {
     mention: rgb(0xd7827e),
     success: rgb(0x286983),
     warn: rgb(0xea9d34),
+    danger: rgb(0xb4637a),
     users: [rgb(0x56949f), rgb(0x286983), rgb(0xea9d34), rgb(0xb4637a), rgb(0x907aa9), rgb(0xd7827e)],
 };
 
@@ -195,6 +203,7 @@ const NORD: Theme = Theme {
     mention: rgb(0xb48ead),
     success: rgb(0xa3be8c),
     warn: rgb(0xd08770),
+    danger: rgb(0xbf616a),
     users: [rgb(0x88c0d0), rgb(0xa3be8c), rgb(0xebcb8b), rgb(0xb48ead), rgb(0x81a1c1), rgb(0xbf616a)],
 };
 
@@ -212,6 +221,7 @@ const TOKYONIGHT: Theme = Theme {
     mention: rgb(0xbb9af7),
     success: rgb(0x9ece6a),
     warn: rgb(0xff9e64),
+    danger: rgb(0xf7768e),
     users: [rgb(0x7dcfff), rgb(0x9ece6a), rgb(0xe0af68), rgb(0xbb9af7), rgb(0x7aa2f7), rgb(0xf7768e)],
 };
 
@@ -229,6 +239,7 @@ const MONOKAI: Theme = Theme {
     mention: rgb(0xf92672),
     success: rgb(0xa6e22e),
     warn: rgb(0xfd971f),
+    danger: rgb(0xf92672),
     users: [rgb(0x66d9ef), rgb(0xa6e22e), rgb(0xe6db74), rgb(0xf92672), rgb(0xae81ff), rgb(0xfd971f)],
 };
 

@@ -14,6 +14,7 @@ pub struct Ctx {
     pub theme: Theme,
     pub workspace: Option<String>,
     pub config: Config,
+    pub cache: Cache,
 }
 
 impl Ctx {
@@ -28,12 +29,13 @@ impl Ctx {
         let slack = Slack::new(&Slack::api_url_from_env(), resolved.credentials)?;
         let cache = Cache::for_workspace(resolved.workspace.as_deref().unwrap_or("env"));
         Ok(Self {
-            dir: Directory::new(slack.clone(), cache),
+            dir: Directory::new(slack.clone(), cache.clone()),
             slack,
             json,
             theme: Theme::detect().with_show_urls(config.links.show_url),
             workspace: resolved.workspace,
             config: config.clone(),
+            cache,
         })
     }
 

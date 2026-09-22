@@ -667,7 +667,25 @@ fn inbox_item(key: &str) -> Item {
         thread_ts: Some("9".into()),
         ts: "10".into(),
         unread: vec![msg("10", "ping")],
+        priority: None,
     }
+}
+
+#[test]
+fn triage_ranks_the_visible_inbox_once_it_loads() {
+    use crate::inbox::{Priority, Urgency};
+    let mut app = loaded();
+    app.handle_key(key('i'));
+    let items = vec![inbox_item("a"), Item { ts: "11".into(), ..inbox_item("b") }];
+    assert!(app.apply(Incoming::Inbox { items: items.clone(), names: NameBook::default() }).is_empty(), "triage off asks nothing");
+    app.triage = true;
+    let actions = app.apply(Incoming::Inbox { items: items.clone(), names: NameBook::default() });
+    assert_eq!(actions, vec![Action::Prioritize(items)]);
+    let urgent = Priority { needs_reply: true, urgency: Urgency::High };
+    app.apply(Incoming::Priorities([("C2/11".to_owned(), urgent)].into()));
+    let inbox = app.inbox.as_ref().unwrap();
+    assert_eq!(inbox.items.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+    assert_eq!(inbox.selected_item().map(|i| i.key.as_str()), Some("a"), "the cursor stays on its item");
 }
 
 #[test]
@@ -765,6 +783,45 @@ fn firehose_collects_every_channel_and_jumps() {
     app.handle_key(key('f'));
     app.handle_key(code(KeyCode::Esc));
     assert!(app.firehose.is_none());
+}
+
+#[test]
+fn triage_tags_live_lines_only_while_the_firehose_is_open() {
+    use crate::firehose::Tag;
+    let mut app = App { triage: true, ..loaded() };
+    let actions = live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("1", "one") });
+    assert!(!actions.iter().any(|a| matches!(a, Action::Classify(_))), "closed firehose asks nothing");
+    app.handle_key(key('f'));
+    let actions = live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("2", "lunch?") });
+    assert!(actions.iter().any(|a| matches!(a, Action::Classify(line) if line.ts == "2")));
+    live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("3", "prod down") });
+    app.apply(Incoming::Tagged { channel: "C2".into(), ts: "2".into(), tag: Tag::Noise });
+    app.apply(Incoming::Tagged { channel: "C2".into(), ts: "3".into(), tag: Tag::Incident });
+    let view = app.firehose.as_ref().unwrap();
+    assert_eq!(view.visible(&app.wall).iter().map(|l| l.ts.as_str()).collect::<Vec<_>>(), ["1", "3"]);
+    app.handle_key(key('k'));
+    assert_eq!(
+        app.handle_key(code(KeyCode::Enter))[0],
+        Action::LoadHistory("C2".into()),
+        "enter opens the visible line, not the hidden one"
+    );
+    app.handle_key(key('f'));
+    app.handle_key(key('n'));
+    assert_eq!(app.firehose.as_ref().unwrap().visible(&app.wall).len(), 3, "n shows the noise again");
+}
+
+#[test]
+fn triage_failure_turns_it_off_with_one_notice() {
+    let mut app = App { triage: true, ..loaded() };
+    app.apply(Incoming::TriageUnavailable(crate::typesafe::Unavailable("quota exhausted".into())));
+    assert_eq!(app.status_line(), "⚠ typesafe unavailable: quota exhausted");
+    app.handle_key(key('j'));
+    app.now += Duration::from_secs(3);
+    app.apply(Incoming::TriageUnavailable(crate::typesafe::Unavailable("again".into())));
+    assert!(!app.status_line().contains("again"));
+    app.handle_key(key('f'));
+    let actions = live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("1", "one") });
+    assert!(!actions.iter().any(|a| matches!(a, Action::Classify(_))));
 }
 
 #[test]

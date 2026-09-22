@@ -15,6 +15,21 @@ pub struct Config {
     pub links: Links,
     #[serde(default, skip_serializing_if = "Firehose::is_default")]
     pub firehose: Firehose,
+    #[serde(default, skip_serializing_if = "Typesafe::is_default")]
+    pub typesafe: Typesafe,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Typesafe {
+    /// Rank the inbox and tag the firehose with TypeSafe's Jev model. Off by default: it sends message text to api.typesafe.ai.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Typesafe {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -181,6 +196,9 @@ mod tests {
         let config: Config = toml::from_str("[links]\nshow_url = true\n\n[firehose]\nhighlight = [\"prod\", \"error|failed\"]\n").unwrap();
         assert!(config.links.show_url);
         assert_eq!(config.firehose.highlight, ["prod", "error|failed"]);
+        assert!(!config.typesafe.enabled, "typesafe stays off unless asked for");
+        let config: Config = toml::from_str("[typesafe]\nenabled = true\n").unwrap();
+        assert!(config.typesafe.enabled);
         assert!(!toml::to_string(&Config::default()).unwrap().contains("tui"));
     }
 

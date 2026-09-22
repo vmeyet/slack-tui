@@ -1,10 +1,15 @@
 //! Everything waiting for you: unread DMs, mentions, and threads with new replies.
 use crate::api::{Message, ReadState, Slack};
-use crate::resolve::Directory;
+use crate::cache::Cache;
+use crate::mrkdwn;
+use crate::resolve::{Directory, NameBook};
+use crate::typesafe::{Judge, Question, Unavailable};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Datelike, Local, TimeZone, Timelike};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -15,6 +20,44 @@ pub enum Kind {
     Mention,
     Thread,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Urgency {
+    Low,
+    Medium,
+    High,
+}
+
+impl Urgency {
+    const LEVELS: [&'static str; 3] = ["low", "medium", "high"];
+
+    fn from_score(score: f64) -> Self {
+        match score.round() as i64 {
+            ..=0 => Urgency::Low,
+            1 => Urgency::Medium,
+            _ => Urgency::High,
+        }
+    }
+}
+
+/// What Jev made of an item: whether it waits on you, and how soon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Priority {
+    pub needs_reply: bool,
+    pub urgency: Urgency,
+}
+
+/// Priorities by the message they were judged on, so a refresh only asks about what is new.
+pub type Verdicts = BTreeMap<String, Priority>;
+
+const VERDICTS_CACHE: &str = "inbox-priorities";
+const STATE_MESSAGES: usize = 5;
+const STATE_TEXT_CHARS: usize = 2000;
+const PRIORITY_QUESTIONS: [(&str, Question); 2] = [
+    ("urgency", Question::Score("How urgently should `me` look at this Slack conversation?", &Urgency::LEVELS)),
+    ("needs_reply", Question::Noul("Does the latest message expect an answer or an action from `me`?")),
+];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Item {
@@ -28,9 +71,17 @@ pub struct Item {
     /// Newest unread ts; marking read means up to here.
     pub ts: String,
     pub unread: Vec<Message>,
+    /// Only once `[typesafe] enabled` and Jev answered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
 }
 
 impl Item {
+    /// The newest unread message: a newer one needs a new verdict.
+    fn verdict_key(&self) -> String {
+        format!("{}/{}", self.channel, self.ts)
+    }
+
     /// Where a reply from the inbox goes: the DM itself, or the thread of the message.
     pub fn reply_thread(&self) -> Option<String> {
         match self.kind {
@@ -178,6 +229,7 @@ async fn dm_item(slack: &Slack, dir: &mut Directory, state: &ReadState) -> Resul
         thread_ts: None,
         ts: last.ts.clone(),
         unread,
+        priority: None,
     }))
 }
 
@@ -197,6 +249,7 @@ async fn mention_items(slack: &Slack, dir: &mut Directory, state: &ReadState, me
             thread_ts: m.thread_ts.clone(),
             ts: m.ts.clone(),
             unread: vec![m],
+            priority: None,
         })
         .collect())
 }
@@ -225,6 +278,7 @@ async fn thread_items(slack: &Slack, dir: &mut Directory) -> Result<Vec<Item>> {
             thread_ts: Some(root.ts.clone()),
             ts: last.ts.clone(),
             unread,
+            priority: None,
         });
     }
     Ok(items)
@@ -236,6 +290,47 @@ pub async fn mark_read(slack: &Slack, item: &Item) -> Result<()> {
         (Kind::Thread, Some(root)) => slack.mark_thread_read(&item.channel, root, &item.ts).await,
         _ => slack.mark_read(&item.channel, &item.ts).await,
     }
+}
+
+/// Priorities for `items`: cached ones reused, the rest asked in parallel and remembered.
+pub async fn prioritize(judge: &impl Judge, cache: &Cache, items: &[Item], names: &NameBook, me: &str) -> Result<Verdicts, Unavailable> {
+    let known: Verdicts = cache.load(VERDICTS_CACHE).unwrap_or_default();
+    let verdicts = judge_all(judge, items, &known, names, me).await?;
+    let _ = cache.save(VERDICTS_CACHE, &verdicts);
+    Ok(verdicts)
+}
+
+async fn judge_all(judge: &impl Judge, items: &[Item], known: &Verdicts, names: &NameBook, me: &str) -> Result<Verdicts, Unavailable> {
+    let (cached, fresh): (Vec<&Item>, Vec<&Item>) = items.iter().partition(|i| known.contains_key(&i.verdict_key()));
+    let asked = futures_util::future::try_join_all(fresh.into_iter().map(|item| judge_one(judge, item, names, me))).await?;
+    let reused = cached.into_iter().map(|i| (i.verdict_key(), known[&i.verdict_key()]));
+    Ok(reused.chain(asked).collect())
+}
+
+async fn judge_one(judge: &impl Judge, item: &Item, names: &NameBook, me: &str) -> Result<(String, Priority), Unavailable> {
+    let answers = judge.ask(&priority_state(item, names, me), &PRIORITY_QUESTIONS).await?;
+    let priority = Priority { needs_reply: answers.noul("needs_reply")? >= 0.5, urgency: Urgency::from_score(answers.score("urgency")?) };
+    Ok((item.verdict_key(), priority))
+}
+
+fn priority_state(item: &Item, names: &NameBook, me: &str) -> Value {
+    let latest = &item.unread[item.unread.len().saturating_sub(STATE_MESSAGES)..];
+    let unread: Vec<Value> = latest
+        .iter()
+        .map(|m| {
+            let from = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
+            let text: String = mrkdwn::plain(&m.text, names).chars().take(STATE_TEXT_CHARS).collect();
+            json!({"from": from, "text": text})
+        })
+        .collect();
+    json!({"me": me, "conversation": item.label, "kind": item.kind, "unread": unread})
+}
+
+/// Waiting on you first, then the most urgent; ties keep their order, newest first.
+pub fn rank(items: Vec<Item>, verdicts: &Verdicts) -> Vec<Item> {
+    let mut ranked: Vec<Item> = items.into_iter().map(|i| Item { priority: verdicts.get(&i.verdict_key()).copied(), ..i }).collect();
+    ranked.sort_by_key(|i| Reverse(i.priority.map(|p| (p.needs_reply, p.urgency))));
+    ranked
 }
 
 pub fn local_now() -> DateTime<Local> {
@@ -256,7 +351,85 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn item(key: &str, ts: &str) -> Item {
-        Item { key: key.into(), kind: Kind::Dm, channel: "D1".into(), label: String::new(), thread_ts: None, ts: ts.into(), unread: vec![] }
+        Item {
+            key: key.into(),
+            kind: Kind::Dm,
+            channel: "D1".into(),
+            label: String::new(),
+            thread_ts: None,
+            ts: ts.into(),
+            unread: vec![],
+            priority: None,
+        }
+    }
+
+    fn said(key: &str, text: &str) -> Item {
+        Item {
+            unread: vec![Message { ts: "5".into(), user: Some("U2".into()), text: text.into(), ..Default::default() }],
+            ..item(key, key)
+        }
+    }
+
+    fn priority(needs_reply: bool, urgency: Urgency) -> Priority {
+        Priority { needs_reply, urgency }
+    }
+
+    /// Reads the verdict off the text itself: `reply` and `urgent`/`soon` are the only words that count.
+    fn keyword_judge(state: &Value) -> Result<Value, Unavailable> {
+        let text = state["unread"][0]["text"].as_str().unwrap_or_default();
+        let score = if text.contains("urgent") {
+            2.0
+        } else if text.contains("soon") {
+            1.2
+        } else {
+            0.1
+        };
+        let noul = if text.contains("reply") { 0.9 } else { 0.1 };
+        Ok(json!({"urgency": {"score": score}, "needs_reply": {"noul": noul}}))
+    }
+
+    #[test]
+    fn rank_puts_replies_first_then_urgency_and_keeps_ties_in_order() {
+        let items = vec![item("a", "a"), item("b", "b"), item("c", "c"), item("d", "d"), item("e", "e")];
+        let verdicts: Verdicts = [
+            ("D1/a".into(), priority(false, Urgency::High)),
+            ("D1/b".into(), priority(true, Urgency::Low)),
+            ("D1/c".into(), priority(false, Urgency::Low)),
+            ("D1/e".into(), priority(false, Urgency::High)),
+        ]
+        .into();
+        let ranked = rank(items, &verdicts);
+        assert_eq!(ranked.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), ["b", "a", "e", "c", "d"]);
+        assert_eq!(ranked[0].priority, Some(priority(true, Urgency::Low)));
+        assert_eq!(ranked[4].priority, None);
+    }
+
+    #[tokio::test]
+    async fn prioritize_asks_only_about_new_messages_and_remembers_them() {
+        use crate::typesafe::stub::Stub;
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Cache::new(tmp.path().to_path_buf());
+        let items = vec![said("a", "urgent, please reply"), said("b", "lunch soon?"), said("c", "fyi")];
+        let verdicts = prioritize(&Stub(keyword_judge), &cache, &items, &NameBook::default(), "me").await.unwrap();
+        assert_eq!(verdicts["D1/a"], priority(true, Urgency::High));
+        assert_eq!(verdicts["D1/b"], priority(false, Urgency::Medium));
+        assert_eq!(verdicts["D1/c"], priority(false, Urgency::Low));
+        let unreachable = Stub(|_| Err(Unavailable("asked again".into())));
+        let again = prioritize(&unreachable, &cache, &items, &NameBook::default(), "me").await.unwrap();
+        assert_eq!(again, verdicts, "cached verdicts are reused, nothing is asked");
+        let newer = vec![said("d", "new")];
+        let error = prioritize(&unreachable, &cache, &newer, &NameBook::default(), "me").await.unwrap_err();
+        assert_eq!(error, Unavailable("asked again".into()));
+    }
+
+    #[test]
+    fn priority_state_carries_the_latest_unread_as_plain_text() {
+        let item = Item { label: "#ops".into(), ..said("a", "*deploy* <https://x.io|failed>") };
+        let state = priority_state(&item, &NameBook::default(), "vivien");
+        assert_eq!(
+            state,
+            json!({"me": "vivien", "conversation": "#ops", "kind": "Dm", "unread": [{"from": "U2", "text": "deploy failed (https://x.io)"}]})
+        );
     }
 
     #[test]
