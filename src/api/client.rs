@@ -4,7 +4,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::fmt;
 use std::time::Duration;
 
 pub const DEFAULT_API_URL: &str = "https://slack.com/api";
@@ -16,27 +15,21 @@ pub fn params(pairs: &[(&str, &str)]) -> Params {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("{method} failed: {code}{}", hint(code))]
 pub struct ApiError {
     pub method: String,
     pub code: String,
 }
 
-impl fmt::Display for ApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} failed: {}", self.method, self.code)?;
-        match self.code.as_str() {
-            "invalid_auth" | "not_authed" | "token_revoked" | "token_expired" => {
-                write!(f, " (session expired? run `slack login`)")
-            }
-            "channel_not_found" => write!(f, " (check the name, or are you a member?)"),
-            "ratelimited" => write!(f, " (slow down a little)"),
-            _ => Ok(()),
-        }
+fn hint(code: &str) -> &'static str {
+    match code {
+        "invalid_auth" | "not_authed" | "token_revoked" | "token_expired" => " (session expired? run `slack login`)",
+        "channel_not_found" => " (check the name, or are you a member?)",
+        "ratelimited" => " (slow down a little)",
+        _ => "",
     }
 }
-
-impl std::error::Error for ApiError {}
 
 #[derive(Clone)]
 pub struct Slack {
@@ -382,6 +375,15 @@ mod tests {
         let api = err.downcast_ref::<ApiError>().unwrap();
         assert_eq!(api.code, "channel_not_found");
         assert!(err.to_string().starts_with("chat.postMessage failed: channel_not_found"));
+    }
+
+    #[test]
+    fn api_error_message_carries_the_hint_for_its_code() {
+        let message = |code: &str| ApiError { method: "m".into(), code: code.into() }.to_string();
+        assert_eq!(message("token_expired"), "m failed: token_expired (session expired? run `slack login`)");
+        assert_eq!(message("channel_not_found"), "m failed: channel_not_found (check the name, or are you a member?)");
+        assert_eq!(message("ratelimited"), "m failed: ratelimited (slow down a little)");
+        assert_eq!(message("other"), "m failed: other");
     }
 
     #[tokio::test]
