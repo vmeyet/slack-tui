@@ -117,7 +117,7 @@ impl TypeSafe {
     }
 
     fn new(url: &str, key: &str) -> Result<Self, Unavailable> {
-        let http = reqwest::Client::builder().timeout(TIMEOUT).build().map_err(|e| Unavailable(e.to_string()))?;
+        let http = reqwest::Client::builder().timeout(TIMEOUT).https_only(!cfg!(test)).build().map_err(|e| Unavailable(e.to_string()))?;
         Ok(Self { http, url: url.to_owned(), key: key.to_owned(), slots: Arc::new(Semaphore::new(PARALLEL_REQUESTS)) })
     }
 
