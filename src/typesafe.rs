@@ -232,9 +232,9 @@ pub mod stub {
     pub struct Stub(pub fn(&Value) -> Result<Value, Unavailable>);
 
     impl Judge for Stub {
-        async fn ask(&self, state: &Value, _questions: &[(&str, Question)]) -> Result<Answers, Unavailable> {
-            let raw = (self.0)(state)?;
-            Ok(serde_json::from_value(raw).expect("stub answers are valid"))
+        fn ask(&self, state: &Value, _questions: &[(&str, Question)]) -> impl Future<Output = Result<Answers, Unavailable>> + Send {
+            let answers = (self.0)(state).map(|raw| serde_json::from_value(raw).expect("stub answers are valid"));
+            std::future::ready(answers)
         }
     }
 }
