@@ -22,15 +22,15 @@ async fn main() {
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Login(args) => return commands::login::run(args, cli.json).await,
-        Command::Logout { workspace } => return commands::login::logout(workspace.or(cli.workspace)),
+        Command::Logout { workspace } => return commands::login::logout(workspace.or(cli.workspace)).await,
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "slack", &mut std::io::stdout());
             return Ok(());
         }
-        Command::Update(args) => return commands::update::run(&args),
+        Command::Update(args) => return commands::update::run(&args).await,
         _ => {}
     }
-    let mut ctx = Ctx::open(cli.workspace.as_deref(), cli.json)?;
+    let mut ctx = Ctx::open(cli.workspace.as_deref(), cli.json).await?;
     match cli.command {
         Command::Whoami => commands::whoami::run(&mut ctx).await,
         Command::Send(args) => commands::send::run(&mut ctx, args).await,

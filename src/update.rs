@@ -3,7 +3,6 @@ use crate::version;
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 
 pub const REPO: &str = "https://github.com/vmeyet/slack-tui";
 
@@ -30,26 +29,30 @@ pub fn standing(installed: &str, latest: Option<&str>) -> Standing {
 
 /// The newest commit of the repo, asked at most once a day and remembered between runs.
 /// `None` while it cannot be known, which every caller reads as "say nothing".
-pub fn latest_commit() -> Option<String> {
+pub async fn latest_commit() -> Option<String> {
     let cache = Cache::shared();
-    let last: Option<Check> = cache.load(CHECK_FILE);
+    let last: Option<Check> = cache.load(CHECK_FILE).await;
     let now = Utc::now().timestamp();
     if !due(last.as_ref(), now) {
         return last.and_then(|c| c.commit);
     }
-    let check = Check::now(remote_head().ok(), now);
-    let _ = cache.save(CHECK_FILE, &check);
+    let check = Check::now(remote_head().await.ok(), now);
+    let _ = cache.save(CHECK_FILE, &check).await;
     check.commit
 }
 
 /// Remembers what a fresh check found, so the hint agrees with a update that just ran.
-pub fn remember(commit: &str) {
-    let _ = Cache::shared().save(CHECK_FILE, &Check::now(Some(commit.to_owned()), Utc::now().timestamp()));
+pub async fn remember(commit: &str) {
+    let _ = Cache::shared().save(CHECK_FILE, &Check::now(Some(commit.to_owned()), Utc::now().timestamp())).await;
 }
 
-pub fn remote_head() -> Result<String> {
-    let output =
-        Command::new("git").args(["ls-remote", REPO, "HEAD"]).env("GIT_TERMINAL_PROMPT", "0").output().context("running git ls-remote")?;
+pub async fn remote_head() -> Result<String> {
+    let output = tokio::process::Command::new("git")
+        .args(["ls-remote", REPO, "HEAD"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .await
+        .context("running git ls-remote")?;
     if !output.status.success() {
         bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
     }

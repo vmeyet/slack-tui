@@ -21,18 +21,18 @@ pub struct Ctx {
 
 impl Ctx {
     /// Loads config and credentials for the workspace and connects the API client.
-    pub fn open(workspace: Option<&str>, json: bool) -> Result<Self> {
+    pub async fn open(workspace: Option<&str>, json: bool) -> Result<Self> {
         let config = Config::load()?;
         let store = SecurityCli::new(auth::SERVICE);
-        Self::build(&Env::from_process(), &store, &config, workspace, json)
+        Self::build(&Env::from_process(), &store, &config, workspace, json).await
     }
 
-    pub(crate) fn build(env: &Env, store: &dyn SecretStore, config: &Config, workspace: Option<&str>, json: bool) -> Result<Self> {
+    pub(crate) async fn build(env: &Env, store: &dyn SecretStore, config: &Config, workspace: Option<&str>, json: bool) -> Result<Self> {
         let resolved = auth::resolve(env, store, config, workspace)?;
         let slack = Slack::new(&Slack::api_url_from_env(), resolved.credentials)?;
         let cache = Cache::for_workspace(resolved.workspace.as_deref().unwrap_or("env"));
         Ok(Self {
-            dir: Directory::new(slack.clone(), cache.clone()),
+            dir: Directory::new(slack.clone(), cache.clone()).await,
             slack,
             json,
             theme: Theme::detect().with_show_urls(config.links.show_url),

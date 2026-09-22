@@ -4,7 +4,7 @@ use crate::render::Theme;
 use crate::update::{self, REPO, Standing, remote_head, standing};
 use crate::version;
 use anyhow::{Context, Result, bail};
-use std::process::Command;
+use tokio::process::Command;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
@@ -21,24 +21,24 @@ fn decide(installed: &str, latest: Option<&str>, force: bool) -> Action {
 }
 
 /// Rebuilds and installs the latest commit unless the running binary already is it.
-pub fn run(args: &UpdateArgs) -> Result<()> {
+pub async fn run(args: &UpdateArgs) -> Result<()> {
     let theme = Theme::detect();
-    let latest = if args.force { None } else { latest_commit(&theme) };
+    let latest = if args.force { None } else { latest_commit(&theme).await };
     if let Some(commit) = &latest {
-        update::remember(commit);
+        update::remember(commit).await;
     }
     match decide(version::COMMIT, latest.as_deref(), args.force) {
         Action::UpToDate => {
             println!("{} already up to date ({})", theme.ok("✓"), version::label());
             Ok(())
         }
-        Action::Install => install(&theme),
+        Action::Install => install(&theme).await,
     }
 }
 
 /// Asked fresh, never from the daily cache the TUI hint uses: the user is here for the latest.
-fn latest_commit(theme: &Theme) -> Option<String> {
-    match remote_head() {
+async fn latest_commit(theme: &Theme) -> Option<String> {
+    match remote_head().await {
         Ok(commit) => Some(commit),
         Err(err) => {
             eprintln!("{} could not check the latest version: {err}", theme.accent("!"));
@@ -47,9 +47,9 @@ fn latest_commit(theme: &Theme) -> Option<String> {
     }
 }
 
-fn install(theme: &Theme) -> Result<()> {
+async fn install(theme: &Theme) -> Result<()> {
     println!("{} installing the latest slack from {REPO}…", theme.accent("→"));
-    let status = Command::new("cargo").args(["install", "--git", REPO, "--force"]).status().context("running cargo install")?;
+    let status = Command::new("cargo").args(["install", "--git", REPO, "--force"]).status().await.context("running cargo install")?;
     if !status.success() {
         bail!("cargo install failed");
     }

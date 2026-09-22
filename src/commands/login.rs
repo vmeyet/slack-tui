@@ -34,7 +34,7 @@ pub async fn run(args: LoginArgs, json: bool) -> Result<()> {
     let workspace =
         Workspace { team_id: me.team_id.clone(), team_name: me.team.clone(), user_id: me.user_id.clone(), user_name: me.user.clone() };
     Config::load()?.with_workspace(&domain, workspace).save()?;
-    Cache::for_workspace(&domain).clear()?;
+    Cache::for_workspace(&domain).clear().await?;
     if json {
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({"workspace": domain, "user": me.user, "team": me.team}))?);
         return Ok(());
@@ -50,11 +50,11 @@ pub async fn run(args: LoginArgs, json: bool) -> Result<()> {
 }
 
 /// Forgets a workspace: keychain entry, config and cache.
-pub fn logout(workspace: Option<String>) -> Result<()> {
+pub async fn logout(workspace: Option<String>) -> Result<()> {
     let config = Config::load()?;
     let Some(domain) = workspace.or_else(|| config.default.clone()) else { bail!("nothing to log out from") };
     SecurityCli::new(auth::SERVICE).delete(&domain)?;
-    Cache::for_workspace(&domain).clear()?;
+    Cache::for_workspace(&domain).clear().await?;
     config.without_workspace(&domain).save()?;
     println!("{} forgot {domain}", Theme::detect().ok("✓"));
     Ok(())

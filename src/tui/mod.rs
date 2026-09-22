@@ -29,6 +29,7 @@ use ratatui::DefaultTerminal;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, OnceCell, mpsc};
 
 /// Opens the interactive client and returns when the user quits.
@@ -287,10 +288,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
     match action {
         Action::Compose { .. } => bail!("compose is run by the event loop, not here"),
         Action::LoadChannels => load_channels(backend).await,
-        Action::CheckUpdate => {
-            let latest = tokio::task::spawn_blocking(crate::update::latest_commit).await.unwrap_or(None);
-            Ok(Incoming::Latest(latest))
-        }
+        Action::CheckUpdate => Ok(Incoming::Latest(crate::update::latest_commit().await)),
         Action::LoadHistory(channel) => {
             let messages = slack.history(&channel, 100, None).await?;
             let mut d = dir.lock().await;
@@ -329,11 +327,11 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
         }
         Action::Open { channel, ts } => {
             let url = slack.permalink(&channel, &ts).await?;
-            std::process::Command::new("open").arg(&url).spawn()?;
+            tokio::process::Command::new("open").arg(&url).spawn()?;
             Ok(Incoming::Toast("opened in Slack".into()))
         }
         Action::OpenUrl(url) => {
-            std::process::Command::new("open").arg(&url).spawn()?;
+            tokio::process::Command::new("open").arg(&url).spawn()?;
             Ok(Incoming::Toast(format!("opened {url}")))
         }
         Action::LoadThreads => {
@@ -388,7 +386,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
                     crate::render::messages(&theme, &names, &label, &messages, &HashMap::new())
                 }
             };
-            std::fs::write(&path, body)?;
+            tokio::fs::write(&path, body).await?;
             Ok(Incoming::Toast(format!("saved {}", path.display())))
         }
         Action::OpenDm(user) => {
@@ -424,7 +422,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             Ok(Incoming::Toast(String::new()))
         }
         Action::SaveInbox { workspace, state } => {
-            state.save(&workspace)?;
+            state.save(&workspace).await?;
             Ok(Incoming::Toast(String::new()))
         }
         Action::LoadImage { id, url } => {
@@ -435,16 +433,19 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             Ok(Incoming::Thumb { id, image })
         }
         Action::SaveSetting { key, value } => {
-            let mut config = crate::config::Config::load()?;
-            config.tui = config.tui.with(&key, &value);
-            config.save()?;
+            tokio::task::spawn_blocking(move || {
+                let mut config = crate::config::Config::load()?;
+                config.tui = config.tui.with(&key, &value);
+                config.save()
+            })
+            .await??;
             Ok(Incoming::Toast(String::new()))
         }
         Action::Yank { channel, ts } => {
             let url = slack.permalink(&channel, &ts).await?;
-            let mut child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
-            std::io::Write::write_all(child.stdin.as_mut().context("piped stdin")?, url.as_bytes())?;
-            child.wait()?;
+            let mut child = tokio::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
+            child.stdin.take().context("piped stdin")?.write_all(url.as_bytes()).await?;
+            child.wait().await?;
             Ok(Incoming::Toast("permalink copied".into()))
         }
     }

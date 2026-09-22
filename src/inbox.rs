@@ -151,12 +151,12 @@ impl State {
         std::fs::read(Self::path(workspace)).ok().and_then(|raw| serde_json::from_slice(&raw).ok()).unwrap_or_default()
     }
 
-    pub fn save(&self, workspace: &str) -> Result<()> {
+    pub async fn save(&self, workspace: &str) -> Result<()> {
         let path = Self::path(workspace);
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
+            tokio::fs::create_dir_all(dir).await?;
         }
-        std::fs::write(&path, serde_json::to_vec(self)?).with_context(|| format!("writing {}", path.display()))
+        tokio::fs::write(&path, serde_json::to_vec(self)?).await.with_context(|| format!("writing {}", path.display()))
     }
 
     pub fn snooze(&mut self, key: &str, until: DateTime<Local>) {
@@ -304,9 +304,9 @@ pub async fn mark_read(slack: &Slack, item: &Item) -> Result<()> {
 
 /// Priorities for `items`: cached ones reused, the rest asked in parallel and remembered.
 pub async fn prioritize(judge: &impl Judge, cache: &Cache, items: &[Item], names: &NameBook, me: &str) -> Result<Verdicts, Unavailable> {
-    let known: Verdicts = cache.load(VERDICTS_CACHE).unwrap_or_default();
+    let known: Verdicts = cache.load(VERDICTS_CACHE).await.unwrap_or_default();
     let verdicts = judge_all(judge, items, &known, names, me).await?;
-    let _ = cache.save(VERDICTS_CACHE, &verdicts);
+    let _ = cache.save(VERDICTS_CACHE, &verdicts).await;
     Ok(verdicts)
 }
 
@@ -485,13 +485,13 @@ mod tests {
         assert_eq!(Snooze::NextWeek.until(monday).day(), 28);
     }
 
-    #[test]
-    fn state_round_trips() {
+    #[tokio::test]
+    async fn state_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("SLACK_CLI_STATE_DIR", dir.path()) };
         let mut state = State::default();
         state.snooze("a", at(99));
-        state.save("acme").unwrap();
+        state.save("acme").await.unwrap();
         assert_eq!(State::load("acme"), state);
         assert_eq!(State::load("other"), State::default());
     }
@@ -569,7 +569,7 @@ mod tests {
         Mock::given(path("/users.list")).respond_with(ok(json!({"members": [{"id": "U2", "name": "bob"}]}))).mount(&server).await;
         let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let mut dir = Directory::new(slack.clone(), Cache::new(tmp.keep()));
+        let mut dir = Directory::new(slack.clone(), Cache::new(tmp.keep())).await;
         let items = fetch(&slack, &mut dir, "U1").await.unwrap();
         let summary: Vec<(Kind, &str, &str, usize)> =
             items.iter().map(|i| (i.kind, i.key.as_str(), i.label.as_str(), i.unread.len())).collect();
@@ -586,7 +586,7 @@ mod tests {
             .await;
         let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let mut dir = Directory::new(slack.clone(), Cache::new(tmp.keep()));
+        let mut dir = Directory::new(slack.clone(), Cache::new(tmp.keep())).await;
         assert!(fetch(&slack, &mut dir, "U1").await.unwrap().is_empty());
     }
 }
