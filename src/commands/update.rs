@@ -1,10 +1,13 @@
 //! `slack update`: rebuild and install the latest commit.
+use crate::cache::Cache;
 use crate::cli::UpdateArgs;
 use crate::render::Theme;
 use crate::update::{self, REPO, Standing, remote_head, standing};
 use crate::version;
 use anyhow::{Context, Result, bail};
 use tokio::process::Command;
+
+const BUILD_FOLDER: &str = "cargo_target";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
@@ -47,9 +50,16 @@ async fn latest_commit(theme: &Theme) -> Option<String> {
     }
 }
 
+/// Built in a kept folder so the next update only recompiles what changed.
 async fn install(theme: &Theme) -> Result<()> {
     println!("{} installing the latest slack from {REPO}…", theme.accent("→"));
-    let status = Command::new("cargo").args(["install", "--git", REPO, "--force"]).status().await.context("running cargo install")?;
+    let build = Cache::shared().folder(BUILD_FOLDER).await?;
+    let status = Command::new("cargo")
+        .args(["install", "--git", REPO, "--force", "--target-dir"])
+        .arg(&build)
+        .status()
+        .await
+        .context("running cargo install")?;
     if !status.success() {
         bail!("cargo install failed");
     }
