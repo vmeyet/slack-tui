@@ -167,6 +167,7 @@ impl App {
     fn mark_read(&mut self) -> Vec<Action> {
         let (Some(channel), Some(last)) = (self.current_channel.clone(), self.messages.last()) else { return vec![] };
         self.unread.remove(&channel);
+        self.marked = Some(last.ts.clone());
         vec![Action::MarkChannelRead { channel, ts: last.ts.clone() }]
     }
 

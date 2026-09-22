@@ -342,7 +342,13 @@ fn history_with_pictures_asks_for_each_thumbnail_once() {
     let with_picture = Message { files: vec![picture], ..msg("1", "look") };
     let history = |m: Message| Incoming::History { channel: "C1".into(), messages: vec![m], names: NameBook::default() };
     let actions = app.apply(history(with_picture.clone()));
-    assert_eq!(actions, vec![Action::LoadImage { id: "F1".into(), url: "https://files.slack.com/shot.png".into() }]);
+    assert_eq!(
+        actions,
+        vec![
+            Action::LoadImage { id: "F1".into(), url: "https://files.slack.com/shot.png".into() },
+            Action::SyncRead { channel: "C1".into(), ts: "1".into() },
+        ]
+    );
     assert_eq!(app.apply(history(with_picture)), vec![]);
     app.apply(Incoming::Thumb { id: "F1".into(), image: Some(image::DynamicImage::new_rgb8(4, 4)) });
     assert!(matches!(app.thumbs.get("F1"), Some(super::super::images::Thumb::Ready(_))));
@@ -506,6 +512,41 @@ fn quit_and_help() {
 
 fn live(app: &mut App, event: rtm::Event) -> Vec<Action> {
     app.apply(Incoming::Live(Box::new(event)))
+}
+
+fn synced(channel: &str, ts: &str) -> Action {
+    Action::SyncRead { channel: channel.into(), ts: ts.into() }
+}
+
+#[test]
+fn opening_a_channel_marks_it_read_on_slack_once() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    assert_eq!(app.apply(history(vec![msg("1", "a"), msg("2", "b")])), vec![synced("C1", "2")]);
+    assert_eq!(app.apply(history(vec![msg("1", "a"), msg("2", "b")])), vec![]);
+}
+
+#[test]
+fn live_messages_in_the_open_channel_are_marked_read_on_the_next_tick() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    live(&mut app, rtm::Event::Connected);
+    assert!(!live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") }).contains(&synced("C1", "2")));
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("3", "c") });
+    assert_eq!(app.apply(Incoming::Tick), vec![synced("C1", "3")]);
+    assert_eq!(app.apply(Incoming::Tick), vec![]);
+}
+
+#[test]
+fn leaving_a_channel_marks_what_arrived_before_opening_the_next() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
+    app.handle_key(key('h'));
+    app.handle_key(key('j'));
+    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![synced("C1", "2"), Action::LoadHistory("C2".into())]);
 }
 
 #[test]

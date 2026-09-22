@@ -119,6 +119,11 @@ pub enum Action {
         channel: String,
         ts: String,
     },
+    /// Like `MarkChannelRead`, without a toast: the user only opened or watched the channel.
+    SyncRead {
+        channel: String,
+        ts: String,
+    },
     Export {
         path: PathBuf,
         label: String,

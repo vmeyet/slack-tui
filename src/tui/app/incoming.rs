@@ -115,7 +115,9 @@ impl App {
         let kept = selected_ts.filter(|_| !at_bottom).and_then(|ts| messages.iter().position(|m| m.ts == ts));
         self.message_selected = kept.unwrap_or(messages.len().saturating_sub(1));
         self.messages = messages;
-        self.refresh_thumbs()
+        let mut actions = self.refresh_thumbs();
+        actions.extend(self.sync_read());
+        actions
     }
 
     fn replies_loaded(&mut self, channel: String, ts: String, messages: Vec<Message>, names: NameBook) -> Vec<Action> {
@@ -160,13 +162,17 @@ impl App {
     }
 
     /// Without a live feed, the open conversation is refreshed on every tick.
+    /// Live messages in the open channel are marked read here, so a burst costs one call per tick.
     fn poll(&mut self) -> Vec<Action> {
+        let synced = self.sync_read();
+        let reload = self.reload_when_offline();
+        synced.into_iter().chain(reload).collect()
+    }
+
+    fn reload_when_offline(&self) -> Option<Action> {
         if self.live == Live::Connected || self.loading || self.input.is_some() {
-            return vec![];
+            return None;
         }
-        match &self.current_channel {
-            Some(c) => vec![Action::LoadHistory(c.clone())],
-            None => vec![],
-        }
+        self.current_channel.clone().map(Action::LoadHistory)
     }
 }

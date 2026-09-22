@@ -34,6 +34,8 @@ pub struct App {
     pub(in crate::tui) message_selected: usize,
     /// Newest message the selection reached; anything newer arrived unseen.
     pub(in crate::tui) seen: Option<String>,
+    /// Newest message of the open channel already marked read on Slack.
+    pub(in crate::tui) marked: Option<String>,
     pub(in crate::tui) thread: Option<Thread>,
     pub(in crate::tui) search: Option<Vec<SearchMatch>>,
     pub(in crate::tui) focus: Focus,
@@ -92,6 +94,7 @@ impl Default for App {
             messages: vec![],
             message_selected: 0,
             seen: None,
+            marked: None,
             thread: None,
             search: None,
             focus: Focus::default(),
@@ -216,6 +219,8 @@ impl App {
     }
 
     pub(super) fn open_channel(&mut self, id: String) -> Vec<Action> {
+        let left = self.sync_read();
+        self.marked = None;
         self.unread.remove(&id);
         self.badges.remove(&id);
         self.current_channel = Some(id.clone());
@@ -227,7 +232,18 @@ impl App {
         self.thread = None;
         self.focus = Focus::Messages;
         self.loading = true;
-        vec![Action::LoadHistory(id)]
+        left.into_iter().chain([Action::LoadHistory(id)]).collect()
+    }
+
+    /// Slack keeps the open channel read up to its newest message, so a restart shows no stale dot.
+    pub(super) fn sync_read(&mut self) -> Option<Action> {
+        let channel = self.current_channel.clone()?;
+        let ts = self.messages.last()?.ts.clone();
+        if self.marked.as_ref() == Some(&ts) {
+            return None;
+        }
+        self.marked = Some(ts.clone());
+        Some(Action::SyncRead { channel, ts })
     }
 
     pub fn open_inbox(&mut self) -> Vec<Action> {
