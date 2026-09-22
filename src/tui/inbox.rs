@@ -1,8 +1,7 @@
 use super::motion;
 use super::theme::Theme;
-use crate::blocks;
 use crate::inbox::{Item, Kind, Priority, Snooze, State, Urgency, Verdicts};
-use crate::render::text;
+use crate::render;
 use crate::render::time;
 use crate::resolve::NameBook;
 use ratatui::Frame;
@@ -11,6 +10,7 @@ use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 use std::time::Duration;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Debug, Default)]
 pub struct Inbox {
@@ -90,7 +90,7 @@ impl Inbox {
 }
 
 pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, theme: &Theme, elapsed: Duration) {
-    let popup = centered(area, 92, 90);
+    let popup = super::ui::centered_pct(area, 92, 90);
     f.render_widget(Clear, popup);
     let title = match (inbox.loading, inbox.items.len()) {
         (true, _) => format!("inbox {} loading", motion::spinner(elapsed)),
@@ -144,11 +144,11 @@ fn item_lines(theme: &Theme, item: &Item, names: &NameBook, width: usize) -> Lis
     let mut lines = vec![head];
     for m in item.unread.iter().rev().take(2).collect::<Vec<_>>().into_iter().rev() {
         let author = m.user.as_deref().map(|u| names.user_label(u)).or_else(|| m.username.clone()).unwrap_or_else(|| "bot".into());
-        let styled = text::from_segments(&blocks::segments(&m.blocks, &m.text, names), false);
-        let mut pieces = styled.wrap_styled(width.saturating_sub(6 + author.len()).max(10));
+        let room = width.saturating_sub(6 + author.width());
+        let mut pieces = render::body(names, m, false).wrap_styled(room.max(10));
         let first = pieces.drain(..1).next().unwrap_or_default();
         let mut spans = vec![Span::raw("   "), Span::styled(format!("{author}: "), Style::new().fg(theme.mention))];
-        spans.extend(super::ui::body_spans(theme, &first, width.saturating_sub(6 + author.len())));
+        spans.extend(super::ui::body_spans(theme, &first, room));
         if !pieces.is_empty() {
             spans.push(Span::styled("…", Style::new().fg(theme.muted)));
         }
@@ -176,13 +176,7 @@ fn draw_snooze_picker(f: &mut Frame, theme: &Theme, area: Rect) {
             Line::from(vec![Span::styled(format!("  {}  ", i + 1), Style::new().fg(theme.accent).bold()), Span::raw(s.label().to_owned())])
         })
         .collect();
-    let height = lines.len() as u16 + 2;
-    let popup = Rect {
-        x: area.x + area.width.saturating_sub(30) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
-        width: 30.min(area.width),
-        height,
-    };
+    let popup = super::ui::centered_cells(area, 30, lines.len() as u16 + 2);
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(lines).block(
@@ -193,12 +187,6 @@ fn draw_snooze_picker(f: &mut Frame, theme: &Theme, area: Rect) {
         ),
         popup,
     );
-}
-
-fn centered(area: Rect, pct_w: u16, pct_h: u16) -> Rect {
-    let w = area.width * pct_w / 100;
-    let h = area.height * pct_h / 100;
-    Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
 }
 
 #[cfg(test)]

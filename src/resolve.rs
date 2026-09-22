@@ -3,7 +3,7 @@ use crate::cache::Cache;
 use crate::{fuzzy, markdown, mrkdwn};
 use anyhow::{Result, bail};
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 
 static CHANNEL_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[CDG][A-Z0-9]{8,}$").unwrap());
@@ -27,7 +27,7 @@ impl Directory {
     pub fn new(slack: Slack, cache: Cache) -> Self {
         let channels = cache.load("channels").unwrap_or_default();
         let users = cache.load("users").unwrap_or_default();
-        let groups = cache.load("groups").unwrap_or_default();
+        let groups = cache.load("usergroups").unwrap_or_default();
         let mut dir = Self {
             slack,
             cache,
@@ -91,7 +91,7 @@ impl Directory {
     async fn refresh_groups(&mut self) -> Result<()> {
         let groups = self.slack.groups().await?;
         self.set_groups(groups);
-        self.cache.save("groups", &self.groups)
+        self.cache.save("usergroups", &self.groups)
     }
 
     pub async fn channels(&mut self) -> Result<&[Channel]> {
@@ -128,7 +128,7 @@ impl Directory {
                 return Ok(id);
             }
         }
-        let named = || self.channels.iter().filter(|c| !c.name.is_empty()).map(|c| (c.name.clone(), c));
+        let named = || self.channels.iter().filter(|c| !c.name.is_empty()).map(|c| (c.name.as_str(), c));
         if let Some(c) = fuzzy::best(name, named()) {
             eprintln!("→ #{}", c.name);
             return Ok(c.id.clone());
@@ -159,7 +159,9 @@ impl Directory {
                 return Ok(id);
             }
         }
-        let people = || self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (format!("{} {}", u.handle(), u.real_name), u));
+        let labelled: Vec<(String, &User)> =
+            self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (format!("{} {}", u.handle(), u.real_name), u)).collect();
+        let people = || labelled.iter().map(|(label, u)| (label.as_str(), *u));
         if let Some(u) = fuzzy::best(handle, people()) {
             eprintln!("→ @{}", u.handle());
             return Ok(u.id.clone());
@@ -224,7 +226,7 @@ impl Directory {
 
     /// Usergroups only come as one whole list, so fetch it once, the first time a message names one we cannot read.
     /// A workspace without usergroups, or a token without the scope, keeps rendering: the id stands in for the handle.
-    async fn learn_groups(&mut self, messages: &[Message]) {
+    pub async fn learn_groups(&mut self, messages: &[Message]) {
         let unknown = |m: &Message| mentioned_groups(&m.text).iter().any(|id| !self.knows_group(id));
         if self.groups_fresh || !messages.iter().any(unknown) {
             return;
@@ -235,6 +237,13 @@ impl Directory {
 
     fn knows_group(&self, id: &str) -> bool {
         self.groups.iter().any(|g| g.id == id)
+    }
+
+    /// The usergroups `me` belongs to, or nothing while the workspace has not said who is in
+    /// them — a token without the scope must not turn every group mention into a miss.
+    pub fn my_groups(&self, me: &str) -> Option<HashSet<String>> {
+        let listed = self.groups.iter().any(|g| !g.users.is_empty());
+        listed.then(|| self.groups.iter().filter(|g| g.users.iter().any(|u| u == me)).map(|g| g.id.clone()).collect())
     }
 
     pub async fn learn_ids(&mut self, ids: &[String]) -> Result<()> {

@@ -109,6 +109,8 @@ pub struct Group {
     /// 0 while the group is live, the disband time once it is gone.
     #[serde(default)]
     pub date_delete: u64,
+    #[serde(default)]
+    pub users: Vec<String>,
 }
 
 impl Group {

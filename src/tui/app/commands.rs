@@ -4,6 +4,7 @@ use crate::tui::images::Thumbs;
 use crate::tui::palette::{self, Command, Format};
 use crate::tui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
@@ -55,17 +56,18 @@ impl App {
         palette.ghost(&self.completions_for(&palette.input))
     }
 
-    fn completions_for(&self, input: &str) -> Vec<String> {
+    /// The emoji list is thousands of names long, so it is borrowed rather than copied per frame.
+    fn completions_for(&self, input: &str) -> Cow<'static, [String]> {
         let channels = || self.channels.iter().map(|c| c.label.clone());
         let people = || self.people.iter().map(|(_, h)| format!("@{h}"));
         match palette::slot(input) {
-            palette::Slot::Verb => palette::VERBS.iter().map(|(v, _)| (*v).to_owned()).collect(),
-            palette::Slot::Channel => channels().collect(),
-            palette::Slot::Person => people().collect(),
-            palette::Slot::Conversation => channels().chain(people()).collect(),
-            palette::Slot::Emoji => emoji_names().to_vec(),
-            palette::Slot::Literal(options) => options.iter().map(|o| (*o).to_owned()).collect(),
-            palette::Slot::Free => vec![],
+            palette::Slot::Verb => Cow::Owned(palette::VERBS.iter().map(|(v, _)| (*v).to_owned()).collect()),
+            palette::Slot::Channel => Cow::Owned(channels().collect()),
+            palette::Slot::Person => Cow::Owned(people().collect()),
+            palette::Slot::Conversation => Cow::Owned(channels().chain(people()).collect()),
+            palette::Slot::Emoji => Cow::Borrowed(emoji_names()),
+            palette::Slot::Literal(options) => Cow::Owned(options.iter().map(|o| (*o).to_owned()).collect()),
+            palette::Slot::Free => Cow::Owned(vec![]),
         }
     }
 

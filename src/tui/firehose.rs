@@ -1,5 +1,6 @@
 use super::theme::Theme;
 use crate::firehose::{Highlighter, Line as LiveLine, Tag};
+use crate::render;
 use crate::render::text;
 use crate::render::time;
 use crate::resolve::NameBook;
@@ -98,9 +99,9 @@ fn row(theme: &Theme, l: &LiveLine, names: &NameBook, hl: &Highlighter, width: u
         Span::styled(time::hhmm(&l.ts), Style::new().fg(theme.muted)),
         Span::raw(" "),
         mark,
-        Span::styled(text::visible_fit(&label, 16), Style::new().fg(theme.user(&label))),
+        Span::styled(render::fit(&label, 16), Style::new().fg(theme.user(&label))),
         Span::raw(" "),
-        Span::styled(text::visible_fit(&author, 10), super::ui::user_style(theme, &author)),
+        Span::styled(render::fit(&author, 10), super::ui::user_style(theme, &author)),
         Span::raw(" "),
     ];
     if l.in_thread {

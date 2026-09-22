@@ -41,11 +41,12 @@ impl Jump {
         if self.is_search() {
             return vec![];
         }
-        let all = self.channels.iter().chain(&self.people).chain(&self.threads).cloned();
+        let all = self.channels.iter().chain(&self.people).chain(&self.threads);
         if self.query.is_empty() {
-            return all.take(MAX_SHOWN).collect();
+            return all.take(MAX_SHOWN).cloned().collect();
         }
-        fuzzy::rank(&self.query, all.map(|c| (c.label.clone(), c))).into_iter().map(|(_, c)| c).take(MAX_SHOWN).collect()
+        let ranked = fuzzy::rank(&self.query, all.map(|c| (c.label.as_str(), c)));
+        ranked.into_iter().map(|(_, c)| c.clone()).take(MAX_SHOWN).collect()
     }
 
     pub fn selected_candidate(&self) -> Option<Candidate> {
@@ -75,7 +76,7 @@ impl Jump {
 pub fn draw(f: &mut Frame, jump: &mut Jump, area: Rect, theme: &Theme) {
     let width = (area.width * 3 / 5).clamp(30.min(area.width), area.width);
     let height = (MAX_SHOWN as u16 + 3).min(area.height);
-    let popup = Rect { x: area.x + (area.width - width) / 2, y: area.y + area.height.saturating_sub(height) / 3, width, height };
+    let popup = Rect { y: area.y + area.height.saturating_sub(height) / 3, ..super::ui::centered_cells(area, width, height) };
     f.render_widget(Clear, popup);
     let block = super::ui::pane(theme, "jump · > to search", true);
     let inner = block.inner(popup);
