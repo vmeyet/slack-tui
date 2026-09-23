@@ -22,7 +22,7 @@ That is all: the `slack` command is now on your path.
 | You need | Get it |
 |---|---|
 | macOS | |
-| Rust 1.88+ (`cargo`) | `curl -sSf https://sh.rustup.rs \| sh` |
+| Rust 1.90+ (`cargo`) | `curl -sSf https://sh.rustup.rs \| sh` |
 | Brave, Chrome, Chromium or Edge | Only used once, to log in |
 
 Optional shell completions: `slack completions zsh > ~/.zfunc/_slack` (also `bash`, `fish`).
