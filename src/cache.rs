@@ -50,10 +50,10 @@ impl Cache {
 }
 
 fn root() -> PathBuf {
-    std::env::var_os("SLACK_CLI_CACHE_DIR")
+    crate::app::env("CACHE_DIR")
         .map(PathBuf::from)
-        .or_else(|| dirs::cache_dir().map(|d| d.join("slack-cli")))
-        .unwrap_or_else(|| PathBuf::from(".slack-cli-cache"))
+        .or_else(|| dirs::cache_dir().map(|d| crate::app::folder(&d)))
+        .unwrap_or_else(|| PathBuf::from(".slack-tui-cache"))
 }
 
 #[cfg(test)]

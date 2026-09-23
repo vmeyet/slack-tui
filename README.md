@@ -124,7 +124,7 @@ Use `--raw` to send Slack mrkdwn untouched.
 
 ## Settings
 
-`~/.config/slack-cli/config.toml`, every key optional:
+`~/.config/slack-tui/config.toml`, every key optional:
 
 ```toml
 [tui]
@@ -151,7 +151,7 @@ The TypeSafe key comes from `TYPESAFE_API_KEY`, else the keychain service `types
 
 1. `slack login` starts a throwaway browser profile and drives it over the DevTools protocol.
 2. Once you are logged in, it reads the web client's session: the `xoxc` token and the `d` cookie.
-3. It stores both in the macOS login keychain (service `slack-cli`), closes the browser and deletes the profile.
+3. It stores both in the macOS login keychain (service `slack-tui`), closes the browser and deletes the profile.
 
 The session never touches disk unencrypted.
 It acts as you, with everything you can do in Slack: treat it like a password.
@@ -165,17 +165,20 @@ Slack can change them without notice.
 ```sh
 cargo test                       # unit + end-to-end against a mock Slack API
 cargo test -- --ignored          # also the real keychain round trip
-SLACK_CLI_DEBUG=1 slack login …  # trace the browser capture
+SLACK_TUI_DEBUG=1 slack login …  # trace the browser capture
 ```
 
 | Variable | Effect |
 |---|---|
 | `SLACK_TOKEN`, `SLACK_COOKIE` | Bypass the keychain |
 | `SLACK_WORKSPACE` | Default workspace |
-| `SLACK_CLI_API_URL` | Point at another API host (tests use a mock) |
-| `SLACK_CLI_CONFIG_DIR`, `SLACK_CLI_CACHE_DIR` | Move the config and the cache |
+| `SLACK_TUI_API_URL` | Point at another API host (tests use a mock) |
+| `SLACK_TUI_CONFIG_DIR`, `SLACK_TUI_CACHE_DIR`, `SLACK_TUI_STATE_DIR` | Move the config, the cache and the inbox state |
 | `VISUAL`, `EDITOR` | What `E` opens to write a message, arguments allowed (`EDITOR="code -w"`) |
 | `NO_COLOR`, `COLUMNS` | Plain output, fixed width |
+
+The app was called `slack-cli` before.
+Its old folders and keychain entries move to `slack-tui` the first time they are used, and `SLACK_CLI_*` variables still work.
 
 ## License
 

@@ -140,14 +140,14 @@ impl Config {
 }
 
 pub fn config_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("SLACK_CLI_CONFIG_DIR") {
+    if let Some(dir) = crate::app::env("CONFIG_DIR") {
         return PathBuf::from(dir);
     }
-    std::env::var_os("XDG_CONFIG_HOME")
+    let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("slack-cli")
+        .unwrap_or_else(|| PathBuf::from("."));
+    crate::app::folder(&base)
 }
 
 #[cfg(test)]

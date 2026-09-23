@@ -69,6 +69,33 @@ impl SecretStore for SecurityCli {
     }
 }
 
+/// Reads the keychain under the new service, moving an entry still under the old one on first read.
+pub struct Renamed<S> {
+    pub store: S,
+    pub legacy: S,
+}
+
+impl<S: SecretStore> SecretStore for Renamed<S> {
+    fn get(&self, account: &str) -> Result<Option<String>> {
+        if let Some(secret) = self.store.get(account)? {
+            return Ok(Some(secret));
+        }
+        let Some(secret) = self.legacy.get(account)? else { return Ok(None) };
+        self.store.set(account, &secret)?;
+        self.legacy.delete(account)?;
+        Ok(Some(secret))
+    }
+
+    fn set(&self, account: &str, secret: &str) -> Result<()> {
+        self.store.set(account, secret)
+    }
+
+    fn delete(&self, account: &str) -> Result<()> {
+        self.store.delete(account)?;
+        self.legacy.delete(account)
+    }
+}
+
 fn hex(s: &str) -> String {
     s.bytes().fold(String::with_capacity(s.len() * 2), |mut out, b| {
         let _ = write!(out, "{b:02x}");
@@ -117,6 +144,37 @@ mod tests {
         assert_eq!(s.get("a").unwrap(), None);
     }
 
+    fn renamed() -> Renamed<MemoryStore> {
+        Renamed { store: MemoryStore::default(), legacy: MemoryStore::default() }
+    }
+
+    #[test]
+    fn renamed_moves_a_legacy_entry_on_first_read() {
+        let s = renamed();
+        s.legacy.set("acme", "secret").unwrap();
+        assert_eq!(s.get("acme").unwrap().as_deref(), Some("secret"));
+        assert_eq!(s.store.get("acme").unwrap().as_deref(), Some("secret"));
+        assert_eq!(s.legacy.get("acme").unwrap(), None);
+    }
+
+    #[test]
+    fn renamed_prefers_the_new_entry() {
+        let s = renamed();
+        s.store.set("acme", "new").unwrap();
+        s.legacy.set("acme", "old").unwrap();
+        assert_eq!(s.get("acme").unwrap().as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn renamed_delete_clears_both() {
+        let s = renamed();
+        s.store.set("acme", "new").unwrap();
+        s.legacy.set("acme", "old").unwrap();
+        s.delete("acme").unwrap();
+        assert_eq!(s.store.get("acme").unwrap(), None);
+        assert_eq!(s.legacy.get("acme").unwrap(), None);
+    }
+
     #[test]
     fn hex_encodes_bytes() {
         assert_eq!(hex("A{\"}"), "417b227d");
@@ -125,7 +183,7 @@ mod tests {
     #[test]
     #[ignore = "touches the real login keychain"]
     fn security_cli_round_trip() {
-        let s = SecurityCli::new("slack-cli-test");
+        let s = SecurityCli::new("slack-tui-test");
         s.delete("probe").unwrap();
         assert_eq!(s.get("probe").unwrap(), None);
         s.set("probe", r#"{"token":"one"}"#).unwrap();

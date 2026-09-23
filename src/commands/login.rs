@@ -1,7 +1,7 @@
 //! `slack login` and `slack logout`: browser sign-in and keychain storage.
 use crate::api::Slack;
 use crate::auth::login::{self, LoginOptions};
-use crate::auth::{self, Credentials, SecretStore, SecurityCli};
+use crate::auth::{self, Credentials, SecretStore};
 use crate::cache::Cache;
 use crate::cli::LoginArgs;
 use crate::config::{Config, Workspace};
@@ -30,7 +30,7 @@ pub async fn run(args: LoginArgs, json: bool) -> Result<()> {
     let slack = Slack::new(&Slack::api_url_from_env(), credentials.clone())?;
     let me = slack.auth_test().await?;
     let domain = session.domain;
-    SecurityCli::new(auth::SERVICE).set(&domain, &credentials.to_json())?;
+    auth::keychain().set(&domain, &credentials.to_json())?;
     let workspace =
         Workspace { team_id: me.team_id.clone(), team_name: me.team.clone(), user_id: me.user_id.clone(), user_name: me.user.clone() };
     Config::load()?.with_workspace(&domain, workspace).save()?;
@@ -53,7 +53,7 @@ pub async fn run(args: LoginArgs, json: bool) -> Result<()> {
 pub async fn logout(workspace: Option<String>) -> Result<()> {
     let config = Config::load()?;
     let Some(domain) = workspace.or_else(|| config.default.clone()) else { bail!("nothing to log out from") };
-    SecurityCli::new(auth::SERVICE).delete(&domain)?;
+    auth::keychain().delete(&domain)?;
     Cache::for_workspace(&domain).clear().await?;
     config.without_workspace(&domain).save()?;
     println!("{} forgot {domain}", Theme::detect().ok("✓"));

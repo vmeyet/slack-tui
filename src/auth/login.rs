@@ -54,7 +54,7 @@ pub async fn capture(options: &LoginOptions) -> Result<Session> {
 }
 
 fn debug(msg: &str) {
-    if std::env::var_os("SLACK_CLI_DEBUG").is_some() {
+    if crate::app::env("DEBUG").is_some() {
         eprintln!("[debug] {msg}");
     }
 }
