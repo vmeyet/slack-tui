@@ -5,6 +5,7 @@ use crate::render::Theme;
 use crate::update::{self, REPO, Standing, remote_head, standing};
 use crate::version;
 use anyhow::{Context, Result, bail};
+use std::path::Path;
 use tokio::process::Command;
 
 const BUILD_FOLDER: &str = "cargo_target";
@@ -50,10 +51,11 @@ async fn latest_commit(theme: &Theme) -> Option<String> {
     }
 }
 
-/// Built in a kept folder so the next update only recompiles what changed.
+/// Built in a kept folder so the next update only recompiles the app, not its dependencies.
 async fn install(theme: &Theme) -> Result<()> {
     println!("{} installing the latest slack from {REPO}…", theme.accent("→"));
     let build = Cache::shared().folder(BUILD_FOLDER).await?;
+    forget_app(&build).await?;
     let status = Command::new("cargo")
         .args(["install", "--git", REPO, "--force", "--target-dir"])
         .arg(&build)
@@ -67,6 +69,19 @@ async fn install(theme: &Theme) -> Result<()> {
     Ok(())
 }
 
+/// Cargo tells `--git` builds apart by the repo, never by the commit, so the kept folder would reinstall the old app.
+/// Dropping the app's own fingerprints makes cargo recompile it, while the dependencies stay built.
+async fn forget_app(build: &Path) -> Result<()> {
+    let Ok(mut entries) = tokio::fs::read_dir(build.join("release").join(".fingerprint")).await else { return Ok(()) };
+    let prefix = concat!(env!("CARGO_PKG_NAME"), "-");
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.file_name().to_string_lossy().starts_with(prefix) {
+            tokio::fs::remove_dir_all(entry.path()).await?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -74,6 +89,25 @@ mod tests {
 
     const INSTALLED: &str = "9731436a0e7c4d1b2f3a4b5c6d7e8f9a0b1c2d3e";
     const NEWER: &str = "635cf1b0000000000000000000000000000000ff";
+
+    #[tokio::test]
+    async fn forget_app_drops_only_the_app_fingerprints() {
+        let build = tempfile::tempdir().unwrap();
+        let fingerprints = build.path().join("release").join(".fingerprint");
+        for name in ["slack-3483aceb8f1a5a28", "slack-e613dd567bc7d97f", "serde-0123456789abcdef"] {
+            std::fs::create_dir_all(fingerprints.join(name)).unwrap();
+        }
+        forget_app(build.path()).await.unwrap();
+        let left: Vec<String> =
+            std::fs::read_dir(&fingerprints).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, ["serde-0123456789abcdef"]);
+    }
+
+    #[tokio::test]
+    async fn forget_app_on_a_first_build_does_nothing() {
+        let build = tempfile::tempdir().unwrap();
+        forget_app(build.path()).await.unwrap();
+    }
 
     #[test]
     fn same_commit_needs_no_install() {
