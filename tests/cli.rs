@@ -34,9 +34,9 @@ impl Env {
             .env("HOME", self.dir.path())
             .env("SLACK_TOKEN", "xoxc-test")
             .env("SLACK_COOKIE", "xoxd-test")
-            .env("SLACK_CLI_API_URL", self.server.uri())
-            .env("SLACK_CLI_CACHE_DIR", self.dir.path().join("cache"))
-            .env("SLACK_CLI_CONFIG_DIR", self.dir.path().join("config"))
+            .env("SLACK_TUI_API_URL", self.server.uri())
+            .env("SLACK_TUI_CACHE_DIR", self.dir.path().join("cache"))
+            .env("SLACK_TUI_CONFIG_DIR", self.dir.path().join("config"))
             .env("NO_COLOR", "1")
             .env("COLUMNS", "100")
             .env("TZ", "UTC");

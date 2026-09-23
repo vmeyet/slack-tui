@@ -1,5 +1,6 @@
 //! Slack in your terminal, as yourself: the library behind the `slack` binary.
 mod api;
+mod app;
 mod auth;
 mod blocks;
 mod cache;

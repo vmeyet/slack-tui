@@ -138,11 +138,11 @@ pub struct State {
 
 impl State {
     pub fn path(workspace: &str) -> PathBuf {
-        std::env::var_os("SLACK_CLI_STATE_DIR")
+        crate::app::env("STATE_DIR")
             .map(PathBuf::from)
-            .or_else(|| dirs::state_dir().map(|d| d.join("slack-cli")))
-            .or_else(|| dirs::home_dir().map(|h| h.join(".local/state/slack-cli")))
-            .unwrap_or_else(|| PathBuf::from(".slack-cli-state"))
+            .or_else(|| dirs::state_dir().map(|d| crate::app::folder(&d)))
+            .or_else(|| dirs::home_dir().map(|h| crate::app::folder(&h.join(".local/state"))))
+            .unwrap_or_else(|| PathBuf::from(".slack-tui-state"))
             .join(workspace)
             .join("inbox.json")
     }
@@ -488,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn state_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("SLACK_CLI_STATE_DIR", dir.path()) };
+        unsafe { std::env::set_var("SLACK_TUI_STATE_DIR", dir.path()) };
         let mut state = State::default();
         state.snooze("a", at(99));
         state.save("acme").await.unwrap();

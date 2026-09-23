@@ -77,14 +77,14 @@ pub struct Slack {
 impl Slack {
     pub fn new(base: &str, credentials: Credentials) -> Result<Self> {
         let http = reqwest::Client::builder()
-            .user_agent(concat!("slack-cli/", env!("CARGO_PKG_VERSION")))
+            .user_agent(format!("{}/{}", crate::app::NAME, env!("CARGO_PKG_VERSION")))
             .timeout(Duration::from_secs(30))
             .build()?;
         Ok(Self { http, base: base.trim_end_matches('/').to_owned(), credentials })
     }
 
     pub fn api_url_from_env() -> String {
-        std::env::var("SLACK_CLI_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_owned())
+        crate::app::env("API_URL").and_then(|url| url.into_string().ok()).unwrap_or_else(|| DEFAULT_API_URL.to_owned())
     }
 
     pub async fn call(&self, method: &str, params: Params) -> Result<Value> {

@@ -1,6 +1,6 @@
 //! Everything a command needs once logged in: API client, directory, config and cache.
 use crate::api::Slack;
-use crate::auth::{self, Env, SecretStore, SecurityCli};
+use crate::auth::{self, Env, SecretStore};
 use crate::cache::Cache;
 use crate::config::Config;
 use crate::render::Theme;
@@ -23,7 +23,7 @@ impl Ctx {
     /// Loads config and credentials for the workspace and connects the API client.
     pub async fn open(workspace: Option<&str>, json: bool) -> Result<Self> {
         let config = Config::load()?;
-        let store = SecurityCli::new(auth::SERVICE);
+        let store = auth::keychain();
         Self::build(&Env::from_process(), &store, config, workspace, json).await
     }
 

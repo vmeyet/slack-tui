@@ -6,12 +6,15 @@ pub mod store;
 pub use credentials::Credentials;
 #[cfg(test)]
 pub use store::MemoryStore;
-pub use store::{SecretStore, SecurityCli};
+pub use store::{Renamed, SecretStore, SecurityCli};
 
 use crate::config::Config;
 use anyhow::{Result, bail};
 
-pub const SERVICE: &str = "slack-cli";
+/// The login keychain, under the app's name, taking over entries saved under the old one.
+pub fn keychain() -> Renamed<SecurityCli> {
+    Renamed { store: SecurityCli::new(crate::app::NAME), legacy: SecurityCli::new(crate::app::LEGACY_NAME) }
+}
 
 pub struct Env {
     pub token: Option<String>,
