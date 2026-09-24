@@ -9,6 +9,8 @@ use std::io::Write;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+const DEFAULT_LIMIT: usize = 30;
+
 /// Prints the latest messages of a channel, following new ones when asked.
 pub async fn run(ctx: &mut Ctx, args: MessagesArgs) -> Result<()> {
     let oldest = match &args.since {
@@ -16,7 +18,10 @@ pub async fn run(ctx: &mut Ctx, args: MessagesArgs) -> Result<()> {
         None => None,
     };
     let channel = ctx.dir.channel_id(&args.channel).await?;
-    let messages = ctx.slack.history(&channel, args.limit, oldest.as_deref()).await?;
+    let messages = match (oldest, args.limit) {
+        (Some(oldest), None) => ctx.slack.history_since(&channel, &oldest).await?,
+        (oldest, limit) => ctx.slack.history(&channel, limit.unwrap_or(DEFAULT_LIMIT), oldest.as_deref()).await?,
+    };
     let replies = if args.threads { load_threads(ctx, &channel, &messages).await? } else { HashMap::new() };
     let all: Vec<Message> = messages.iter().cloned().chain(replies.values().flatten().cloned()).collect();
     ctx.dir.learn_users(&all).await?;
