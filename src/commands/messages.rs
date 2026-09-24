@@ -1,5 +1,5 @@
 //! `slack messages`: the latest messages of a channel or DM.
-use crate::api::{Message, rtm};
+use crate::api::{Message, Slack, rtm};
 use crate::cli::MessagesArgs;
 use crate::ctx::Ctx;
 use crate::render::{self, time};
@@ -9,6 +9,8 @@ use std::io::Write;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+const DEFAULT_LIMIT: usize = 30;
+
 /// Prints the latest messages of a channel, following new ones when asked.
 pub async fn run(ctx: &mut Ctx, args: MessagesArgs) -> Result<()> {
     let oldest = match &args.since {
@@ -16,7 +18,10 @@ pub async fn run(ctx: &mut Ctx, args: MessagesArgs) -> Result<()> {
         None => None,
     };
     let channel = ctx.dir.channel_id(&args.channel).await?;
-    let messages = ctx.slack.history(&channel, args.limit, oldest.as_deref()).await?;
+    let messages = match (oldest, args.limit) {
+        (Some(oldest), None) => ctx.slack.history_since(&channel, &oldest).await?,
+        (oldest, limit) => ctx.slack.history(&channel, limit.unwrap_or(DEFAULT_LIMIT), oldest.as_deref()).await?,
+    };
     let replies = if args.threads { load_threads(ctx, &channel, &messages).await? } else { HashMap::new() };
     let all: Vec<Message> = messages.iter().cloned().chain(replies.values().flatten().cloned()).collect();
     ctx.dir.learn_users(&all).await?;
@@ -63,12 +68,17 @@ async fn follow(ctx: &mut Ctx, channel: &str, mut last_ts: String) -> Result<()>
     }
     loop {
         tokio::time::sleep(POLL_EVERY).await;
-        let fresh: Vec<Message> = ctx.slack.history(channel, 100, Some(&last_ts)).await?.into_iter().filter(|m| m.ts > last_ts).collect();
+        let fresh = newer_than(&ctx.slack, channel, &last_ts).await?;
         if let Some(m) = fresh.last() {
             last_ts = m.ts.clone();
         }
         print_live(ctx, &fresh).await?;
     }
+}
+
+/// Every message after `last_ts`, so a burst between two polls is never cut.
+async fn newer_than(slack: &Slack, channel: &str, last_ts: &str) -> Result<Vec<Message>> {
+    Ok(slack.history_since(channel, last_ts).await?.into_iter().filter(|m| m.ts.as_str() > last_ts).collect())
 }
 
 async fn print_live(ctx: &mut Ctx, messages: &[Message]) -> Result<()> {
@@ -94,4 +104,36 @@ async fn load_threads(ctx: &mut Ctx, channel: &str, messages: &[Message]) -> Res
         replies.insert(root.ts.clone(), ctx.slack.replies(channel, &root.ts).await?);
     }
     Ok(replies)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use crate::auth::Credentials;
+    use serde_json::json;
+    use wiremock::matchers::{body_string_contains, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn polling_reads_every_new_page() {
+        let server = MockServer::start().await;
+        let page = |ts: &str, next: &str| {
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"ok": true, "messages": [{"ts": ts}], "response_metadata": {"next_cursor": next}}))
+        };
+        Mock::given(path("/conversations.history"))
+            .and(body_string_contains("cursor=a"))
+            .respond_with(page("2.0", ""))
+            .mount(&server)
+            .await;
+        Mock::given(path("/conversations.history"))
+            .and(body_string_contains("oldest=1.0"))
+            .respond_with(page("3.0", "a"))
+            .mount(&server)
+            .await;
+        let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
+        let fresh = newer_than(&slack, "C1", "1.0").await.unwrap();
+        assert_eq!(fresh.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["2.0", "3.0"]);
+    }
 }

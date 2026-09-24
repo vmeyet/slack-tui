@@ -124,9 +124,9 @@ pub struct SendArgs {
 pub struct MessagesArgs {
     /// `#channel`, `@user` or a channel id.
     pub channel: String,
-    /// How many messages.
-    #[arg(short = 'n', long, default_value_t = 30)]
-    pub limit: usize,
+    /// Keep only the newest N messages [default: 30, or all of them with `--since`].
+    #[arg(short = 'n', long)]
+    pub limit: Option<usize>,
     /// Only messages after: `2h`, `3d`, `1w` or `2026-09-01`.
     #[arg(long)]
     pub since: Option<String>,

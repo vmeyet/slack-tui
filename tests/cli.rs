@@ -159,6 +159,34 @@ async fn messages_json_and_since() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn messages_since_reads_the_whole_window_unless_limited() {
+    let env = Env::new().await;
+    env.mock("conversations.list", channels_payload()).await;
+    env.mock("users.list", users_payload()).await;
+    let page = |ts: &str, next: &str| {
+        ResponseTemplate::new(200).set_body_json(
+            json!({"ok": true, "messages": [{"ts": ts, "user": "U1", "text": ts}], "response_metadata": {"next_cursor": next}}),
+        )
+    };
+    Mock::given(path("/conversations.history"))
+        .and(body_string_contains("cursor=a"))
+        .respond_with(page("1.000000", ""))
+        .mount(&env.server)
+        .await;
+    Mock::given(path("/conversations.history"))
+        .and(body_string_contains("latest=9999999999"))
+        .respond_with(page("2.000000", "a"))
+        .mount(&env.server)
+        .await;
+    let texts = |args: &[&str]| -> Vec<String> {
+        let json: Value = serde_json::from_str(&stdout(env.slack().args(args))).unwrap();
+        json["messages"].as_array().unwrap().iter().map(|m| m["text"].as_str().unwrap().to_owned()).collect()
+    };
+    assert_eq!(texts(&["messages", "#general", "--since", "2d", "--json"]), ["1.000000", "2.000000"]);
+    assert_eq!(texts(&["messages", "#general", "--since", "2d", "-n", "1", "--json"]), ["2.000000"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn send_markdown_dry_run_and_real() {
     let env = Env::new().await;
     env.mock("conversations.list", channels_payload()).await;

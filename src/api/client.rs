@@ -16,6 +16,12 @@ pub fn params(pairs: &[(&str, &str)]) -> Params {
     pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
 }
 
+/// With `oldest` alone Slack pages from the oldest message forward; a `latest` far in the future
+/// makes it page from the newest one back, without trusting the local clock.
+fn window(oldest: &str) -> Params {
+    params(&[("oldest", oldest), ("latest", "9999999999")])
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("{method} failed: {code}{}", hint(code))]
 pub struct ApiError {
@@ -174,12 +180,22 @@ impl Slack {
         body["channel"]["id"].as_str().map(str::to_owned).context("conversations.open: no channel id")
     }
 
+    /// The newest `limit` messages after `oldest`, oldest first.
     pub async fn history(&self, channel: &str, limit: usize, oldest: Option<&str>) -> Result<Vec<Message>> {
         let mut p = params(&[("channel", channel), ("limit", &limit.to_string())]);
         if let Some(o) = oldest {
-            p.push(("oldest".into(), o.to_owned()));
+            p.extend(window(o));
         }
         let mut messages: Vec<Message> = self.call_as("conversations.history", p, "messages").await?;
+        messages.reverse();
+        Ok(messages)
+    }
+
+    /// Every message after `oldest`, oldest first.
+    pub async fn history_since(&self, channel: &str, oldest: &str) -> Result<Vec<Message>> {
+        let mut p = params(&[("channel", channel), ("limit", "200")]);
+        p.extend(window(oldest));
+        let mut messages: Vec<Message> = self.call_pages("conversations.history", p, "messages").await?;
         messages.reverse();
         Ok(messages)
     }
@@ -541,6 +557,49 @@ mod tests {
             .await;
         let messages = client(&server).history("C1", 10, None).await.unwrap();
         assert_eq!(messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1.0", "2.0"]);
+    }
+
+    /// Three pages of history after `oldest`, newest first like Slack sends them.
+    async fn three_pages(server: &MockServer) {
+        let page = |ts: [&str; 2], next: &str| {
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "messages": [{"ts": ts[0]}, {"ts": ts[1]}],
+                "response_metadata": {"next_cursor": next},
+            }))
+        };
+        Mock::given(path("/conversations.history"))
+            .and(body_string_contains("cursor=b"))
+            .respond_with(page(["2.0", "1.0"], ""))
+            .mount(server)
+            .await;
+        Mock::given(path("/conversations.history"))
+            .and(body_string_contains("cursor=a"))
+            .respond_with(page(["4.0", "3.0"], "b"))
+            .mount(server)
+            .await;
+        Mock::given(path("/conversations.history"))
+            .and(body_string_contains("oldest=0.5"))
+            .and(body_string_contains("latest=9999999999"))
+            .respond_with(page(["6.0", "5.0"], "a"))
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn history_with_oldest_keeps_the_newest() {
+        let server = MockServer::start().await;
+        three_pages(&server).await;
+        let messages = client(&server).history("C1", 2, Some("0.5")).await.unwrap();
+        assert_eq!(messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["5.0", "6.0"]);
+    }
+
+    #[tokio::test]
+    async fn history_since_reads_the_whole_window() {
+        let server = MockServer::start().await;
+        three_pages(&server).await;
+        let messages = client(&server).history_since("C1", "0.5").await.unwrap();
+        assert_eq!(messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1.0", "2.0", "3.0", "4.0", "5.0", "6.0"]);
     }
 
     #[tokio::test]
