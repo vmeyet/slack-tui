@@ -545,11 +545,13 @@ mod tests {
             .await;
         Mock::given(path("/conversations.history"))
             .and(body_string_contains("channel=D1"))
+            .and(body_string_contains("latest=9999999999"))
             .respond_with(ok(json!({"messages": [{"ts": "7.0", "user": "U2", "text": "yo"}, {"ts": "6.0", "user": "U2", "text": "hi"}]})))
             .mount(&server)
             .await;
         Mock::given(path("/conversations.history"))
             .and(body_string_contains("channel=C1"))
+            .and(body_string_contains("latest=9999999999"))
             .respond_with(ok(
                 json!({"messages": [{"ts": "12.0", "user": "U2", "text": "<@U1> ping"}, {"ts": "11.0", "user": "U2", "text": "noise"}]}),
             ))
