@@ -52,7 +52,7 @@ const HELP_GROUPS: [(&str, &[(&str, &str)]); 4] = [
             (":", "command line: :join :go :msg :react :search :export :read …"),
             ("R", "refresh"),
             ("esc", "close thread · clear search or filter"),
-            ("q", "quit"),
+            ("q q", "quit (ctrl-c twice works too)"),
         ],
     ),
 ];

@@ -80,6 +80,9 @@ impl App {
     }
 
     pub fn status_line(&self) -> String {
+        if let Some(prompt) = self.quit_prompt() {
+            return prompt;
+        }
         match self.live_toast() {
             Some(toast) => toast.text.clone(),
             None => self.location(),

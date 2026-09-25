@@ -3,6 +3,7 @@ mod feedback;
 mod incoming;
 mod keys;
 mod live;
+mod quit;
 mod sidebar;
 mod state;
 #[cfg(test)]
