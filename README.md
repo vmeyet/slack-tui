@@ -59,8 +59,8 @@ Whoever is typing in the open conversation shows under the last message.
 | `enter` / `l` | Open the channel or the thread |
 | `h` / `esc` | Go back |
 | `r` / `t` | Reply / reply in thread |
-| `E` | Write the message in `$EDITOR` (`$VISUAL` first, then `vi`); save to send, quit empty to cancel |
-| `e` | React |
+| `e` | Write the message in `$EDITOR` (`$VISUAL` first, then `vi`); save to send, quit empty to cancel |
+| `+` | React |
 | `o` / `u` | Open the message in Slack / open its first link |
 | `y` | Copy the permalink |
 | `/` | Filter channels |
@@ -174,7 +174,7 @@ SLACK_TUI_DEBUG=1 slack login …  # trace the browser capture
 | `SLACK_WORKSPACE` | Default workspace |
 | `SLACK_TUI_API_URL` | Point at another API host (tests use a mock) |
 | `SLACK_TUI_CONFIG_DIR`, `SLACK_TUI_CACHE_DIR`, `SLACK_TUI_STATE_DIR` | Move the config, the cache and the inbox state |
-| `VISUAL`, `EDITOR` | What `E` opens to write a message, arguments allowed (`EDITOR="code -w"`) |
+| `VISUAL`, `EDITOR` | What `e` opens to write a message, arguments allowed (`EDITOR="code -w"`) |
 | `NO_COLOR`, `COLUMNS` | Plain output, fixed width |
 
 The app was called `slack-cli` before.
