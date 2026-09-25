@@ -12,9 +12,9 @@ pub struct Cli {
     /// Print machine-readable JSON instead of the pretty output.
     #[arg(long, global = true)]
     pub json: bool,
-    /// What to do.
+    /// What to do. Left out on a terminal, opens the TUI.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 /// Every subcommand `slack` understands.
@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn send_parses_thread_and_broadcast() {
         let cli = Cli::parse_from(["slack", "send", "#general", "hi", "--thread", "1.2", "--broadcast"]);
-        let Command::Send(args) = cli.command else { panic!() };
+        let Some(Command::Send(args)) = cli.command else { panic!() };
         assert_eq!(args.thread.as_deref(), Some("1.2"));
         assert!(args.broadcast);
     }
@@ -269,23 +269,23 @@ mod tests {
     #[test]
     fn update_takes_a_force_flag() {
         let cli = Cli::parse_from(["slack", "update", "-f"]);
-        let Command::Update(args) = cli.command else { panic!() };
+        let Some(Command::Update(args)) = cli.command else { panic!() };
         assert!(args.force);
     }
 
     #[test]
     fn firehose_can_hide_noise() {
         let cli = Cli::parse_from(["slack", "firehose", "--hide-noise", "-H", "prod"]);
-        let Command::Firehose(args) = cli.command else { panic!() };
+        let Some(Command::Firehose(args)) = cli.command else { panic!() };
         assert!(args.hide_noise);
         assert_eq!(args.highlight, ["prod"]);
     }
 
     #[test]
     fn promises_look_back_two_weeks_unless_told() {
-        let Command::Promises(args) = Cli::parse_from(["slack", "todo"]).command else { panic!() };
+        let Some(Command::Promises(args)) = Cli::parse_from(["slack", "todo"]).command else { panic!() };
         assert_eq!((args.since.as_str(), args.all), ("14d", false));
-        let Command::Promises(args) = Cli::parse_from(["slack", "promises", "--since", "3d", "-a"]).command else { panic!() };
+        let Some(Command::Promises(args)) = Cli::parse_from(["slack", "promises", "--since", "3d", "-a"]).command else { panic!() };
         assert_eq!((args.since.as_str(), args.all), ("3d", true));
     }
 

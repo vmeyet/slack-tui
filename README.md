@@ -46,7 +46,7 @@ slack logout        # forgets the keychain entry, config and cache
 ## TUI
 
 ```sh
-slack tui
+slack        # or slack tui
 ```
 
 Three panes: channels, messages, thread.
