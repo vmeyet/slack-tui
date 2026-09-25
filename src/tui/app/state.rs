@@ -55,6 +55,7 @@ pub struct App {
     pub(in crate::tui) names: NameBook,
     pub(in crate::tui) help: bool,
     pub(in crate::tui) should_quit: bool,
+    pub(in crate::tui) quitting: Option<(super::quit::QuitKey, Instant)>,
     pub(in crate::tui) live: Live,
     pub(in crate::tui) unread: HashSet<String>,
     pub(in crate::tui) badges: HashMap<String, Badge>,
@@ -109,6 +110,7 @@ impl Default for App {
             names: NameBook::default(),
             help: false,
             should_quit: false,
+            quitting: None,
             live: Live::default(),
             unread: HashSet::new(),
             badges: HashMap::new(),
@@ -161,7 +163,7 @@ impl App {
     /// True while the screen changes with time alone, so the event loop only ticks frames when there is
     /// something to animate.
     pub fn animating(&self) -> bool {
-        self.toast_expires() || self.typing_line().is_some() || self.empty_state_visible()
+        self.toast_expires() || self.quit_prompt().is_some() || self.typing_line().is_some() || self.empty_state_visible()
     }
 
     fn empty_state_visible(&self) -> bool {

@@ -506,8 +506,34 @@ fn quit_and_help() {
     app.handle_key(key('j'));
     assert!(!app.help);
     assert_eq!(app.channel_selected, 0);
-    app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    app.handle_key(ctrl('c'));
+    app.handle_key(ctrl('c'));
     assert!(app.should_quit);
+}
+
+#[test]
+fn q_asks_once_then_quits_on_the_second_press() {
+    let mut app = loaded();
+    app.handle_key(key('q'));
+    assert!(!app.should_quit);
+    assert_eq!(app.status_line(), "press q again to quit");
+    app.handle_key(key('q'));
+    assert!(app.should_quit);
+}
+
+#[test]
+fn another_key_or_waiting_calls_the_quit_off() {
+    let mut app = loaded();
+    app.handle_key(key('q'));
+    app.handle_key(key('j'));
+    app.handle_key(key('q'));
+    assert!(!app.should_quit, "j in between starts over");
+    app.now += Duration::from_secs(2);
+    assert_ne!(app.status_line(), "press q again to quit");
+    app.handle_key(key('q'));
+    assert!(!app.should_quit, "too late for a second press");
+    app.handle_key(ctrl('c'));
+    assert!(!app.should_quit, "only the same key finishes a quit");
 }
 
 fn live(app: &mut App, event: rtm::Event) -> Vec<Action> {
@@ -1111,6 +1137,7 @@ fn inbox_escape_closes_and_q_quits() {
     app.handle_key(code(KeyCode::Esc));
     assert!(app.inbox.is_none());
     app.handle_key(key('i'));
+    app.handle_key(key('q'));
     app.handle_key(key('q'));
     assert!(app.should_quit);
 }

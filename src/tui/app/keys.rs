@@ -1,4 +1,5 @@
 use super::commands::emoji_names;
+use super::quit::QuitKey;
 use super::{Action, App, Focus, Input};
 use crate::api::Message;
 use crate::inbox::Snooze;
@@ -10,17 +11,21 @@ use crate::tui::palette::Palette;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 impl App {
+    /// Any key but the one finishing a quit calls the pending quit off, then does its own job.
     pub fn handle_key(&mut self, key: KeyEvent) -> Vec<Action> {
         self.dismiss_error();
+        let pending = self.quitting;
         let actions = self.route_key(key);
+        if self.quitting == pending {
+            self.quitting = None;
+        }
         self.mark_seen();
         actions
     }
 
     fn route_key(&mut self, key: KeyEvent) -> Vec<Action> {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.should_quit = true;
-            return vec![];
+            return self.quit_key(QuitKey::CtrlC);
         }
         if self.help {
             self.help = false;
@@ -77,7 +82,7 @@ impl App {
                 view.show_noise = !view.show_noise;
                 view.follow();
             }
-            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
             KeyCode::Char('j') | KeyCode::Down => view.move_by(1, len),
             KeyCode::Char('k') | KeyCode::Up => view.move_by(-1, len),
             KeyCode::PageDown => view.move_by(10, len),
@@ -178,7 +183,7 @@ impl App {
         }
         match key.code {
             KeyCode::Esc => self.inbox = None,
-            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
             KeyCode::Char('j') | KeyCode::Down => inbox.move_by(1),
             KeyCode::Char('k') | KeyCode::Up => inbox.move_by(-1),
             KeyCode::Char('g') | KeyCode::Home => inbox.move_by(i64::MIN / 2),
@@ -232,7 +237,7 @@ impl App {
 
     fn handle_browse_key(&mut self, key: KeyEvent) -> Vec<Action> {
         match key.code {
-            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
             KeyCode::Char('?') => self.help = true,
             KeyCode::Tab => self.focus = self.next_focus(),
             KeyCode::BackTab => self.focus = self.prev_focus(),
