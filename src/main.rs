@@ -1,10 +1,12 @@
 //! The `slack` binary: parses the command line and runs the matching command.
 use anyhow::Result;
+use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use slack::cli::{Cli, Command};
 use slack::commands;
 use slack::ctx::Ctx;
 use slack::render::Theme;
+use std::io::IsTerminal;
 
 #[tokio::main]
 async fn main() {
@@ -20,7 +22,8 @@ async fn main() {
 }
 
 async fn run(cli: Cli) -> Result<()> {
-    match cli.command {
+    let command = cli.command.unwrap_or_else(default_command);
+    match command {
         Command::Login(args) => return commands::login::run(args, cli.json).await,
         Command::Logout { workspace } => return commands::login::logout(workspace.or(cli.workspace)).await,
         Command::Completions { shell } => {
@@ -31,7 +34,7 @@ async fn run(cli: Cli) -> Result<()> {
         _ => {}
     }
     let mut ctx = Ctx::open(cli.workspace.as_deref(), cli.json).await?;
-    match cli.command {
+    match command {
         Command::Whoami => commands::whoami::run(&mut ctx).await,
         Command::Send(args) => commands::send::run(&mut ctx, args).await,
         Command::Messages(args) => commands::messages::run(&mut ctx, args).await,
@@ -47,4 +50,12 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Promises(args) => commands::promises::run(&mut ctx, args).await,
         Command::Login(_) | Command::Logout { .. } | Command::Completions { .. } | Command::Update(_) => unreachable!(),
     }
+}
+
+/// The TUI on a terminal; elsewhere a script ran bare `slack` by mistake, so fail instead of hanging.
+fn default_command() -> Command {
+    if !std::io::stdout().is_terminal() {
+        Cli::command().error(ErrorKind::MissingSubcommand, "a subcommand is needed when not on a terminal").exit();
+    }
+    Command::Tui
 }

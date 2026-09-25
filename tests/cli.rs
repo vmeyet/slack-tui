@@ -103,6 +103,13 @@ async fn api_error_is_reported() {
     assert_eq!(err, "✗ auth.test failed: invalid_auth (session expired? run `slack login`)\n");
 }
 
+#[test]
+fn bare_slack_off_a_terminal_asks_for_a_subcommand() {
+    let out = Command::cargo_bin("slack").unwrap().output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("a subcommand is needed when not on a terminal"));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn messages_render() {
     let env = Env::new().await;
