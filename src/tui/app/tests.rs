@@ -143,97 +143,100 @@ fn an_edit_prefill_starts_with_the_cursor_after_the_last_character() {
     assert_eq!(app.buffer.text(), "¡café!");
 }
 
-/// The react row on a half-typed name, one key away from `🚀 rocket`.
-fn reacting(typed: &str) -> App {
+/// `reading()` with the picker open on its one message.
+fn picking() -> App {
     let mut app = reading();
     app.handle_key(key('+'));
-    for c in typed.chars() {
-        app.handle_key(key(c));
-    }
     app
 }
 
+fn reacted(actions: &[Action]) -> (String, bool) {
+    match actions {
+        [Action::React { name, on, .. }, ..] => (name.clone(), *on),
+        other => panic!("no reaction in {other:?}"),
+    }
+}
+
 #[test]
-fn tab_cycles_emoji_names_and_reacts_with_the_bare_name() {
-    let mut app = reacting("rocke");
-    app.handle_key(code(KeyCode::Tab));
-    assert_eq!(app.buffer.text(), "rocket");
-    let hint = app.input_hint().expect("cycling");
-    assert!(hint.starts_with("[🚀 rocket]"), "the glyph shows next to the name: {hint}");
-    app.handle_key(code(KeyCode::Tab));
-    assert_eq!(app.buffer.text(), "arrows_clockwise");
-    app.handle_key(code(KeyCode::BackTab));
-    assert_eq!(app.buffer.text(), "rocket");
+fn a_number_reacts_with_that_emoji_of_the_strip_and_shows_it_at_once() {
+    let mut app = picking();
+    assert_eq!(app.react.as_ref().map(|p| p.strip[0].as_str()), Some("+1"));
+    let actions = app.handle_key(key('1'));
+    assert_eq!(actions[0], Action::React { channel: "C1".into(), ts: "1".into(), name: "+1".into(), on: true });
+    assert!(app.react.is_none());
+    assert_eq!(app.messages[0].reactions[0].name, "+1");
+    assert_eq!(app.messages[0].reactions[0].users, [app.me.clone()]);
+}
+
+#[test]
+fn a_used_emoji_climbs_the_strip_and_is_saved() {
+    let mut app = picking();
+    let actions = app.handle_key(key('8'));
+    assert_eq!(reacted(&actions), ("rocket".into(), true));
+    assert_eq!(actions[1], Action::SaveFavorites(HashMap::from([("rocket".to_owned(), 1)])));
+    app.handle_key(key('+'));
+    let strip = &app.react.as_ref().expect("picker open").strip;
+    assert_eq!(strip[0], "rocket", "on the message now, and the most used");
+}
+
+#[test]
+fn picking_one_of_mine_takes_it_off() {
+    let mut app = picking();
+    app.handle_key(key('4'));
+    app.handle_key(key('+'));
     let actions = app.handle_key(code(KeyCode::Enter));
-    assert_eq!(actions, vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "rocket".into() }]);
+    assert_eq!(actions, vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "tada".into(), on: false }]);
+    assert!(app.messages[0].reactions.is_empty());
 }
 
-fn reacted_name(typed: &str) -> String {
-    let actions = reacting(typed).handle_key(code(KeyCode::Enter));
-    match actions.as_slice() {
-        [Action::React { name, .. }] => name.clone(),
-        other => panic!("{typed} reacted with {other:?}"),
+#[test]
+fn h_and_l_move_along_the_strip() {
+    let mut app = picking();
+    app.handle_key(key('l'));
+    app.handle_key(key('l'));
+    app.handle_key(key('h'));
+    assert_eq!(reacted(&app.handle_key(code(KeyCode::Enter))), ("white_check_mark".into(), true));
+}
+
+#[test]
+fn slash_searches_every_emoji_by_name_custom_ones_too() {
+    let mut app = reading();
+    app.apply(Incoming::Emoji { favorites: HashMap::new(), custom: vec!["partyparrot".into()] });
+    app.handle_key(key('+'));
+    app.handle_key(key('/'));
+    for c in "rocke".chars() {
+        app.handle_key(key(c));
     }
-}
-
-#[test]
-fn a_pasted_glyph_reacts_with_the_name_slack_wants() {
-    assert_eq!(reacted_name("🚀"), "rocket");
-    assert_eq!(reacted_name("👍🏽"), "+1", "a skin tone reacts with the base name");
-    assert_eq!(reacted_name("rocket"), "rocket");
-    assert_eq!(reacted_name(":rocket:"), "rocket");
-    assert_eq!(reacted_name("partyparrot"), "partyparrot", "a custom emoji is a name of its own");
-}
-
-#[test]
-fn the_react_command_takes_a_glyph_too() {
-    let mut app = reacting("");
-    app.handle_key(code(KeyCode::Esc));
-    match palette_run(&mut app, "react 🚀").as_slice() {
-        [Action::React { name, .. }] => assert_eq!(name, "rocket"),
-        other => panic!(":react 🚀 gave {other:?}"),
-    }
-}
-
-#[test]
-fn tab_on_a_pasted_glyph_completes_to_its_name() {
-    let mut app = reacting("🚀");
-    app.handle_key(code(KeyCode::Tab));
-    assert_eq!(app.buffer.text(), "rocket");
-    assert!(app.input_hint().expect("cycling").starts_with("[🚀 rocket]"));
-}
-
-#[test]
-fn an_edit_drops_the_options_being_cycled_and_so_does_leaving_the_row() {
-    let mut app = reacting("rocke");
-    app.handle_key(code(KeyCode::Tab));
-    assert!(app.input_hint().is_some());
+    assert_eq!(app.react.as_ref().and_then(|p| p.choices().first()).map(String::as_str), Some("rocket"));
     app.handle_key(code(KeyCode::Backspace));
-    assert_eq!(app.input_hint(), None);
-    assert_eq!(app.buffer.text(), "rocke");
-    app.handle_key(code(KeyCode::Tab));
-    app.handle_key(code(KeyCode::Esc));
-    assert_eq!(app.input_hint(), None, "nothing to cycle once the row is closed");
+    assert_eq!(app.react.as_ref().and_then(|p| p.search.as_ref()).map(|s| s.query.as_str()), Some("rock"));
+    for _ in 0..4 {
+        app.handle_key(code(KeyCode::Backspace));
+    }
+    for c in "partyp".chars() {
+        app.handle_key(key(c));
+    }
+    assert_eq!(reacted(&app.handle_key(code(KeyCode::Enter))), ("partyparrot".into(), true));
 }
 
 #[test]
-fn right_takes_the_suggested_end_of_the_name_and_leaves_the_cursor_after_it() {
-    let mut app = reacting("rocke");
-    assert_eq!(app.input_ghost().as_deref(), Some("t"));
-    app.handle_key(code(KeyCode::Right));
-    assert_eq!(app.buffer.text(), "rocket");
-    assert_eq!(app.input_ghost(), None, "a complete name suggests nothing");
-    app.handle_key(key('!'));
-    assert_eq!(app.buffer.text(), "rocket!", "the cursor stayed at the end");
+fn backspace_on_an_empty_search_goes_back_to_the_strip_and_esc_closes() {
+    let mut app = picking();
+    app.handle_key(key('/'));
+    app.handle_key(code(KeyCode::Backspace));
+    assert_eq!(app.react.as_ref().map(|p| p.search.is_none()), Some(true));
+    assert_eq!(app.handle_key(code(KeyCode::Esc)), vec![]);
+    assert!(app.react.is_none());
+    assert!(app.messages[0].reactions.is_empty());
 }
 
 #[test]
-fn the_react_row_suggests_nothing_with_the_cursor_mid_text() {
-    let mut app = reacting("rocke");
-    app.handle_key(code(KeyCode::Left));
-    assert_eq!(app.input_ghost(), None);
-    app.handle_key(code(KeyCode::Right));
-    assert_eq!(app.input_ghost().as_deref(), Some("t"), "back at the end, the suggestion is back");
+fn a_refused_reaction_is_put_back() {
+    let mut app = picking();
+    app.handle_key(key('1'));
+    app.apply(Incoming::ReactFailed { ts: "1".into(), name: "+1".into(), on: true, error: "too_many_reactions".into() });
+    assert!(app.messages[0].reactions.is_empty());
+    assert_eq!(app.status_line(), "✗ no reaction: too_many_reactions");
 }
 
 #[test]
@@ -243,7 +246,6 @@ fn a_reply_row_completes_nothing_and_keeps_its_arrows() {
     for c in "rocke".chars() {
         app.handle_key(key(c));
     }
-    assert_eq!(app.input_ghost(), None);
     app.handle_key(code(KeyCode::Tab));
     assert_eq!(app.buffer.text(), "rocke", "tab completes nothing in a reply");
     app.handle_key(code(KeyCode::Left));
@@ -380,10 +382,7 @@ fn react_open_and_yank_use_selected_message() {
     assert_eq!(app.handle_key(key('o')), vec![Action::Open { channel: "C1".into(), ts: "1".into() }]);
     assert_eq!(app.handle_key(key('y')), vec![Action::Yank { channel: "C1".into(), ts: "1".into() }]);
     app.handle_key(key('+'));
-    for c in ":tada:".chars() {
-        app.handle_key(key(c));
-    }
-    assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "tada".into() }]);
+    assert_eq!(reacted(&app.handle_key(key('4'))), ("tada".into(), true));
 }
 
 #[test]
@@ -1016,7 +1015,7 @@ fn palette_export_and_read_use_the_open_conversation() {
     let actions = palette_run(&mut app, "export md");
     assert!(matches!(&actions[0], Action::Export { format: palette::Format::Markdown, messages, .. } if messages.len() == 1));
     assert_eq!(palette_run(&mut app, "read"), vec![Action::MarkChannelRead { channel: "C1".into(), ts: "1".into() }]);
-    assert_eq!(palette_run(&mut app, "react rocket"), vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "rocket".into() }]);
+    assert_eq!(reacted(&palette_run(&mut app, "react rocket")), ("rocket".into(), true));
 }
 
 #[test]

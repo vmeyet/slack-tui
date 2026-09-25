@@ -3,7 +3,6 @@ use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
 use crate::resolve::NameBook;
-use crate::tui::complete::Cycle;
 use crate::tui::field::Field;
 use crate::tui::firehose::Firehose;
 use crate::tui::images::Thumbs;
@@ -42,7 +41,10 @@ pub struct App {
     pub(in crate::tui) input: Option<Input>,
     pub(in crate::tui) buffer: Field,
     /// The emoji names the react row is tab-cycling through; any edit drops it.
-    pub(in crate::tui) react_cycle: Option<Cycle>,
+    pub(in crate::tui) react: Option<super::Pick>,
+    /// How often each emoji was put on a message, most used first in the picker.
+    pub(in crate::tui) favorites: HashMap<String, u32>,
+    pub(in crate::tui) custom_emoji: Vec<String>,
     /// A delete waiting for its yes; nothing leaves the screen before that.
     pub(in crate::tui) pending_delete: Option<MyMessage>,
     /// Where the user is; what just happened goes in `toast`.
@@ -101,7 +103,9 @@ impl Default for App {
             focus: Focus::default(),
             input: None,
             buffer: Field::default(),
-            react_cycle: None,
+            react: None,
+            favorites: HashMap::new(),
+            custom_emoji: Vec::new(),
             pending_delete: None,
             toast: None,
             typing: vec![],

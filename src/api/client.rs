@@ -266,6 +266,19 @@ impl Slack {
         Ok(())
     }
 
+    pub async fn unreact(&self, channel: &str, ts: &str, emoji: &str) -> Result<()> {
+        let name = emoji.trim_matches(':');
+        self.call("reactions.remove", params(&[("channel", channel), ("timestamp", ts), ("name", name)])).await?;
+        Ok(())
+    }
+
+    /// The names of the workspace's own emoji, aliases included, in name order.
+    pub async fn custom_emoji(&self) -> Result<Vec<String>> {
+        let body = self.call("emoji.list", Params::new()).await?;
+        let emoji: std::collections::BTreeMap<String, Value> = read("emoji.list", body, "emoji")?;
+        Ok(emoji.into_keys().collect())
+    }
+
     /// Replaces the text of one's own message; the blocks Slack kept give way to this text.
     pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<()> {
         self.call("chat.update", params(&[("channel", channel), ("ts", ts), ("text", text)])).await?;
@@ -600,6 +613,30 @@ mod tests {
         three_pages(&server).await;
         let messages = client(&server).history_since("C1", "0.5").await.unwrap();
         assert_eq!(messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1.0", "2.0", "3.0", "4.0", "5.0", "6.0"]);
+    }
+
+    #[tokio::test]
+    async fn unreact_removes_the_reaction() {
+        let server = MockServer::start().await;
+        Mock::given(path("/reactions.remove"))
+            .and(body_string_contains("name=tada"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": true})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        client(&server).unreact("C1", "1.0", ":tada:").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn custom_emoji_are_the_names_in_order() {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "emoji.list",
+            serde_json::json!({"ok": true, "emoji": {"shipit": "https://x/shipit.png", "parrot": "alias:partyparrot"}}),
+        )
+        .await;
+        assert_eq!(client(&server).custom_emoji().await.unwrap(), ["parrot", "shipit"]);
     }
 
     #[tokio::test]

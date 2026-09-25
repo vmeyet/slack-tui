@@ -4,12 +4,14 @@ mod incoming;
 mod keys;
 mod live;
 mod quit;
+mod react;
 mod sidebar;
 mod state;
 #[cfg(test)]
 mod tests;
 
 pub use feedback::{Toast, Typing};
+pub use react::{PAGE as REACT_PAGE, Pick};
 pub use sidebar::{Badge, ChannelRow, Kind, SidebarRow, arrange, sidebar_rows};
 pub use state::{App, Settings};
 
@@ -35,7 +37,6 @@ pub enum Focus {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
     Reply { channel: String, thread_ts: Option<String>, label: String },
-    React { channel: String, ts: String },
     Edit { channel: String, ts: String },
     Filter,
     Search,
@@ -78,11 +79,16 @@ pub enum Action {
         thread_ts: Option<String>,
         draft: String,
     },
+    /// Puts mine on, or takes it off.
     React {
         channel: String,
         ts: String,
         name: String,
+        on: bool,
     },
+    /// The most used reactions and the workspace's own emoji, for the picker.
+    LoadEmoji,
+    SaveFavorites(HashMap<String, u32>),
     Edit {
         channel: String,
         ts: String,
@@ -173,6 +179,16 @@ pub enum Incoming {
     },
     /// Jev could not answer; triage stays off for the rest of the session.
     TriageUnavailable(Unavailable),
+    Emoji {
+        favorites: HashMap<String, u32>,
+        custom: Vec<String>,
+    },
+    ReactFailed {
+        ts: String,
+        name: String,
+        on: bool,
+        error: String,
+    },
     Threads(Vec<Candidate>),
     DmOpened(String),
     Names(NameBook),

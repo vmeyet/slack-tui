@@ -32,7 +32,7 @@ const MODAL_FRAME_W: u16 = 2 + 2 * MODAL_PAD_X;
 const MODAL_FRAME_H: u16 = 2 + 2 * MODAL_PAD_Y;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let input_rows = u16::from(app.input.is_some() || app.palette.is_some());
+    let input_rows = u16::from(app.input.is_some() || app.palette.is_some() || app.react.is_some());
     let [main, input, status] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(input_rows), Constraint::Length(1)]).areas(f.area());
     let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help || app.pending_delete.is_some();
@@ -44,6 +44,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         input::draw(f, app, input);
     } else if app.palette.is_some() {
         input::draw_palette(f, app, input);
+    } else if app.react.is_some() {
+        input::draw_react(f, app, input);
     }
     status::draw(f, app, status);
     draw_overlays(f, app, main);

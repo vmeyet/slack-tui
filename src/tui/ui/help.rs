@@ -27,7 +27,7 @@ const HELP_GROUPS: [(&str, &[(&str, &str)]); 4] = [
             ("r", "reply in the focused conversation"),
             ("t", "reply in the selected message's thread"),
             ("e", "write the message in $EDITOR"),
-            ("+", "react (type the emoji name)"),
+            ("+", "react: 1-8 from the strip, / to search, again to take it off"),
             ("o / y", "open in Slack · copy permalink"),
             ("u", "open the message's link in the browser"),
             (":edit", "rewrite your own message"),

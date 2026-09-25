@@ -90,7 +90,7 @@ impl App {
         }
     }
 
-    fn all_messages_mut(&mut self) -> Vec<&mut Message> {
+    pub(super) fn all_messages_mut(&mut self) -> Vec<&mut Message> {
         let thread = self.thread.as_mut().map(|t| t.messages.iter_mut()).into_iter().flatten();
         self.messages.iter_mut().chain(thread).collect()
     }
@@ -103,7 +103,7 @@ impl App {
     }
 }
 
-fn adjust_reaction(reactions: &mut Vec<Reaction>, name: &str, user: &str, added: bool) {
+pub(super) fn adjust_reaction(reactions: &mut Vec<Reaction>, name: &str, user: &str, added: bool) {
     let Some(i) = reactions.iter().position(|r| r.name == name) else {
         if added {
             reactions.push(Reaction { name: name.to_owned(), count: 1, users: vec![user.to_owned()] });
