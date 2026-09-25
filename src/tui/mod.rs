@@ -58,6 +58,9 @@ fn theme_from(config: &crate::config::Tui) -> Result<theme::Theme> {
     Ok(theme)
 }
 
+/// The cache file counting how often each emoji was put on a message.
+const FAVORITES: &str = "favorite_emoji";
+
 /// What ended the event loop's wait.
 enum Wake {
     Incoming(Incoming),
@@ -88,6 +91,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let mut app = App::with(Settings { theme, workspace, highlighter, thumbs, triage });
     spawn(Action::LoadChannels, backend.clone(), tx.clone());
     spawn(Action::CheckUpdate, backend.clone(), tx.clone());
+    spawn(Action::LoadEmoji, backend.clone(), tx.clone());
     if open_inbox {
         for action in app.open_inbox() {
             spawn(action, backend.clone(), tx.clone());
@@ -293,9 +297,20 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
         Action::LoadHistory(channel) => load_history(backend, channel).await,
         Action::LoadReplies { channel, ts } => load_replies(backend, channel, ts).await,
         Action::Send { channel, thread_ts, text } => send(backend, channel, thread_ts, &text).await,
-        Action::React { channel, ts, name } => {
-            slack.react(&channel, &ts, &name).await?;
-            Ok(Incoming::Toast(format!("reacted :{name}:")))
+        Action::React { channel, ts, name, on } => {
+            let done = if on { slack.react(&channel, &ts, &name).await } else { slack.unreact(&channel, &ts, &name).await };
+            Ok(match done {
+                Ok(()) => Incoming::Toast(String::new()),
+                Err(e) => Incoming::ReactFailed { ts, name, on, error: e.to_string() },
+            })
+        }
+        Action::LoadEmoji => Ok(Incoming::Emoji {
+            favorites: backend.cache.load(FAVORITES).await.unwrap_or_default(),
+            custom: slack.custom_emoji().await.unwrap_or_default(),
+        }),
+        Action::SaveFavorites(favorites) => {
+            backend.cache.save(FAVORITES, &favorites).await?;
+            Ok(Incoming::Toast(String::new()))
         }
         Action::Edit { channel, ts, text } => {
             slack.update_message(&channel, &ts, &text).await?;

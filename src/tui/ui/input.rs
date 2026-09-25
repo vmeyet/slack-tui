@@ -1,4 +1,4 @@
-use crate::tui::app::{App, Input};
+use crate::tui::app::{App, Input, REACT_PAGE};
 use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -10,7 +10,6 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
     let label = match &app.input {
         Some(Input::Reply { label, .. }) => format!("reply to {label}"),
         Some(Input::InboxReply { item }) => format!("reply to {}", item.label),
-        Some(Input::React { .. }) => "react with".into(),
         Some(Input::Edit { .. }) => "edit".into(),
         Some(Input::Filter) => "filter".into(),
         Some(Input::Search) => "search".into(),
@@ -22,7 +21,6 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
         Span::raw(before.to_owned()),
         caret(&app.theme, under),
         Span::raw(after.to_owned()),
-        Span::styled(app.input_ghost().unwrap_or_default(), Style::new().fg(app.theme.faded)),
     ]);
     f.render_widget(Paragraph::new(line), area);
 }
@@ -33,6 +31,47 @@ fn caret(theme: &Theme, under: &str) -> Span<'static> {
         return Span::styled("▌", Style::new().fg(theme.accent));
     }
     Span::styled(under.to_owned(), Style::new().fg(theme.base).bg(theme.accent))
+}
+
+/// The picker: the search typed so far, then the page of choices around the selected one, mine
+/// standing out and the selected one framed; on the strip, the selected one's name after it.
+pub(super) fn draw_react(f: &mut Frame, app: &App, area: Rect) {
+    let Some(pick) = &app.react else { return };
+    let theme = &app.theme;
+    let faded = Style::new().fg(theme.faded);
+    let mut spans = vec![Span::styled(" react ▸ ", Style::new().fg(theme.accent).bold())];
+    if let Some(search) = &pick.search {
+        spans.push(Span::raw(format!("/{}", search.query)));
+        spans.push(Span::styled("▌ ", Style::new().fg(theme.accent)));
+    }
+    let first = pick.selected - pick.selected % REACT_PAGE;
+    for (i, name) in pick.choices().iter().enumerate().skip(first).take(REACT_PAGE) {
+        let style = if i == pick.selected {
+            Style::new().fg(theme.base).bg(theme.accent)
+        } else if app.is_mine(&pick.ts, name) {
+            Style::new().fg(theme.success).bold()
+        } else {
+            Style::new()
+        };
+        spans.push(Span::styled(format!(" {} ", choice_label(i, name, pick.search.is_some())), style));
+    }
+    match (&pick.search, pick.choices().get(pick.selected)) {
+        (_, None) => spans.push(Span::styled(" no emoji by that name", faded)),
+        (None, Some(name)) => spans.push(Span::styled(format!("  {name}"), faded)),
+        (Some(_), Some(_)) => {}
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// On the strip the number that picks it and the glyph; in a search the glyph and the name.
+/// A custom emoji has no glyph, so its name stands in.
+fn choice_label(i: usize, name: &str, searching: bool) -> String {
+    match (searching, crate::emoji::glyph(name)) {
+        (false, Some(glyph)) => format!("{} {glyph}", i + 1),
+        (false, None) => format!("{} :{name}:", i + 1),
+        (true, Some(glyph)) => format!("{glyph} {name}"),
+        (true, None) => format!(":{name}:"),
+    }
 }
 
 pub(super) fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
@@ -109,14 +148,20 @@ mod tests {
     }
 
     #[test]
-    fn the_react_row_shows_the_rest_of_the_emoji_name_in_grey_after_the_cursor() {
+    fn the_picker_numbers_the_strip_and_names_the_selected_one() {
         let mut app = App::new();
-        app.input = Some(Input::React { channel: "C1".into(), ts: "1".into() });
-        app.buffer = Field::new("rocke");
+        app.react = Some(crate::tui::app::Pick {
+            channel: "C1".into(),
+            ts: "1".into(),
+            strip: vec!["rocket".into(), "partyparrot".into()],
+            selected: 1,
+            search: None,
+        });
         let row = input_row(&mut app);
-        assert!(shown(&row).contains("react with ▸ rocke▌t"), "{}", shown(&row));
-        let grey: String = row.iter().filter(|(_, fg, _)| *fg == app.theme.faded).map(|(s, ..)| s.as_str()).collect();
-        assert_eq!(grey, "t", "only the suggestion is dimmed");
+        let text = shown(&row);
+        assert!(text.starts_with(" react ▸  1 🚀") && text.contains(" 2 :partyparrot:   partyparrot"), "{text}");
+        let framed: String = row.iter().filter(|(.., bg)| *bg == app.theme.accent).map(|(s, ..)| s.as_str()).collect();
+        assert_eq!(framed, " 2 :partyparrot: ");
     }
 
     #[test]

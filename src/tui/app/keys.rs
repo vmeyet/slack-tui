@@ -1,9 +1,7 @@
-use super::commands::emoji_names;
 use super::quit::QuitKey;
 use super::{Action, App, Focus, Input};
 use crate::api::Message;
 use crate::inbox::Snooze;
-use crate::tui::complete::{self, Cycle};
 use crate::tui::field::Field;
 use crate::tui::firehose::Firehose;
 use crate::tui::jump::{Candidate, Jump, Target};
@@ -33,6 +31,9 @@ impl App {
         }
         if self.pending_delete.is_some() {
             return self.handle_confirm_key(key);
+        }
+        if self.react.is_some() {
+            return self.handle_react_key(key);
         }
         if self.input.is_some() {
             return self.handle_input_key(key);
@@ -256,11 +257,7 @@ impl App {
             KeyCode::Char('r') => return self.start_reply(self.focus == Focus::Thread),
             KeyCode::Char('t') => return self.start_reply(true),
             KeyCode::Char('e') => return self.compose(),
-            KeyCode::Char('+') => {
-                if let Some((channel, ts)) = self.selected_ref() {
-                    self.start_input(Input::React { channel, ts }, String::new());
-                }
-            }
+            KeyCode::Char('+') => self.open_react(),
             KeyCode::Char('o') => {
                 if let Some((channel, ts)) = self.selected_ref() {
                     return vec![Action::Open { channel, ts }];
@@ -295,19 +292,10 @@ impl App {
                 self.close_input();
             }
             KeyCode::Enter => return self.submit_input(),
-            KeyCode::Tab | KeyCode::BackTab => self.cycle_emoji(key.code == KeyCode::BackTab),
             KeyCode::Left => self.buffer.left(),
-            KeyCode::Right => {
-                if !self.accept_emoji() {
-                    self.buffer.right();
-                }
-            }
+            KeyCode::Right => self.buffer.right(),
             KeyCode::Home => self.buffer.start(),
-            KeyCode::End => {
-                if !self.accept_emoji() {
-                    self.buffer.end();
-                }
-            }
+            KeyCode::End => self.buffer.end(),
             KeyCode::Char('a') if ctrl => self.buffer.start(),
             KeyCode::Char('e') if ctrl => self.buffer.end(),
             KeyCode::Char('w') if ctrl => {
@@ -334,63 +322,14 @@ impl App {
     fn close_input(&mut self) {
         self.input = None;
         self.buffer.clear();
-        self.react_cycle = None;
     }
 
-    /// After a change to the text: the filter follows it, and any completion in hand is stale.
+    /// After a change to the text: the filter follows it.
     fn edited(&mut self) {
-        self.react_cycle = None;
         if self.input == Some(Input::Filter) {
             self.filter = self.buffer.text().to_owned();
             self.channel_selected = 0;
         }
-    }
-
-    /// Replaces the half-typed emoji name with the next one that matches it. The react row is the
-    /// only one with something to complete.
-    fn cycle_emoji(&mut self, backwards: bool) {
-        let candidates = self.emoji_candidates();
-        match &mut self.react_cycle {
-            Some(cycle) => cycle.advance(backwards),
-            None => self.react_cycle = Cycle::new(self.emoji_token(), candidates),
-        }
-        let Some(name) = self.react_cycle.as_ref().map(|c| c.current().to_owned()) else { return };
-        self.buffer = Field::new(name);
-    }
-
-    /// Takes the suggested end of the emoji name, as `→` does in a shell, and says whether it did.
-    fn accept_emoji(&mut self) -> bool {
-        let Some(rest) = self.input_ghost() else { return false };
-        for c in rest.chars() {
-            self.buffer.insert(c);
-        }
-        true
-    }
-
-    /// The end of the emoji name being typed, shown in grey after the cursor. Only the react row
-    /// suggests anything, only with the cursor at the end, and never while tab is cycling.
-    pub(in crate::tui) fn input_ghost(&self) -> Option<String> {
-        if self.react_cycle.is_some() || !self.buffer.at_end() {
-            return None;
-        }
-        complete::ghost(self.emoji_token(), self.emoji_candidates()).filter(|rest| !rest.is_empty())
-    }
-
-    /// The options tab is cycling through, each behind its glyph.
-    pub(in crate::tui) fn input_hint(&self) -> Option<String> {
-        Some(self.react_cycle.as_ref()?.hint(|name| format!("{} {name}", crate::emoji::render(name))))
-    }
-
-    fn emoji_candidates(&self) -> &'static [String] {
-        match self.input {
-            Some(Input::React { .. }) => emoji_names(),
-            _ => &[],
-        }
-    }
-
-    /// What the row is completing, which the candidates are names of.
-    fn emoji_token(&self) -> &str {
-        shortcode(self.buffer.text())
     }
 
     /// A delete cannot be undone, so only `y` goes through and every other key keeps the message.
@@ -407,13 +346,11 @@ impl App {
     pub(super) fn start_input(&mut self, input: Input, initial: String) {
         self.buffer = Field::new(initial);
         self.input = Some(input);
-        self.react_cycle = None;
     }
 
     fn submit_input(&mut self) -> Vec<Action> {
         let Some(input) = self.input.take() else { return vec![] };
         let text = self.buffer.take();
-        self.react_cycle = None;
         match input {
             Input::Filter => {
                 self.focus = Focus::Channels;
@@ -422,10 +359,6 @@ impl App {
             Input::Search | Input::Reply { .. } | Input::InboxReply { .. } if text.trim().is_empty() => vec![],
             Input::Search => self.search_for(text),
             Input::Reply { channel, thread_ts, .. } => self.send(channel, thread_ts, text),
-            Input::React { channel, ts } => {
-                let name = shortcode(text.trim().trim_matches(':')).to_owned();
-                if name.is_empty() { vec![] } else { vec![Action::React { channel, ts, name }] }
-            }
             Input::Edit { .. } if text.trim().is_empty() => {
                 self.fail("an empty edit would not delete it — use :delete");
                 vec![]

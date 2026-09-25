@@ -60,7 +60,7 @@ Whoever is typing in the open conversation shows under the last message.
 | `h` / `esc` | Go back |
 | `r` / `t` | Reply / reply in thread |
 | `e` | Write the message in `$EDITOR` (`$VISUAL` first, then `vi`); save to send, quit empty to cancel |
-| `+` | React |
+| `+` | React: `1`–`8` from the strip (on the message, then your most used), `/` to search by name; pick one of yours again to take it off |
 | `o` / `u` | Open the message in Slack / open its first link |
 | `y` | Copy the permalink |
 | `/` | Filter channels |

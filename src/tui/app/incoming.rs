@@ -43,6 +43,11 @@ impl App {
                     jump.threads = candidates;
                 }
             }
+            Incoming::Emoji { favorites, custom } => {
+                self.favorites = favorites;
+                self.custom_emoji = custom;
+            }
+            Incoming::ReactFailed { ts, name, on, error } => self.react_failed(&ts, &name, on, &error),
             Incoming::Names(names) => self.names = names,
             Incoming::Latest(commit) => self.latest = commit,
             Incoming::Thumb { id, image } => self.thumbs.arrived(&id, image),

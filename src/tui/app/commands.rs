@@ -124,9 +124,10 @@ impl App {
         vec![Action::SendTo { target, text }]
     }
 
-    fn react(&self, name: &str) -> Vec<Action> {
+    fn react(&mut self, name: &str) -> Vec<Action> {
         let name = super::keys::shortcode(name.trim().trim_matches(':')).to_owned();
-        self.selected_ref().map(|(channel, ts)| vec![Action::React { channel, ts, name }]).unwrap_or_default()
+        let Some((channel, ts)) = self.selected_ref() else { return vec![] };
+        self.toggle_reaction(channel, ts, name)
     }
 
     fn edit_selected(&mut self) -> Outcome {
@@ -225,7 +226,7 @@ impl App {
     }
 }
 
-/// Every shortcode, in name order, for the `:react` slot and the react row.
+/// Every shortcode, in name order, for the `:react` slot and the picker's search.
 pub(super) fn emoji_names() -> &'static [String] {
     static NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
         let mut names: Vec<String> = crate::emoji::names().map(str::to_owned).collect();
