@@ -50,8 +50,8 @@ fn key_hints(app: &App) -> &'static str {
         (Some(Input::React { .. }), _) => "tab completes · → accept · enter react · esc cancel",
         (Some(_), _) => "enter send · esc cancel",
         (None, Focus::Channels) => "j/k move · enter open · / filter · ^k jump · ? more",
-        (None, Focus::Messages) => "j/k move · enter thread · r reply · e react · ? more",
-        (None, Focus::Thread) => "j/k move · r reply · e react · esc close · ? more",
+        (None, Focus::Messages) => "j/k move · enter thread · r reply · + react · ? more",
+        (None, Focus::Thread) => "j/k move · r reply · + react · esc close · ? more",
     }
 }
 

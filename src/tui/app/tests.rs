@@ -146,7 +146,7 @@ fn an_edit_prefill_starts_with_the_cursor_after_the_last_character() {
 /// The react row on a half-typed name, one key away from `🚀 rocket`.
 fn reacting(typed: &str) -> App {
     let mut app = reading();
-    app.handle_key(key('e'));
+    app.handle_key(key('+'));
     for c in typed.chars() {
         app.handle_key(key(c));
     }
@@ -291,7 +291,7 @@ fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
     app.buffer = Field::new("half written");
-    let actions = app.handle_key(key('E'));
+    let actions = app.handle_key(key('e'));
     assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: None, draft: "half written".into() }]);
     let sent = app.apply(Incoming::Composed { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() });
     assert_eq!(sent, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() }]);
@@ -302,13 +302,13 @@ fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
 #[test]
 fn compose_writes_in_the_open_thread_and_needs_a_conversation() {
     let mut app = loaded();
-    assert_eq!(app.handle_key(key('E')), vec![]);
+    assert_eq!(app.handle_key(key('e')), vec![]);
     assert_eq!(app.status_line(), "pick a conversation first");
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::Replies { channel: "C1".into(), ts: "1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
-    let actions = app.handle_key(key('E'));
+    let actions = app.handle_key(key('e'));
     assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: Some("1".into()), draft: String::new() }]);
 }
 
@@ -379,7 +379,7 @@ fn react_open_and_yank_use_selected_message() {
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
     assert_eq!(app.handle_key(key('o')), vec![Action::Open { channel: "C1".into(), ts: "1".into() }]);
     assert_eq!(app.handle_key(key('y')), vec![Action::Yank { channel: "C1".into(), ts: "1".into() }]);
-    app.handle_key(key('e'));
+    app.handle_key(key('+'));
     for c in ":tada:".chars() {
         app.handle_key(key(c));
     }

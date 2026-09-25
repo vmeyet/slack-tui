@@ -250,8 +250,8 @@ impl App {
             KeyCode::Char('s') => self.start_input(Input::Search, String::new()),
             KeyCode::Char('r') => return self.start_reply(self.focus == Focus::Thread),
             KeyCode::Char('t') => return self.start_reply(true),
-            KeyCode::Char('E') => return self.compose(),
-            KeyCode::Char('e') => {
+            KeyCode::Char('e') => return self.compose(),
+            KeyCode::Char('+') => {
                 if let Some((channel, ts)) = self.selected_ref() {
                     self.start_input(Input::React { channel, ts }, String::new());
                 }
