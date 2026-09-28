@@ -77,6 +77,7 @@ impl App {
         let view = self.firehose.as_mut().expect("firehose open");
         let lines = view.visible(&self.wall);
         let len = lines.len();
+        let selected = view.selected.or_else(|| len.checked_sub(1)).and_then(|i| lines.get(i)).map(|l| (*l).clone());
         match key.code {
             KeyCode::Esc | KeyCode::Char('f') => self.firehose = None,
             KeyCode::Char('n') => {
@@ -90,10 +91,13 @@ impl App {
             KeyCode::PageUp => view.move_by(-10, len),
             KeyCode::Char('g') | KeyCode::Home => view.move_by(i64::MIN / 2, len),
             KeyCode::Char('G') | KeyCode::End => view.follow(),
+            KeyCode::Char('+') => {
+                if let Some(line) = selected {
+                    self.open_react_on(line.channel, line.ts);
+                }
+            }
             KeyCode::Enter => {
-                let Some(line) = view.selected.or_else(|| len.checked_sub(1)).and_then(|i| lines.get(i)).map(|l| (*l).clone()) else {
-                    return vec![];
-                };
+                let Some(line) = selected else { return vec![] };
                 self.firehose = None;
                 let mut actions = self.open_channel(line.channel.clone());
                 if let Some(root) = line.thread_ts {

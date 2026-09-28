@@ -853,6 +853,19 @@ fn firehose_collects_every_channel_and_jumps() {
 }
 
 #[test]
+fn plus_in_the_firehose_reacts_to_the_selected_line_and_keeps_it_open() {
+    let mut app = loaded();
+    live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("1", "one") });
+    live(&mut app, rtm::Event::Message { channel: "C9".into(), message: msg("2", "two") });
+    app.handle_key(key('f'));
+    app.handle_key(key('k'));
+    app.handle_key(key('+'));
+    let actions = app.handle_key(key('4'));
+    assert_eq!(actions[0], Action::React { channel: "C2".into(), ts: "1".into(), name: "tada".into(), on: true });
+    assert!(app.firehose.is_some() && app.react.is_none());
+}
+
+#[test]
 fn triage_tags_live_lines_only_while_the_firehose_is_open() {
     use crate::firehose::Tag;
     let mut app = App { triage: true, ..loaded() };

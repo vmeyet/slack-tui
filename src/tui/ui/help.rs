@@ -42,7 +42,7 @@ const HELP_GROUPS: [(&str, &[(&str, &str)]); 4] = [
             ("⌘k / ^k", "jump to a channel, person or thread · > searches"),
             ("i", "inbox: unread DMs, mentions, thread replies"),
             ("p", "promises: follow-ups you said you would do, still open"),
-            ("f", "firehose: every channel as one live ticker"),
+            ("f", "firehose: every channel as one live ticker, + to react"),
         ],
     ),
     (

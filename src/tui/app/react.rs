@@ -3,7 +3,7 @@
 //! off. The count moves at once; a refusal puts it back.
 use super::commands::emoji_names;
 use super::{Action, App};
-use crate::api::Reaction;
+use crate::api::{Message, Reaction};
 use crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
 
@@ -64,8 +64,14 @@ fn strip(on_message: &[Reaction], favorites: &HashMap<String, u32>) -> Vec<Strin
 impl App {
     /// `+`: the picker on the selected message.
     pub(super) fn open_react(&mut self) {
-        let Some((channel, ts)) = self.selected_ref() else { return };
-        let on_message = self.selected_message().filter(|m| m.ts == ts).map_or(&[][..], |m| &m.reactions);
+        if let Some((channel, ts)) = self.selected_ref() {
+            self.open_react_on(channel, ts);
+        }
+    }
+
+    /// The picker on any message; what is on it shows only when it is loaded, the firehose keeps none.
+    pub(super) fn open_react_on(&mut self, channel: String, ts: String) {
+        let on_message = self.loaded(&ts).next().map_or(&[][..], |m| &m.reactions);
         let strip = strip(on_message, &self.favorites);
         self.react = Some(Pick { channel, ts, strip, selected: 0, search: None });
     }
@@ -115,9 +121,13 @@ impl App {
     }
 
     pub(in crate::tui) fn is_mine(&self, ts: &str, name: &str) -> bool {
+        self.loaded(ts).flat_map(|m| &m.reactions).any(|r| r.name == name && r.users.contains(&self.me))
+    }
+
+    /// The message `ts` in the open channel or thread; both hold it when it is a thread's root.
+    fn loaded<'a>(&'a self, ts: &'a str) -> impl Iterator<Item = &'a Message> {
         let thread = self.thread.iter().flat_map(|t| &t.messages);
-        let mut reactions = self.messages.iter().chain(thread).filter(|m| m.ts == ts).flat_map(|m| &m.reactions);
-        reactions.any(|r| r.name == name && r.users.contains(&self.me))
+        self.messages.iter().chain(thread).filter(move |m| m.ts == ts)
     }
 
     fn show_reaction(&mut self, ts: &str, name: &str, on: bool) {
