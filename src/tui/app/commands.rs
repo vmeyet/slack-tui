@@ -92,6 +92,11 @@ impl App {
             Command::Help => Ok(self.show_help()),
             Command::Quit => Ok(self.quit()),
         };
+        self.settle(outcome)
+    }
+
+    /// The actions, or the reason shown as an error.
+    pub(super) fn settle(&mut self, outcome: Outcome) -> Vec<Action> {
         outcome.unwrap_or_else(|reason| {
             self.fail(reason);
             vec![]
@@ -130,7 +135,7 @@ impl App {
         self.toggle_reaction(channel, ts, name)
     }
 
-    fn edit_selected(&mut self) -> Outcome {
+    pub(super) fn edit_selected(&mut self) -> Outcome {
         let MyMessage { channel, ts, text } = self.my_message("edit")?;
         self.start_input(Input::Edit { channel, ts }, text);
         Ok(vec![])
