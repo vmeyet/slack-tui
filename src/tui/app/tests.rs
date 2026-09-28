@@ -293,7 +293,7 @@ fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
     app.buffer = Field::new("half written");
-    let actions = app.handle_key(key('e'));
+    let actions = app.handle_key(ctrl('e'));
     assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: None, draft: "half written".into() }]);
     let sent = app.apply(Incoming::Composed { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() });
     assert_eq!(sent, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() }]);
@@ -304,13 +304,13 @@ fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
 #[test]
 fn compose_writes_in_the_open_thread_and_needs_a_conversation() {
     let mut app = loaded();
-    assert_eq!(app.handle_key(key('e')), vec![]);
+    assert_eq!(app.handle_key(ctrl('e')), vec![]);
     assert_eq!(app.status_line(), "pick a conversation first");
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::Replies { channel: "C1".into(), ts: "1".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
-    let actions = app.handle_key(key('e'));
+    let actions = app.handle_key(ctrl('e'));
     assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: Some("1".into()), draft: String::new() }]);
 }
 
@@ -1043,6 +1043,18 @@ fn edit_prefills_the_message_and_saves_the_change() {
     assert_eq!(app.messages[0].text, "a", "the screen waits for the live event");
     live(&mut app, rtm::Event::Changed { channel: "C1".into(), message: msg("1", "a!") });
     assert_eq!(app.messages[0].text, "a!");
+}
+
+#[test]
+fn e_edits_my_message_and_refuses_someone_elses() {
+    let mut app = reading();
+    assert_eq!(app.handle_key(key('e')), vec![]);
+    assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "1".into() }));
+    app.handle_key(code(KeyCode::Esc));
+    app.apply(history(vec![from_other("2", "theirs")]));
+    assert_eq!(app.handle_key(key('e')), vec![]);
+    assert_eq!(app.input, None);
+    assert!(app.status_line().contains("you can only edit your own messages"), "{}", app.status_line());
 }
 
 #[test]

@@ -241,6 +241,7 @@ impl App {
     }
 
     fn handle_browse_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
             KeyCode::Char('?') => self.help = true,
@@ -260,7 +261,11 @@ impl App {
             KeyCode::Char('s') => self.start_input(Input::Search, String::new()),
             KeyCode::Char('r') => return self.start_reply(self.focus == Focus::Thread),
             KeyCode::Char('t') => return self.start_reply(true),
-            KeyCode::Char('e') => return self.compose(),
+            KeyCode::Char('e') if ctrl => return self.compose(),
+            KeyCode::Char('e') => {
+                let outcome = self.edit_selected();
+                return self.settle(outcome);
+            }
             KeyCode::Char('+') => self.open_react(),
             KeyCode::Char('o') => {
                 if let Some((channel, ts)) = self.selected_ref() {
