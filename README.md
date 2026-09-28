@@ -67,7 +67,7 @@ Whoever is typing in the open conversation shows under the last message.
 | `s` | Search |
 | `ctrl-k` | Fuzzy jump to a channel, a person or a followed thread; start with `>` to search Slack |
 | `i` | Inbox |
-| `f` | Firehose: every conversation as one live wall |
+| `f` | Firehose: every conversation as one live wall; `+` reacts to the selected line |
 | `p` | Promises: follow-ups you said you would do and have not closed (needs triage) |
 | `z` | Reading mode: one centered column, nothing else |
 | `:` | Command line |
