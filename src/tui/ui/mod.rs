@@ -77,13 +77,24 @@ fn draw_panes(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Plac
 /// Reading mode: one centered column with the thread when open, the conversation otherwise.
 /// Three quarters of the terminal, never narrower than 80 columns nor wider than 110.
 fn draw_reading(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Placement> {
-    let width = (area.width * 3 / 4).clamp(80, 110).min(area.width);
+    let width = zen_width(area.width);
     let column = Rect { x: area.x + (area.width - width) / 2, width, ..area };
     let pictures = if app.thread.is_some() { thread::draw(f, app, column) } else { messages::draw(f, app, column) };
     if modal {
         fade(f, area, app.theme.faded);
     }
     pictures
+}
+
+/// Zen's column: this share of the screen, never under `ZEN_MIN_W` like revu, never over
+/// `ZEN_MAX_W` since chat is prose and long lines tire the eye, and never wider than the screen.
+const ZEN_PCT: u32 = 70;
+const ZEN_MIN_W: u16 = 120;
+const ZEN_MAX_W: u16 = 160;
+
+fn zen_width(screen: u16) -> u16 {
+    let share = u16::try_from(u32::from(screen) * ZEN_PCT / 100).unwrap_or(screen);
+    share.clamp(ZEN_MIN_W, ZEN_MAX_W).min(screen)
 }
 
 /// The boxes drawn over the panes: inbox, firehose, jump, the delete question and the key help.
@@ -214,5 +225,13 @@ mod tests {
         let out = render_at(&mut app, 110, 18);
         let stable = regex::Regex::new(r"\d\d:\d\d").unwrap().replace_all(&out, "HH:MM").to_string();
         insta::assert_snapshot!(stable);
+    }
+
+    #[test]
+    fn zen_takes_most_of_the_screen_within_bounds() {
+        assert_eq!(super::zen_width(100), 100, "never wider than the screen");
+        assert_eq!(super::zen_width(150), 120, "120 at least");
+        assert_eq!(super::zen_width(200), 140, "70 % in between");
+        assert_eq!(super::zen_width(300), 160, "160 at most");
     }
 }
