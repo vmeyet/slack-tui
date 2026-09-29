@@ -20,9 +20,15 @@ pub fn ghost(token: &str, candidates: &[String]) -> Option<String> {
         return None;
     }
     let lower = token.to_lowercase();
-    let by_prefix = candidates.iter().find(|c| c.to_lowercase().starts_with(&lower) && c.len() > token.len());
+    let typed = token.chars().count();
+    let by_prefix = candidates.iter().find(|c| c.to_lowercase().starts_with(&lower) && c.chars().count() > typed);
     let best = by_prefix.or_else(|| fuzzy::best(token, candidates.iter().map(|c| (c.as_str(), c))))?;
-    if best.to_lowercase().starts_with(&lower) { Some(best[token.len()..].to_owned()) } else { None }
+    if !best.to_lowercase().starts_with(&lower) {
+        return None;
+    }
+    // Lowercasing can change byte lengths (İ is 2 bytes, its lowercase 3), so the typed part is skipped by characters.
+    let rest = best.char_indices().nth(typed).map_or(best.len(), |(i, _)| i);
+    Some(best[rest..].to_owned())
 }
 
 /// The candidates one token is being cycled through, until the text changes again.
@@ -84,6 +90,13 @@ mod tests {
         assert_eq!(ghost("", &candidates()), None);
         assert_eq!(ghost("zzz", &candidates()), None);
         assert_eq!(ghost("rcar", &candidates()), None, "a fuzzy match the token does not start suggests nothing");
+    }
+
+    #[test]
+    fn the_ghost_survives_letters_whose_lowercase_changes_length() {
+        let people = vec!["@İlker".to_string()];
+        assert_eq!(ghost("@i", &people).as_deref(), Some("lker"));
+        assert_eq!(ghost("@İ", &people).as_deref(), Some("lker"));
     }
 
     #[test]
