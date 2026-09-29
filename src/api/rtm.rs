@@ -75,23 +75,32 @@ fn is_emoji_name(name: &str) -> bool {
 }
 
 const PING_EVERY: Duration = Duration::from_secs(30);
-const RECONNECT_AFTER: Duration = Duration::from_secs(5);
+/// Short under test: reconnects go through real HTTP, which a paused clock would time out.
+const RECONNECT_AFTER: Duration = if cfg!(test) { Duration::from_millis(10) } else { Duration::from_secs(5) };
 const MAX_FAILURES: u32 = 3;
 
+type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
 /// Keeps a connection alive and forwards its events until the receiver is dropped.
-/// Gives up after a few consecutive failures so a workspace that refuses RTM can fall back to polling.
+/// Gives up after a few failures in a row without ever connecting, so a workspace that refuses RTM can fall back to polling.
 pub async fn stream(slack: Slack, tx: mpsc::UnboundedSender<Event>) {
     let mut failures = 0;
     loop {
-        match session(&slack, &tx).await {
-            Ok(()) => failures = 0,
+        let session = match connect(&slack).await {
+            Ok(socket) => {
+                failures = 0;
+                forward(socket, &tx).await
+            }
             Err(e) => {
                 failures += 1;
-                let fatal = failures >= MAX_FAILURES;
-                let event = if fatal { Event::GaveUp(e.to_string()) } else { Event::Disconnected(e.to_string()) };
-                if tx.send(event).is_err() || fatal {
-                    return;
-                }
+                Err(e)
+            }
+        };
+        if let Err(e) = session {
+            let fatal = failures >= MAX_FAILURES;
+            let event = if fatal { Event::GaveUp(e.to_string()) } else { Event::Disconnected(e.to_string()) };
+            if tx.send(event).is_err() || fatal {
+                return;
             }
         }
         if tx.is_closed() {
@@ -101,13 +110,18 @@ pub async fn stream(slack: Slack, tx: mpsc::UnboundedSender<Event>) {
     }
 }
 
-async fn session(slack: &Slack, tx: &mpsc::UnboundedSender<Event>) -> Result<()> {
+async fn connect(slack: &Slack) -> Result<Socket> {
     let url = slack.rtm_url().await?;
     let mut request = url.as_str().into_client_request().context("bad RTM url")?;
     if let Some(cookie) = slack.cookie_header() {
         request.headers_mut().insert("Cookie", cookie.parse()?);
     }
     let (socket, _) = tokio_tungstenite::connect_async(request).await.context("opening the RTM websocket")?;
+    Ok(socket)
+}
+
+/// Returns `Ok` only once the receiver is gone; any end of the connection is an error.
+async fn forward(socket: Socket, tx: &mpsc::UnboundedSender<Event>) -> Result<()> {
     let (mut sink, mut source) = socket.split();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
@@ -224,5 +238,35 @@ mod tests {
         assert_eq!(events.len(), MAX_FAILURES as usize);
         assert!(matches!(events.pop(), Some(Event::GaveUp(_))));
         assert!(events.iter().all(|e| matches!(e, Event::Disconnected(_))));
+    }
+
+    #[tokio::test]
+    async fn connections_that_drop_after_opening_never_give_up() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws_url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                ws.send(Frame::Text(json!({"type": "hello"}).to_string().into())).await.unwrap();
+                ws.close(None).await.unwrap();
+            }
+        });
+        let server = MockServer::start().await;
+        Mock::given(path("/rtm.connect"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "url": ws_url})))
+            .mount(&server)
+            .await;
+        let slack = Slack::new(&server.uri(), Credentials::new("xoxc", Some("xoxd"))).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::spawn(stream(slack, tx));
+        let mut drops = 0;
+        while drops <= MAX_FAILURES {
+            match rx.recv().await.unwrap() {
+                Event::Disconnected(_) => drops += 1,
+                Event::GaveUp(reason) => panic!("gave up after {drops} ordinary drops: {reason}"),
+                _ => {}
+            }
+        }
     }
 }
