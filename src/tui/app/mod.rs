@@ -15,8 +15,10 @@ pub use react::{PAGE as REACT_PAGE, Pick};
 pub use sidebar::{Badge, ChannelRow, Kind, SidebarRow, arrange, sidebar_rows};
 pub use state::{App, Settings};
 
-use super::jump::Candidate;
-use super::palette;
+use super::firehose::Firehose;
+use super::inbox::Inbox;
+use super::jump::{Candidate, Jump};
+use super::palette::{self, Palette};
 use crate::api::rtm;
 use crate::api::{Message, SearchMatch};
 use crate::firehose::{Line as LiveLine, Tag};
@@ -41,6 +43,25 @@ pub enum Input {
     Filter,
     Search,
     InboxReply { item: Item },
+}
+
+/// What sits over the panes and the screen and takes every key; one at a time.
+#[derive(Debug)]
+pub enum Overlay {
+    Help,
+    /// A delete waiting for its yes; nothing leaves the screen before that.
+    ConfirmDelete(MyMessage),
+    React(Pick),
+    Input(Input),
+    Palette(Palette),
+    Jump(Jump),
+}
+
+/// A full view drawn over the panes, under any overlay.
+#[derive(Debug)]
+pub enum Screen {
+    Inbox(Inbox),
+    Firehose(Firehose),
 }
 
 /// The selected message, once it is the signed-in user's own: all `:edit` and `:delete` may touch.

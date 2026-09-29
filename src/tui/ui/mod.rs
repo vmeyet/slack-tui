@@ -16,7 +16,7 @@ pub use empty::{Empty, draw_empty};
 pub use items::Bodies;
 pub use style::{body_spans, user_style};
 
-use super::app::{App, Focus};
+use super::app::{App, Focus, Overlay, Screen};
 use super::theme::Theme;
 use pictures::Placement;
 use ratatui::Frame;
@@ -33,20 +33,19 @@ const MODAL_FRAME_W: u16 = 2 + 2 * MODAL_PAD_X;
 const MODAL_FRAME_H: u16 = 2 + 2 * MODAL_PAD_Y;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let input_rows = u16::from(app.input.is_some() || app.palette.is_some() || app.react.is_some());
+    let input_row = matches!(app.overlay, Some(Overlay::Input(_) | Overlay::Palette(_) | Overlay::React(_)));
     let [main, input, status] =
-        Layout::vertical([Constraint::Min(3), Constraint::Length(input_rows), Constraint::Length(1)]).areas(f.area());
-    let modal = app.inbox.is_some() || app.firehose.is_some() || app.jump.is_some() || app.help || app.pending_delete.is_some();
+        Layout::vertical([Constraint::Min(3), Constraint::Length(u16::from(input_row)), Constraint::Length(1)]).areas(f.area());
+    let modal = app.screen.is_some() || (app.overlay.is_some() && !input_row);
     let pictures = if app.zen { draw_reading(f, app, main, modal) } else { draw_panes(f, app, main, modal) };
     if !modal {
         pictures::draw(f, app, &pictures);
     }
-    if app.input.is_some() {
-        input::draw(f, app, input);
-    } else if app.palette.is_some() {
-        input::draw_palette(f, app, input);
-    } else if app.react.is_some() {
-        input::draw_react(f, app, input);
+    match &app.overlay {
+        Some(Overlay::Input(kind)) => input::draw(f, app, kind, input),
+        Some(Overlay::Palette(palette)) => input::draw_palette(f, app, palette, input),
+        Some(Overlay::React(pick)) => input::draw_react(f, app, pick, input),
+        _ => {}
     }
     status::draw(f, app, status);
     draw_overlays(f, app, main);
@@ -102,21 +101,19 @@ fn zen_width(screen: u16) -> u16 {
 fn draw_overlays(f: &mut Frame, app: &mut App, main: Rect) {
     let theme = app.theme;
     let elapsed = app.elapsed();
-    if let Some(inbox) = &mut app.inbox {
-        super::inbox::draw(f, inbox, &app.names, main, &theme, elapsed);
+    match &mut app.screen {
+        Some(Screen::Inbox(inbox)) => super::inbox::draw(f, inbox, &app.names, main, &theme, elapsed),
+        Some(Screen::Firehose(view)) => {
+            f.render_widget(Clear, main);
+            super::firehose::draw(f, view, &app.wall, &app.names, &app.highlighter, main, &theme);
+        }
+        None => {}
     }
-    if let Some(view) = &mut app.firehose {
-        f.render_widget(Clear, main);
-        super::firehose::draw(f, view, &app.wall, &app.names, &app.highlighter, main, &theme);
-    }
-    if let Some(jump) = &mut app.jump {
-        super::jump::draw(f, jump, main, &theme);
-    }
-    if let Some(pending) = &app.pending_delete {
-        confirm::draw(f, &theme, &app.names, pending, f.area());
-    }
-    if app.help {
-        help::draw(f, &theme, f.area());
+    match &mut app.overlay {
+        Some(Overlay::Jump(jump)) => super::jump::draw(f, jump, main, &theme),
+        Some(Overlay::ConfirmDelete(pending)) => confirm::draw(f, &theme, &app.names, pending, f.area()),
+        Some(Overlay::Help) => help::draw(f, &theme, f.area()),
+        _ => {}
     }
 }
 
@@ -182,7 +179,7 @@ mod tests {
     use super::testing::{message, render_at};
     use crate::api::Reaction;
     use crate::resolve::NameBook;
-    use crate::tui::app::{self, App, ChannelRow, Focus, Incoming, Input, Kind, Thread};
+    use crate::tui::app::{self, App, ChannelRow, Focus, Incoming, Input, Kind, Overlay, Thread};
     use crate::tui::field::Field;
 
     #[test]
@@ -221,7 +218,7 @@ mod tests {
             selected: 1,
         });
         app.focus = Focus::Thread;
-        app.input = Some(Input::Reply { channel: "C1".into(), thread_ts: None, label: "#general".into() });
+        app.overlay = Some(Overlay::Input(Input::Reply { channel: "C1".into(), thread_ts: None, label: "#general".into() }));
         app.buffer = Field::new("typing…");
         let out = render_at(&mut app, 110, 18);
         let stable = regex::Regex::new(r"\d\d:\d\d").unwrap().replace_all(&out, "HH:MM").to_string();

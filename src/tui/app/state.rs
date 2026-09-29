@@ -1,14 +1,11 @@
-use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, MyMessage, Thread, Toast, Typing};
+use super::{Action, Badge, ChannelRow, Focus, Kind, Live, MyMessage, Overlay, Screen, Thread, Toast, Typing};
 use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
 use crate::resolve::NameBook;
 use crate::tui::field::Field;
-use crate::tui::firehose::Firehose;
 use crate::tui::images::Thumbs;
 use crate::tui::inbox::Inbox;
-use crate::tui::jump::Jump;
-use crate::tui::palette::Palette;
 use crate::tui::theme::Theme;
 use crate::tui::ui::Bodies;
 use ratatui::widgets::ListState;
@@ -41,15 +38,12 @@ pub struct App {
     pub(in crate::tui) wanted_thread: Option<String>,
     pub(in crate::tui) search: Option<Vec<SearchMatch>>,
     pub(in crate::tui) focus: Focus,
-    pub(in crate::tui) input: Option<Input>,
+    pub(in crate::tui) overlay: Option<Overlay>,
+    pub(in crate::tui) screen: Option<Screen>,
     pub(in crate::tui) buffer: Field,
-    /// The emoji names the react row is tab-cycling through; any edit drops it.
-    pub(in crate::tui) react: Option<super::Pick>,
     /// How often each emoji was put on a message, most used first in the picker.
     pub(in crate::tui) favorites: HashMap<String, u32>,
     pub(in crate::tui) custom_emoji: Vec<String>,
-    /// A delete waiting for its yes; nothing leaves the screen before that.
-    pub(in crate::tui) pending_delete: Option<MyMessage>,
     /// Where the user is; what just happened goes in `toast`.
     pub(in crate::tui) toast: Option<Toast>,
     /// Who is typing in the open conversation, each until their own keystroke ages out.
@@ -58,7 +52,6 @@ pub struct App {
     /// Newest commit of the repo, once the daily check answered.
     pub(in crate::tui) latest: Option<String>,
     pub(in crate::tui) names: NameBook,
-    pub(in crate::tui) help: bool,
     pub(in crate::tui) should_quit: bool,
     pub(in crate::tui) quitting: Option<(super::quit::QuitKey, Instant)>,
     pub(in crate::tui) live: Live,
@@ -70,18 +63,14 @@ pub struct App {
     /// Set by the event loop each time it wakes, so nothing below reads the clock.
     pub(in crate::tui) now: Instant,
     pub(in crate::tui) thumbs: Thumbs,
-    pub(in crate::tui) inbox: Option<Inbox>,
     pub(in crate::tui) workspace: String,
-    pub(in crate::tui) jump: Option<Jump>,
     pub(in crate::tui) people: Vec<(String, String)>,
     pub(in crate::tui) wall: VecDeque<LiveLine>,
-    pub(in crate::tui) firehose: Option<Firehose>,
     pub(in crate::tui) highlighter: Highlighter,
     /// Jev ranks the inbox and tags the firehose: on with `[typesafe] enabled`, off for good once it fails.
     pub(in crate::tui) triage: bool,
     /// Reading mode: only the conversation, centered, times shown on the selected row.
     pub(in crate::tui) zen: bool,
-    pub(in crate::tui) palette: Option<Palette>,
     pub(in crate::tui) palette_history: Vec<String>,
     /// Scroll offsets survive between frames so the viewport only moves when the selection leaves it.
     pub(in crate::tui) channels_view: ListState,
@@ -107,18 +96,16 @@ impl Default for App {
             wanted_thread: None,
             search: None,
             focus: Focus::default(),
-            input: None,
+            overlay: None,
+            screen: None,
             buffer: Field::default(),
-            react: None,
             favorites: HashMap::new(),
             custom_emoji: Vec::new(),
-            pending_delete: None,
             toast: None,
             typing: vec![],
             loading: false,
             latest: None,
             names: NameBook::default(),
-            help: false,
             should_quit: false,
             quitting: None,
             live: Live::default(),
@@ -129,16 +116,12 @@ impl Default for App {
             started: now,
             now,
             thumbs: Thumbs::off(),
-            inbox: None,
             workspace: "env".into(),
-            jump: None,
             people: vec![],
             wall: VecDeque::new(),
-            firehose: None,
             highlighter: Highlighter::default(),
             triage: false,
             zen: false,
-            palette: None,
             palette_history: vec![],
             channels_view: ListState::default(),
             messages_view: ListState::default(),
@@ -179,14 +162,17 @@ impl App {
     }
 
     fn empty_state_visible(&self) -> bool {
-        if self.firehose.is_some() || self.jump.is_some() || self.help {
+        if matches!(self.overlay, Some(Overlay::Jump(_) | Overlay::Help)) {
             return false;
         }
-        if let Some(inbox) = &self.inbox {
-            return inbox.items.is_empty() && !inbox.loading;
+        match &self.screen {
+            Some(Screen::Firehose(_)) => false,
+            Some(Screen::Inbox(inbox)) => inbox.items.is_empty() && !inbox.loading,
+            None => {
+                let empty_search = self.search.as_ref().is_some_and(Vec::is_empty);
+                !self.loading && (empty_search || (self.search.is_none() && self.messages.is_empty()))
+            }
         }
-        let empty_search = self.search.as_ref().is_some_and(Vec::is_empty);
-        !self.loading && (empty_search || (self.search.is_none() && self.messages.is_empty()))
     }
 
     pub fn current_label(&self) -> String {
@@ -271,14 +257,14 @@ impl App {
     }
 
     pub fn open_inbox(&mut self) -> Vec<Action> {
-        self.inbox = Some(Inbox::new(State::load(&self.workspace)));
+        self.screen = Some(Screen::Inbox(Inbox::new(State::load(&self.workspace))));
         vec![Action::LoadInbox]
     }
 
     pub(super) fn persist_inbox(&self) -> Vec<Action> {
-        match &self.inbox {
-            Some(inbox) => vec![Action::SaveInbox { workspace: self.workspace.clone(), state: inbox.state.clone() }],
-            None => vec![],
+        match &self.screen {
+            Some(Screen::Inbox(inbox)) => vec![Action::SaveInbox { workspace: self.workspace.clone(), state: inbox.state.clone() }],
+            _ => vec![],
         }
     }
 

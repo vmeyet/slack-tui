@@ -1,4 +1,4 @@
-use super::{Action, App, Badge, ChannelRow, Focus, Incoming, Live, Thread};
+use super::{Action, App, Badge, ChannelRow, Focus, Incoming, Live, Overlay, Screen, Thread};
 use crate::api::{Message, SearchMatch};
 use crate::inbox::Item;
 use crate::resolve::NameBook;
@@ -28,7 +28,7 @@ impl App {
             Incoming::SearchResults(matches) => self.search_loaded(matches),
             Incoming::Inbox { items, names } => return self.inbox_loaded(items, names),
             Incoming::Priorities(verdicts) => {
-                if let Some(inbox) = &mut self.inbox {
+                if let Some(Screen::Inbox(inbox)) = &mut self.screen {
                     inbox.rank(&verdicts);
                 }
             }
@@ -39,7 +39,7 @@ impl App {
                 }
             }
             Incoming::Threads(candidates) => {
-                if let Some(jump) = &mut self.jump {
+                if let Some(Overlay::Jump(jump)) = &mut self.overlay {
                     jump.threads = candidates;
                 }
             }
@@ -66,7 +66,7 @@ impl App {
 
     fn inbox_loaded(&mut self, items: Vec<Item>, names: NameBook) -> Vec<Action> {
         self.names = names;
-        let Some(inbox) = &mut self.inbox else { return vec![] };
+        let Some(Screen::Inbox(inbox)) = &mut self.screen else { return vec![] };
         inbox.set_items(items);
         if !self.triage || inbox.items.is_empty() {
             return vec![];
@@ -148,8 +148,7 @@ impl App {
 
     /// The editor replaces the input row: what it wrote is sent, the row goes back to empty.
     fn composed(&mut self, channel: String, thread_ts: Option<String>, text: String) -> Vec<Action> {
-        self.input = None;
-        self.buffer.clear();
+        self.close_input();
         self.send(channel, thread_ts, text)
     }
 
@@ -157,7 +156,7 @@ impl App {
         self.toast("sent ✓");
         if self.current_channel.as_deref() != Some(&channel) {
             self.loading = false;
-            if let Some(inbox) = &mut self.inbox {
+            if let Some(Screen::Inbox(inbox)) = &mut self.screen {
                 inbox.flash = "sent ✓".into();
             }
             return vec![];
@@ -185,7 +184,7 @@ impl App {
     }
 
     fn reload_when_offline(&self) -> Option<Action> {
-        if self.live == Live::Connected || self.loading || self.input.is_some() {
+        if self.live == Live::Connected || self.loading || matches!(self.overlay, Some(Overlay::Input(_))) {
             return None;
         }
         self.current_channel.clone().map(Action::LoadHistory)

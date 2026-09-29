@@ -116,13 +116,13 @@ fn help_lines(theme: &Theme) -> Vec<Line<'static>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-    use crate::tui::app::App;
+    use crate::tui::app::{App, Overlay};
     use crate::tui::ui::testing::{cells, render_at};
 
     #[test]
     fn help_overlay_and_empty_state_render() {
         let mut app = App::new();
-        app.help = true;
+        app.overlay = Some(Overlay::Help);
         let out = render_at(&mut app, 80, 20);
         assert!(out.contains("keys"));
         assert!(out.contains("reply in the focused conversation"));
@@ -130,7 +130,7 @@ mod tests {
 
     fn help_rows(width: u16, height: u16) -> Vec<String> {
         let mut app = App::new();
-        app.help = true;
+        app.overlay = Some(Overlay::Help);
         render_at(&mut app, width, height).lines().map(|row| cells(row).to_owned()).collect()
     }
 

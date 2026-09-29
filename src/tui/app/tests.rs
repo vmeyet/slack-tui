@@ -9,6 +9,55 @@ use crate::tui::motion::{FRAME, SPINNER_FRAME};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 
+fn picker(app: &App) -> Option<&Pick> {
+    match &app.overlay {
+        Some(Overlay::React(pick)) => Some(pick),
+        _ => None,
+    }
+}
+
+fn input(app: &App) -> Option<&Input> {
+    match &app.overlay {
+        Some(Overlay::Input(input)) => Some(input),
+        _ => None,
+    }
+}
+
+fn palette(app: &App) -> Option<&Palette> {
+    match &app.overlay {
+        Some(Overlay::Palette(palette)) => Some(palette),
+        _ => None,
+    }
+}
+
+fn pending_delete(app: &App) -> Option<&MyMessage> {
+    match &app.overlay {
+        Some(Overlay::ConfirmDelete(pending)) => Some(pending),
+        _ => None,
+    }
+}
+
+fn jump(app: &App) -> Option<&Jump> {
+    match &app.overlay {
+        Some(Overlay::Jump(jump)) => Some(jump),
+        _ => None,
+    }
+}
+
+fn inbox(app: &App) -> Option<&Inbox> {
+    match &app.screen {
+        Some(Screen::Inbox(inbox)) => Some(inbox),
+        _ => None,
+    }
+}
+
+fn firehose(app: &App) -> Option<&Firehose> {
+    match &app.screen {
+        Some(Screen::Firehose(view)) => Some(view),
+        _ => None,
+    }
+}
+
 fn key(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
 }
@@ -75,7 +124,7 @@ fn filter_narrows_channels_live_and_escape_clears() {
     }
     assert_eq!(app.visible_channels().len(), 1);
     app.handle_key(code(KeyCode::Enter));
-    assert_eq!(app.input, None);
+    assert_eq!(input(&app), None);
     assert_eq!(app.filter, "ran");
     app.handle_key(code(KeyCode::Esc));
     assert_eq!(app.filter, "");
@@ -160,10 +209,10 @@ fn reacted(actions: &[Action]) -> (String, bool) {
 #[test]
 fn a_number_reacts_with_that_emoji_of_the_strip_and_shows_it_at_once() {
     let mut app = picking();
-    assert_eq!(app.react.as_ref().map(|p| p.strip[0].as_str()), Some("+1"));
+    assert_eq!(picker(&app).map(|p| p.strip[0].as_str()), Some("+1"));
     let actions = app.handle_key(key('1'));
     assert_eq!(actions[0], Action::React { channel: "C1".into(), ts: "1".into(), name: "+1".into(), on: true });
-    assert!(app.react.is_none());
+    assert!(picker(&app).is_none());
     assert_eq!(app.messages[0].reactions[0].name, "+1");
     assert_eq!(app.messages[0].reactions[0].users, [app.me.clone()]);
 }
@@ -175,7 +224,7 @@ fn a_used_emoji_climbs_the_strip_and_is_saved() {
     assert_eq!(reacted(&actions), ("rocket".into(), true));
     assert_eq!(actions[1], Action::SaveFavorites(HashMap::from([("rocket".to_owned(), 1)])));
     app.handle_key(key('+'));
-    let strip = &app.react.as_ref().expect("picker open").strip;
+    let strip = &picker(&app).expect("picker open").strip;
     assert_eq!(strip[0], "rocket", "on the message now, and the most used");
 }
 
@@ -207,9 +256,9 @@ fn slash_searches_every_emoji_by_name_custom_ones_too() {
     for c in "rocke".chars() {
         app.handle_key(key(c));
     }
-    assert_eq!(app.react.as_ref().and_then(|p| p.choices().first()).map(String::as_str), Some("rocket"));
+    assert_eq!(picker(&app).and_then(|p| p.choices().first()).map(String::as_str), Some("rocket"));
     app.handle_key(code(KeyCode::Backspace));
-    assert_eq!(app.react.as_ref().and_then(|p| p.search.as_ref()).map(|s| s.query.as_str()), Some("rock"));
+    assert_eq!(picker(&app).and_then(|p| p.search.as_ref()).map(|s| s.query.as_str()), Some("rock"));
     for _ in 0..4 {
         app.handle_key(code(KeyCode::Backspace));
     }
@@ -224,9 +273,9 @@ fn backspace_on_an_empty_search_goes_back_to_the_strip_and_esc_closes() {
     let mut app = picking();
     app.handle_key(key('/'));
     app.handle_key(code(KeyCode::Backspace));
-    assert_eq!(app.react.as_ref().map(|p| p.search.is_none()), Some(true));
+    assert_eq!(picker(&app).map(|p| p.search.is_none()), Some(true));
     assert_eq!(app.handle_key(code(KeyCode::Esc)), vec![]);
-    assert!(app.react.is_none());
+    assert!(picker(&app).is_none());
     assert!(app.messages[0].reactions.is_empty());
 }
 
@@ -331,7 +380,7 @@ fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
     assert_eq!(actions, vec![Action::Compose { channel: "C1".into(), thread_ts: None, draft: "half written".into() }]);
     let sent = app.apply(Incoming::Composed { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() });
     assert_eq!(sent, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "two\nlines".into() }]);
-    assert_eq!(app.input, None);
+    assert_eq!(input(&app), None);
     assert_eq!(app.buffer.text(), "");
 }
 
@@ -357,7 +406,7 @@ fn empty_reply_is_dropped_and_escape_cancels() {
     app.handle_key(key('r'));
     app.handle_key(key('z'));
     app.handle_key(code(KeyCode::Esc));
-    assert_eq!(app.input, None);
+    assert_eq!(input(&app), None);
     assert_eq!(app.buffer.text(), "");
 }
 
@@ -404,7 +453,7 @@ fn animates_only_while_an_empty_state_is_visible() {
     assert!(!app.animating());
     app.apply(Incoming::SearchResults(vec![]));
     assert!(app.animating(), "search without results");
-    app.help = true;
+    app.overlay = Some(Overlay::Help);
     assert!(!app.animating(), "a modal covers it");
 }
 
@@ -546,9 +595,9 @@ fn right_opens_the_selected_thread_and_left_closes_it() {
 fn quit_and_help() {
     let mut app = loaded();
     app.handle_key(key('?'));
-    assert!(app.help);
+    assert!(matches!(app.overlay, Some(Overlay::Help)));
     app.handle_key(key('j'));
-    assert!(!app.help);
+    assert!(app.overlay.is_none());
     assert_eq!(app.channel_selected, 0);
     app.handle_key(ctrl('c'));
     app.handle_key(ctrl('c'));
@@ -822,7 +871,7 @@ fn triage_ranks_the_visible_inbox_once_it_loads() {
     assert_eq!(actions, vec![Action::Prioritize(items)]);
     let urgent = Priority { needs_reply: true, urgency: Urgency::High };
     app.apply(Incoming::Priorities([("C2/11".to_owned(), urgent)].into()));
-    let inbox = app.inbox.as_ref().unwrap();
+    let inbox = inbox(&app).unwrap();
     assert_eq!(inbox.items.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), ["b", "a"]);
     assert_eq!(inbox.selected_item().map(|i| i.key.as_str()), Some("a"), "the cursor stays on its item");
 }
@@ -832,15 +881,15 @@ fn inbox_read_snooze_reply_and_open() {
     let mut app = loaded();
     assert_eq!(app.handle_key(key('i')), vec![Action::LoadInbox]);
     app.apply(Incoming::Inbox { items: vec![inbox_item("a"), inbox_item("b")], names: NameBook::default() });
-    assert_eq!(app.inbox.as_ref().unwrap().items.len(), 2);
+    assert_eq!(inbox(&app).unwrap().items.len(), 2);
     let actions = app.handle_key(code(KeyCode::Right));
     assert!(matches!(&actions[0], Action::MarkRead(i) if i.key == "a"));
     assert!(matches!(&actions[1], Action::SaveInbox { .. }));
     app.handle_key(code(KeyCode::Left));
-    assert!(app.inbox.as_ref().unwrap().picking_snooze);
+    assert!(inbox(&app).unwrap().picking_snooze);
     let actions = app.handle_key(key('3'));
     assert!(matches!(&actions[0], Action::SaveInbox { state, .. } if state.snoozed.contains_key("b")));
-    assert!(app.inbox.as_ref().unwrap().items.is_empty());
+    assert!(inbox(&app).unwrap().items.is_empty());
     app.apply(Incoming::Inbox { items: vec![inbox_item("c")], names: NameBook::default() });
     app.handle_key(key('r'));
     for c in "ok".chars() {
@@ -852,7 +901,7 @@ fn inbox_read_snooze_reply_and_open() {
     app.apply(Incoming::Inbox { items: vec![inbox_item("d")], names: NameBook::default() });
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "9".into() }]);
-    assert!(app.inbox.is_none());
+    assert!(inbox(&app).is_none());
     assert_eq!(app.current_channel.as_deref(), Some("C2"));
 }
 
@@ -868,7 +917,7 @@ fn jump_opens_channels_people_threads_and_search() {
         app.handle_key(key(c));
     }
     assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::LoadHistory("C2".into())]);
-    assert!(app.jump.is_none());
+    assert!(jump(&app).is_none());
 
     app.handle_key(ctrl('k'));
     for c in "@viv".chars() {
@@ -898,9 +947,9 @@ fn jump_opens_channels_people_threads_and_search() {
     assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::Search("deploy failed".into())]);
     app.handle_key(ctrl('k'));
     app.handle_key(code(KeyCode::Esc));
-    assert!(app.jump.is_none());
+    assert!(jump(&app).is_none());
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
-    assert!(app.jump.is_some());
+    assert!(jump(&app).is_some());
 }
 
 #[test]
@@ -911,17 +960,17 @@ fn firehose_collects_every_channel_and_jumps() {
     live(&mut app, rtm::Event::Message { channel: "C9".into(), message: reply });
     assert_eq!(app.wall.len(), 2);
     app.handle_key(key('f'));
-    assert!(app.firehose.is_some());
+    assert!(firehose(&app).is_some());
     app.handle_key(key('k'));
-    assert_eq!(app.firehose.as_ref().unwrap().selected, Some(0));
+    assert_eq!(firehose(&app).unwrap().selected, Some(0));
     app.handle_key(key('G'));
-    assert!(app.firehose.as_ref().unwrap().following());
+    assert!(firehose(&app).unwrap().following());
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::LoadHistory("C9".into()), Action::LoadReplies { channel: "C9".into(), ts: "1".into() }]);
-    assert!(app.firehose.is_none());
+    assert!(firehose(&app).is_none());
     app.handle_key(key('f'));
     app.handle_key(code(KeyCode::Esc));
-    assert!(app.firehose.is_none());
+    assert!(firehose(&app).is_none());
 }
 
 #[test]
@@ -934,7 +983,7 @@ fn plus_in_the_firehose_reacts_to_the_selected_line_and_keeps_it_open() {
     app.handle_key(key('+'));
     let actions = app.handle_key(key('4'));
     assert_eq!(actions[0], Action::React { channel: "C2".into(), ts: "1".into(), name: "tada".into(), on: true });
-    assert!(app.firehose.is_some() && app.react.is_none());
+    assert!(firehose(&app).is_some() && picker(&app).is_none());
 }
 
 #[test]
@@ -949,7 +998,7 @@ fn triage_tags_live_lines_only_while_the_firehose_is_open() {
     live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("3", "prod down") });
     app.apply(Incoming::Tagged { channel: "C2".into(), ts: "2".into(), tag: Tag::Noise });
     app.apply(Incoming::Tagged { channel: "C2".into(), ts: "3".into(), tag: Tag::Incident });
-    let view = app.firehose.as_ref().unwrap();
+    let view = firehose(&app).unwrap();
     assert_eq!(view.visible(&app.wall).iter().map(|l| l.ts.as_str()).collect::<Vec<_>>(), ["1", "3"]);
     app.handle_key(key('k'));
     assert_eq!(
@@ -959,7 +1008,7 @@ fn triage_tags_live_lines_only_while_the_firehose_is_open() {
     );
     app.handle_key(key('f'));
     app.handle_key(key('n'));
-    assert_eq!(app.firehose.as_ref().unwrap().visible(&app.wall).len(), 3, "n shows the noise again");
+    assert_eq!(firehose(&app).unwrap().visible(&app.wall).len(), 3, "n shows the noise again");
 }
 
 #[test]
@@ -1073,7 +1122,7 @@ fn palette_completion_and_history() {
         app.handle_key(key(c));
     }
     app.handle_key(code(KeyCode::Tab));
-    assert_eq!(app.palette.as_ref().unwrap().input, "go #random ");
+    assert_eq!(palette(&app).unwrap().input, "go #random ");
     app.handle_key(code(KeyCode::Enter));
     app.handle_key(key(':'));
     for c in "go #gen".chars() {
@@ -1081,15 +1130,15 @@ fn palette_completion_and_history() {
     }
     assert_eq!(app.palette_ghost().as_deref(), Some("eral"));
     app.handle_key(code(KeyCode::Right));
-    assert_eq!(app.palette.as_ref().unwrap().input, "go #general ");
+    assert_eq!(palette(&app).unwrap().input, "go #general ");
     app.handle_key(code(KeyCode::Enter));
     app.handle_key(key(':'));
     app.handle_key(code(KeyCode::Up));
-    assert_eq!(app.palette.as_ref().unwrap().input, "go #general");
+    assert_eq!(palette(&app).unwrap().input, "go #general");
     app.handle_key(code(KeyCode::Up));
-    assert_eq!(app.palette.as_ref().unwrap().input, "go #random");
+    assert_eq!(palette(&app).unwrap().input, "go #random");
     app.handle_key(code(KeyCode::Esc));
-    assert!(app.palette.is_none());
+    assert!(palette(&app).is_none());
 }
 
 #[test]
@@ -1107,7 +1156,7 @@ fn palette_export_and_read_use_the_open_conversation() {
 fn edit_prefills_the_message_and_saves_the_change() {
     let mut app = reading();
     assert_eq!(palette_run(&mut app, "edit"), vec![]);
-    assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "1".into() }));
+    assert_eq!(input(&app), Some(&Input::Edit { channel: "C1".into(), ts: "1".into() }));
     assert_eq!(app.buffer.text(), "a", "prefilled, with the cursor after the last letter");
     app.handle_key(key('!'));
     let actions = app.handle_key(code(KeyCode::Enter));
@@ -1121,11 +1170,11 @@ fn edit_prefills_the_message_and_saves_the_change() {
 fn e_edits_my_message_and_refuses_someone_elses() {
     let mut app = reading();
     assert_eq!(app.handle_key(key('e')), vec![]);
-    assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "1".into() }));
+    assert_eq!(input(&app), Some(&Input::Edit { channel: "C1".into(), ts: "1".into() }));
     app.handle_key(code(KeyCode::Esc));
     app.apply(history(vec![from_other("2", "theirs")]));
     assert_eq!(app.handle_key(key('e')), vec![]);
-    assert_eq!(app.input, None);
+    assert_eq!(input(&app), None);
     assert!(app.status_line().contains("you can only edit your own messages"), "{}", app.status_line());
 }
 
@@ -1143,18 +1192,18 @@ fn an_empty_edit_is_refused_rather_than_deleting() {
 fn delete_asks_first_and_only_y_goes_through() {
     let mut app = reading();
     assert_eq!(palette_run(&mut app, "delete"), vec![]);
-    assert_eq!(app.pending_delete, Some(MyMessage { channel: "C1".into(), ts: "1".into(), text: "a".into() }));
+    assert_eq!(pending_delete(&app), Some(&MyMessage { channel: "C1".into(), ts: "1".into(), text: "a".into() }));
     assert_eq!(app.handle_key(key('n')), vec![]);
-    assert_eq!(app.pending_delete, None);
+    assert_eq!(pending_delete(&app), None);
     assert_eq!(app.status_line(), "kept");
 
     palette_run(&mut app, "delete");
     assert_eq!(app.handle_key(code(KeyCode::Esc)), vec![]);
-    assert_eq!(app.pending_delete, None, "esc keeps it too");
+    assert_eq!(pending_delete(&app), None, "esc keeps it too");
 
     palette_run(&mut app, "delete");
     assert_eq!(app.handle_key(key('y')), vec![Action::Delete { channel: "C1".into(), ts: "1".into() }]);
-    assert_eq!(app.pending_delete, None);
+    assert_eq!(pending_delete(&app), None);
     assert_eq!(app.messages.len(), 1, "the screen waits for the live event");
     live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "1".into() });
     assert!(app.messages.is_empty());
@@ -1168,8 +1217,8 @@ fn edit_and_delete_refuse_someone_elses_message() {
         assert_eq!(palette_run(&mut app, verb), vec![]);
         assert!(app.status_line().contains(&format!("you can only {verb} your own messages")), "{}", app.status_line());
     }
-    assert_eq!(app.input, None);
-    assert_eq!(app.pending_delete, None);
+    assert_eq!(input(&app), None);
+    assert_eq!(pending_delete(&app), None);
     assert_eq!(app.messages.len(), 1);
 }
 
@@ -1184,17 +1233,17 @@ fn edit_and_delete_follow_the_selection_into_a_thread() {
     });
     app.focus = Focus::Thread;
     palette_run(&mut app, "edit");
-    assert_eq!(app.input, Some(Input::Edit { channel: "C1".into(), ts: "3".into() }));
+    assert_eq!(input(&app), Some(&Input::Edit { channel: "C1".into(), ts: "3".into() }));
     assert_eq!(app.buffer.text(), "mine");
     app.handle_key(code(KeyCode::Esc));
 
     palette_run(&mut app, "delete");
-    assert_eq!(app.pending_delete.as_ref().map(|p| p.ts.clone()), Some("3".into()));
+    assert_eq!(pending_delete(&app).map(|p| p.ts.clone()), Some("3".into()));
     app.handle_key(key('y'));
 
     app.thread.as_mut().unwrap().selected = 1;
     palette_run(&mut app, "delete");
-    assert_eq!(app.pending_delete, None);
+    assert_eq!(pending_delete(&app), None);
     assert!(app.status_line().contains("you can only delete your own messages"), "{}", app.status_line());
 }
 
@@ -1205,7 +1254,7 @@ fn a_search_hit_has_to_be_opened_before_it_can_be_deleted() {
         SearchMatch { ts: "9".into(), channel: crate::api::SearchChannel { id: "C2".into(), name: "random".into() }, ..Default::default() };
     app.apply(Incoming::SearchResults(vec![hit]));
     palette_run(&mut app, "delete");
-    assert_eq!(app.pending_delete, None);
+    assert_eq!(pending_delete(&app), None);
     assert!(app.status_line().contains("open the message first"), "{}", app.status_line());
 }
 
@@ -1231,7 +1280,7 @@ fn inbox_escape_closes_and_q_quits() {
     let mut app = loaded();
     app.handle_key(key('i'));
     app.handle_key(code(KeyCode::Esc));
-    assert!(app.inbox.is_none());
+    assert!(inbox(&app).is_none());
     app.handle_key(key('i'));
     app.handle_key(key('q'));
     app.handle_key(key('q'));

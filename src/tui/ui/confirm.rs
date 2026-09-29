@@ -27,14 +27,14 @@ pub(super) fn draw(f: &mut Frame, theme: &Theme, names: &NameBook, message: &MyM
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::app::App;
+    use crate::tui::app::{App, Overlay};
     use crate::tui::ui::testing::render;
 
     #[test]
     fn the_delete_box_shows_the_message_and_the_key_that_deletes_it() {
         let mut app = App::new();
         app.current_channel = Some("C1".into());
-        app.pending_delete = Some(MyMessage { channel: "C1".into(), ts: "1".into(), text: "ship it".into() });
+        app.overlay = Some(Overlay::ConfirmDelete(MyMessage { channel: "C1".into(), ts: "1".into(), text: "ship it".into() }));
         let out = render(&mut app);
         assert!(out.contains("delete this message?"), "{out}");
         assert!(out.contains("ship it"), "{out}");

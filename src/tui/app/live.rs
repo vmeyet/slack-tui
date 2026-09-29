@@ -1,4 +1,4 @@
-use super::{Action, App, Live};
+use super::{Action, App, Live, Screen};
 use crate::api::rtm;
 use crate::api::{Message, Reaction};
 use crate::firehose::Line as LiveLine;
@@ -21,7 +21,7 @@ impl App {
             rtm::Event::GaveUp(reason) => self.live = Live::Polling(reason),
             rtm::Event::Message { channel, message } => {
                 let line = LiveLine::from_message(&channel, &message);
-                let classify = (self.triage && self.firehose.is_some()).then(|| Action::Classify(line.clone()));
+                let classify = (self.triage && matches!(self.screen, Some(Screen::Firehose(_)))).then(|| Action::Classify(line.clone()));
                 firehose::push(&mut self.wall, line, &self.names, &self.highlighter);
                 let unknown = message.user.clone().filter(|u| self.names.user_label(u) == *u);
                 self.live_message(channel, message);

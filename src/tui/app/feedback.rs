@@ -1,4 +1,4 @@
-use super::App;
+use super::{App, Screen};
 use crate::inbox::newer;
 use crate::tui::motion::{FRAME, SPINNER_FRAME};
 use crate::{update, version};
@@ -125,7 +125,7 @@ impl App {
     }
 
     fn spinning(&self) -> bool {
-        self.loading || self.inbox.as_ref().is_some_and(|i| i.loading) || self.thumbs.loading()
+        self.loading || matches!(&self.screen, Some(Screen::Inbox(inbox)) if inbox.loading) || self.thumbs.loading()
     }
 
     /// Messages of the open conversation that arrived below the newest one the selection reached.

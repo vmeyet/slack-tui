@@ -1,6 +1,5 @@
 use crate::render::text;
-use crate::tui::app::{App, Focus, Live};
-use crate::tui::palette::Palette;
+use crate::tui::app::{App, Focus, Live, Overlay};
 use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -36,7 +35,10 @@ fn live_dot(live: &Live, theme: &Theme) -> (&'static str, Style) {
 
 /// The completion being cycled, or the keys that work right now, after the update hint when there is one.
 fn hints(app: &App) -> String {
-    let cycling = app.palette.as_ref().and_then(Palette::hint);
+    let cycling = match &app.overlay {
+        Some(Overlay::Palette(palette)) => palette.hint(),
+        _ => None,
+    };
     let hints = cycling.as_deref().unwrap_or(key_hints(app));
     match app.update_hint() {
         Some(update) => format!("{update} · {hints}"),
@@ -45,14 +47,14 @@ fn hints(app: &App) -> String {
 }
 
 fn key_hints(app: &App) -> &'static str {
-    match (&app.input, app.focus) {
-        _ if app.react.as_ref().is_some_and(|p| p.search.is_some()) => "type a name · ←/→ move · enter react · esc cancel",
-        _ if app.react.is_some() => "1-8 react · h/l move · enter react · / search · esc cancel",
-        _ if app.palette.is_some() => "tab cycle · → accept · ↑ history · enter run · esc cancel",
-        (Some(_), _) => "enter send · esc cancel",
-        (None, Focus::Channels) => "j/k move · enter open · / filter · ^k jump · ? more",
-        (None, Focus::Messages) => "j/k move · enter thread · r reply · + react · ? more",
-        (None, Focus::Thread) => "j/k move · r reply · + react · esc close · ? more",
+    match (&app.overlay, app.focus) {
+        (Some(Overlay::React(pick)), _) if pick.search.is_some() => "type a name · ←/→ move · enter react · esc cancel",
+        (Some(Overlay::React(_)), _) => "1-8 react · h/l move · enter react · / search · esc cancel",
+        (Some(Overlay::Palette(_)), _) => "tab cycle · → accept · ↑ history · enter run · esc cancel",
+        (Some(Overlay::Input(_)), _) => "enter send · esc cancel",
+        (_, Focus::Channels) => "j/k move · enter open · / filter · ^k jump · ? more",
+        (_, Focus::Messages) => "j/k move · enter thread · r reply · + react · ? more",
+        (_, Focus::Thread) => "j/k move · r reply · + react · esc close · ? more",
     }
 }
 

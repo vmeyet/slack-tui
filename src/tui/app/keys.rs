@@ -1,5 +1,5 @@
 use super::quit::QuitKey;
-use super::{Action, App, Focus, Input};
+use super::{Action, App, Focus, Input, Overlay, Screen};
 use crate::api::Message;
 use crate::inbox::Snooze;
 use crate::tui::field::Field;
@@ -25,37 +25,29 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             return self.quit_key(QuitKey::CtrlC);
         }
-        if self.help {
-            self.help = false;
+        match &self.overlay {
+            Some(Overlay::Help) => {
+                self.overlay = None;
+                return vec![];
+            }
+            Some(Overlay::ConfirmDelete(_)) => return self.handle_confirm_key(key),
+            Some(Overlay::React(_)) => return self.handle_react_key(key),
+            Some(Overlay::Input(_)) => return self.handle_input_key(key),
+            Some(Overlay::Palette(_)) => return self.handle_palette_key(key),
+            Some(Overlay::Jump(_)) => return self.handle_jump_key(key),
+            None => {}
+        }
+        if key.code == KeyCode::Char(':') {
+            self.overlay = Some(Overlay::Palette(Palette::with_history(self.palette_history.clone())));
             return vec![];
-        }
-        if self.pending_delete.is_some() {
-            return self.handle_confirm_key(key);
-        }
-        if self.react.is_some() {
-            return self.handle_react_key(key);
-        }
-        if self.input.is_some() {
-            return self.handle_input_key(key);
-        }
-        if self.palette.is_some() {
-            return self.handle_palette_key(key);
-        }
-        if key.code == KeyCode::Char(':') && self.jump.is_none() {
-            self.palette = Some(Palette::with_history(self.palette_history.clone()));
-            return vec![];
-        }
-        if self.jump.is_some() {
-            return self.handle_jump_key(key);
         }
         if key.code == KeyCode::Char('k') && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) {
             return self.open_jump();
         }
-        if self.firehose.is_some() {
-            return self.handle_firehose_key(key);
-        }
-        if self.inbox.is_some() {
-            return self.handle_inbox_key(key);
+        match &self.screen {
+            Some(Screen::Firehose(_)) => return self.handle_firehose_key(key),
+            Some(Screen::Inbox(_)) => return self.handle_inbox_key(key),
+            None => {}
         }
         let actions = self.handle_browse_key(key);
         if self.zen && self.focus == Focus::Channels {
@@ -72,14 +64,13 @@ impl App {
         }
     }
 
-    #[allow(clippy::expect_used)]
     fn handle_firehose_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        let view = self.firehose.as_mut().expect("firehose open");
+        let Some(Screen::Firehose(view)) = &mut self.screen else { return vec![] };
         let lines = view.visible(&self.wall);
         let len = lines.len();
         let selected = view.selected.or_else(|| len.checked_sub(1)).and_then(|i| lines.get(i)).map(|l| (*l).clone());
         match key.code {
-            KeyCode::Esc | KeyCode::Char('f') => self.firehose = None,
+            KeyCode::Esc | KeyCode::Char('f') => self.screen = None,
             KeyCode::Char('n') => {
                 view.show_noise = !view.show_noise;
                 view.follow();
@@ -98,14 +89,14 @@ impl App {
             }
             KeyCode::Enter => {
                 let Some(line) = selected else { return vec![] };
-                self.firehose = None;
+                self.screen = None;
                 let mut actions = self.open_channel(line.channel.clone());
                 if let Some(root) = line.thread_ts {
                     actions.push(self.load_replies(line.channel, root));
                 }
                 return actions;
             }
-            KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
             _ => {}
         }
         vec![]
@@ -125,16 +116,15 @@ impl App {
         let channels = self.channels.iter().map(|c| Candidate { label: c.label.clone(), target: Target::Channel(c.id.clone()) }).collect();
         let people =
             self.people.iter().map(|(id, handle)| Candidate { label: format!("@{handle}"), target: Target::Person(id.clone()) }).collect();
-        self.jump = Some(Jump { channels, people, ..Default::default() });
+        self.overlay = Some(Overlay::Jump(Jump { channels, people, ..Default::default() }));
         vec![Action::LoadThreads]
     }
 
-    #[allow(clippy::expect_used)]
     fn handle_jump_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        let jump = self.jump.as_mut().expect("jump open");
+        let Some(Overlay::Jump(jump)) = &mut self.overlay else { return vec![] };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Esc => self.jump = None,
+            KeyCode::Esc => self.overlay = None,
             KeyCode::Down | KeyCode::Tab => jump.move_by(1),
             KeyCode::Up | KeyCode::BackTab => jump.move_by(-1),
             KeyCode::Char('n') if ctrl => jump.move_by(1),
@@ -144,12 +134,14 @@ impl App {
             KeyCode::Enter => {
                 if jump.is_search() {
                     let query = jump.query[1..].trim().to_owned();
-                    self.jump = None;
+                    self.overlay = None;
                     return if query.is_empty() { vec![] } else { self.search_for(query) };
                 }
                 let Some(candidate) = jump.selected_candidate() else { return vec![] };
-                self.jump = None;
-                self.inbox = None;
+                self.overlay = None;
+                if matches!(self.screen, Some(Screen::Inbox(_))) {
+                    self.screen = None;
+                }
                 return match candidate.target {
                     Target::Channel(id) => self.open_channel(id),
                     Target::Person(user) => {
@@ -168,9 +160,8 @@ impl App {
         vec![]
     }
 
-    #[allow(clippy::expect_used)]
     fn handle_inbox_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        let inbox = self.inbox.as_mut().expect("inbox open");
+        let Some(Screen::Inbox(inbox)) = &mut self.screen else { return vec![] };
         inbox.flash.clear();
         if inbox.picking_snooze {
             return match key.code {
@@ -187,7 +178,7 @@ impl App {
             };
         }
         match key.code {
-            KeyCode::Esc => self.inbox = None,
+            KeyCode::Esc => self.screen = None,
             KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
             KeyCode::Char('j') | KeyCode::Down => inbox.move_by(1),
             KeyCode::Char('k') | KeyCode::Up => inbox.move_by(-1),
@@ -226,7 +217,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(item) = inbox.selected_item().cloned() {
-                    self.inbox = None;
+                    self.screen = None;
                     let mut actions = self.open_channel(item.channel.clone());
                     if let Some(root) = item.thread_ts.clone().or_else(|| (item.kind != crate::inbox::Kind::Dm).then(|| item.ts.clone())) {
                         actions.push(self.load_replies(item.channel, root));
@@ -234,7 +225,7 @@ impl App {
                     return actions;
                 }
             }
-            KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
             _ => {}
         }
         vec![]
@@ -244,7 +235,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
-            KeyCode::Char('?') => self.help = true,
+            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
             KeyCode::Tab => self.focus = self.next_focus(),
             KeyCode::BackTab => self.focus = self.prev_focus(),
             KeyCode::Char('l') | KeyCode::Right => return self.go_right(),
@@ -284,7 +275,7 @@ impl App {
             KeyCode::Char('R') => return self.refresh(),
             KeyCode::Char('i') => return self.open_inbox(),
             KeyCode::Char('p') => return self.load_promises(),
-            KeyCode::Char('f') => self.firehose = Some(Firehose::default()),
+            KeyCode::Char('f') => self.screen = Some(Screen::Firehose(Firehose::default())),
             KeyCode::Char('z') => self.toggle_reading(),
             _ => {}
         }
@@ -295,7 +286,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Esc => {
-                if self.input == Some(Input::Filter) {
+                if self.filtering() {
                     self.filter.clear();
                 }
                 self.close_input();
@@ -328,14 +319,18 @@ impl App {
         vec![]
     }
 
-    fn close_input(&mut self) {
-        self.input = None;
+    pub(super) fn close_input(&mut self) {
+        self.overlay = None;
         self.buffer.clear();
+    }
+
+    fn filtering(&self) -> bool {
+        matches!(self.overlay, Some(Overlay::Input(Input::Filter)))
     }
 
     /// After a change to the text: the filter follows it.
     fn edited(&mut self) {
-        if self.input == Some(Input::Filter) {
+        if self.filtering() {
             self.filter = self.buffer.text().to_owned();
             self.channel_selected = 0;
         }
@@ -343,7 +338,7 @@ impl App {
 
     /// A delete cannot be undone, so only `y` goes through and every other key keeps the message.
     fn handle_confirm_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        let Some(pending) = self.pending_delete.take() else { return vec![] };
+        let Some(Overlay::ConfirmDelete(pending)) = self.overlay.take() else { return vec![] };
         if key.code != KeyCode::Char('y') {
             self.toast("kept");
             return vec![];
@@ -354,11 +349,11 @@ impl App {
 
     pub(super) fn start_input(&mut self, input: Input, initial: String) {
         self.buffer = Field::new(initial);
-        self.input = Some(input);
+        self.overlay = Some(Overlay::Input(input));
     }
 
     fn submit_input(&mut self) -> Vec<Action> {
-        let Some(input) = self.input.take() else { return vec![] };
+        let Some(Overlay::Input(input)) = self.overlay.take() else { return vec![] };
         let text = self.buffer.take();
         match input {
             Input::Filter => {
@@ -378,7 +373,7 @@ impl App {
             }
             Input::InboxReply { item } => {
                 let mut actions = vec![Action::Send { channel: item.channel.clone(), thread_ts: item.reply_thread(), text }];
-                if let Some(inbox) = &mut self.inbox
+                if let Some(Screen::Inbox(inbox)) = &mut self.screen
                     && let Some(read) = inbox.items.iter().position(|i| i.key == item.key).and_then(|i| {
                         inbox.selected = i;
                         inbox.read_selected()
