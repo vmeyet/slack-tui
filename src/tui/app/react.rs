@@ -2,7 +2,7 @@
 //! the ones used most — or with any emoji found by name after `/`. Picking one of mine takes it
 //! off. The count moves at once; a refusal puts it back.
 use super::commands::emoji_names;
-use super::{Action, App};
+use super::{Action, App, Overlay};
 use crate::api::{Message, Reaction};
 use crossterm::event::{KeyCode, KeyEvent};
 use std::collections::HashMap;
@@ -73,11 +73,11 @@ impl App {
     pub(super) fn open_react_on(&mut self, channel: String, ts: String) {
         let on_message = self.loaded(&ts).next().map_or(&[][..], |m| &m.reactions);
         let strip = strip(on_message, &self.favorites);
-        self.react = Some(Pick { channel, ts, strip, selected: 0, search: None });
+        self.overlay = Some(Overlay::React(Pick { channel, ts, strip, selected: 0, search: None }));
     }
 
     pub(super) fn handle_react_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        let Some(pick) = self.react.take() else { return vec![] };
+        let Some(Overlay::React(pick)) = self.overlay.take() else { return vec![] };
         let last = pick.choices().len().saturating_sub(1);
         let moved = |selected: usize| Some(Pick { selected, ..pick.clone() });
         let searching = |query: String| Some(Pick { selected: 0, search: Some(Search::of(query, &self.custom_emoji)), ..pick.clone() });
@@ -98,7 +98,7 @@ impl App {
             (KeyCode::Char(c), Some(search)) => (searching(format!("{}{c}", search.query)), None),
             _ => (None, None),
         };
-        self.react = next;
+        self.overlay = next.map(Overlay::React);
         chosen.map(|name| self.toggle_reaction(pick.channel, pick.ts, name)).unwrap_or_default()
     }
 
@@ -126,8 +126,8 @@ impl App {
 
     /// The message `ts` in the open channel or thread; both hold it when it is a thread's root.
     fn loaded<'a>(&'a self, ts: &'a str) -> impl Iterator<Item = &'a Message> {
-        let thread = self.thread.iter().flat_map(|t| &t.messages);
-        self.messages.iter().chain(thread).filter(move |m| m.ts == ts)
+        let thread = self.conversation.thread.iter().flat_map(|t| &t.messages);
+        self.conversation.messages.iter().chain(thread).filter(move |m| m.ts == ts)
     }
 
     fn show_reaction(&mut self, ts: &str, name: &str, on: bool) {

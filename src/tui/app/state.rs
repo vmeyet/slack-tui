@@ -1,14 +1,11 @@
-use super::{Action, Badge, ChannelRow, Focus, Input, Kind, Live, MyMessage, Thread, Toast, Typing};
+use super::{Action, Badge, ChannelRow, Focus, Kind, Live, MyMessage, Overlay, Screen, Thread, Toast, Typing};
 use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
 use crate::resolve::NameBook;
 use crate::tui::field::Field;
-use crate::tui::firehose::Firehose;
 use crate::tui::images::Thumbs;
 use crate::tui::inbox::Inbox;
-use crate::tui::jump::Jump;
-use crate::tui::palette::Palette;
 use crate::tui::theme::Theme;
 use crate::tui::ui::Bodies;
 use ratatui::widgets::ListState;
@@ -29,36 +26,22 @@ pub struct App {
     pub(in crate::tui) channels: Vec<ChannelRow>,
     pub(in crate::tui) filter: String,
     pub(in crate::tui) channel_selected: usize,
-    pub(in crate::tui) current_channel: Option<String>,
-    pub(in crate::tui) messages: Vec<Message>,
+    pub(in crate::tui) conversation: Conversation,
     pub(in crate::tui) message_selected: usize,
-    /// Newest message the selection reached; anything newer arrived unseen.
-    pub(in crate::tui) seen: Option<String>,
-    /// Newest message of the open channel already marked read on Slack.
-    pub(in crate::tui) marked: Option<String>,
-    pub(in crate::tui) thread: Option<Thread>,
-    /// Root of the thread open or on its way; replies for any other arrive too late and are dropped.
-    pub(in crate::tui) wanted_thread: Option<String>,
     pub(in crate::tui) search: Option<Vec<SearchMatch>>,
     pub(in crate::tui) focus: Focus,
-    pub(in crate::tui) input: Option<Input>,
+    pub(in crate::tui) overlay: Option<Overlay>,
+    pub(in crate::tui) screen: Option<Screen>,
     pub(in crate::tui) buffer: Field,
-    /// The emoji names the react row is tab-cycling through; any edit drops it.
-    pub(in crate::tui) react: Option<super::Pick>,
     /// How often each emoji was put on a message, most used first in the picker.
     pub(in crate::tui) favorites: HashMap<String, u32>,
     pub(in crate::tui) custom_emoji: Vec<String>,
-    /// A delete waiting for its yes; nothing leaves the screen before that.
-    pub(in crate::tui) pending_delete: Option<MyMessage>,
     /// Where the user is; what just happened goes in `toast`.
     pub(in crate::tui) toast: Option<Toast>,
-    /// Who is typing in the open conversation, each until their own keystroke ages out.
-    pub(in crate::tui) typing: Vec<Typing>,
     pub(in crate::tui) loading: bool,
     /// Newest commit of the repo, once the daily check answered.
     pub(in crate::tui) latest: Option<String>,
     pub(in crate::tui) names: NameBook,
-    pub(in crate::tui) help: bool,
     pub(in crate::tui) should_quit: bool,
     pub(in crate::tui) quitting: Option<(super::quit::QuitKey, Instant)>,
     pub(in crate::tui) live: Live,
@@ -70,25 +53,37 @@ pub struct App {
     /// Set by the event loop each time it wakes, so nothing below reads the clock.
     pub(in crate::tui) now: Instant,
     pub(in crate::tui) thumbs: Thumbs,
-    pub(in crate::tui) inbox: Option<Inbox>,
     pub(in crate::tui) workspace: String,
-    pub(in crate::tui) jump: Option<Jump>,
     pub(in crate::tui) people: Vec<(String, String)>,
     pub(in crate::tui) wall: VecDeque<LiveLine>,
-    pub(in crate::tui) firehose: Option<Firehose>,
     pub(in crate::tui) highlighter: Highlighter,
     /// Jev ranks the inbox and tags the firehose: on with `[typesafe] enabled`, off for good once it fails.
     pub(in crate::tui) triage: bool,
     /// Reading mode: only the conversation, centered, times shown on the selected row.
     pub(in crate::tui) zen: bool,
-    pub(in crate::tui) palette: Option<Palette>,
     pub(in crate::tui) palette_history: Vec<String>,
     /// Scroll offsets survive between frames so the viewport only moves when the selection leaves it.
     pub(in crate::tui) channels_view: ListState,
-    pub(in crate::tui) messages_view: ListState,
-    pub(in crate::tui) thread_view: ListState,
     pub(in crate::tui) message_bodies: Bodies,
     pub(in crate::tui) thread_bodies: Bodies,
+}
+
+/// The open channel and all that goes with it; opening another starts a fresh one.
+#[derive(Debug, Default)]
+pub struct Conversation {
+    pub(in crate::tui) channel: Option<String>,
+    pub(in crate::tui) messages: Vec<Message>,
+    /// Newest message the selection reached; anything newer arrived unseen.
+    pub(in crate::tui) seen: Option<String>,
+    /// Newest message of the open channel already marked read on Slack.
+    pub(in crate::tui) marked: Option<String>,
+    /// Who is typing in it, each until their own keystroke ages out.
+    pub(in crate::tui) typing: Vec<Typing>,
+    pub(in crate::tui) thread: Option<Thread>,
+    /// Root of the thread open or on its way; replies for any other arrive too late and are dropped.
+    pub(in crate::tui) wanted_thread: Option<String>,
+    pub(in crate::tui) messages_view: ListState,
+    pub(in crate::tui) thread_view: ListState,
 }
 
 impl Default for App {
@@ -98,27 +93,19 @@ impl Default for App {
             channels: vec![],
             filter: String::new(),
             channel_selected: 0,
-            current_channel: None,
-            messages: vec![],
+            conversation: Conversation::default(),
             message_selected: 0,
-            seen: None,
-            marked: None,
-            thread: None,
-            wanted_thread: None,
             search: None,
             focus: Focus::default(),
-            input: None,
+            overlay: None,
+            screen: None,
             buffer: Field::default(),
-            react: None,
             favorites: HashMap::new(),
             custom_emoji: Vec::new(),
-            pending_delete: None,
             toast: None,
-            typing: vec![],
             loading: false,
             latest: None,
             names: NameBook::default(),
-            help: false,
             should_quit: false,
             quitting: None,
             live: Live::default(),
@@ -129,20 +116,14 @@ impl Default for App {
             started: now,
             now,
             thumbs: Thumbs::off(),
-            inbox: None,
             workspace: "env".into(),
-            jump: None,
             people: vec![],
             wall: VecDeque::new(),
-            firehose: None,
             highlighter: Highlighter::default(),
             triage: false,
             zen: false,
-            palette: None,
             palette_history: vec![],
             channels_view: ListState::default(),
-            messages_view: ListState::default(),
-            thread_view: ListState::default(),
             message_bodies: Bodies::default(),
             thread_bodies: Bodies::default(),
         }
@@ -168,7 +149,7 @@ impl App {
     }
 
     pub fn current_kind(&self) -> Option<Kind> {
-        let id = self.current_channel.as_deref()?;
+        let id = self.conversation.channel.as_deref()?;
         self.channels.iter().find(|c| c.id == id).map(|c| c.kind)
     }
 
@@ -179,24 +160,27 @@ impl App {
     }
 
     fn empty_state_visible(&self) -> bool {
-        if self.firehose.is_some() || self.jump.is_some() || self.help {
+        if matches!(self.overlay, Some(Overlay::Jump(_) | Overlay::Help)) {
             return false;
         }
-        if let Some(inbox) = &self.inbox {
-            return inbox.items.is_empty() && !inbox.loading;
+        match &self.screen {
+            Some(Screen::Firehose(_)) => false,
+            Some(Screen::Inbox(inbox)) => inbox.items.is_empty() && !inbox.loading,
+            None => {
+                let empty_search = self.search.as_ref().is_some_and(Vec::is_empty);
+                !self.loading && (empty_search || (self.search.is_none() && self.conversation.messages.is_empty()))
+            }
         }
-        let empty_search = self.search.as_ref().is_some_and(Vec::is_empty);
-        !self.loading && (empty_search || (self.search.is_none() && self.messages.is_empty()))
     }
 
     pub fn current_label(&self) -> String {
-        self.current_channel.as_deref().map(|id| self.names.channel_label(id)).unwrap_or_default()
+        self.conversation.channel.as_deref().map(|id| self.names.channel_label(id)).unwrap_or_default()
     }
 
     pub fn selected_message(&self) -> Option<&Message> {
         match self.focus {
-            Focus::Thread => self.thread.as_ref().and_then(|t| t.messages.get(t.selected)),
-            _ => self.messages.get(self.message_selected),
+            Focus::Thread => self.conversation.thread.as_ref().and_then(|t| t.messages.get(t.selected)),
+            _ => self.conversation.messages.get(self.message_selected),
         }
     }
 
@@ -207,8 +191,8 @@ impl App {
             return results.get(self.message_selected).map(|m| (m.channel.id.clone(), m.ts.clone()));
         }
         let channel = match self.focus {
-            Focus::Thread => self.thread.as_ref()?.channel.clone(),
-            _ => self.current_channel.clone()?,
+            Focus::Thread => self.conversation.thread.as_ref()?.channel.clone(),
+            _ => self.conversation.channel.clone()?,
         };
         Some((channel, self.selected_message()?.ts.clone()))
     }
@@ -234,51 +218,44 @@ impl App {
 
     pub(super) fn open_channel(&mut self, id: String) -> Vec<Action> {
         let left = self.sync_read();
-        self.marked = None;
         self.unread.remove(&id);
         self.badges.remove(&id);
-        self.current_channel = Some(id.clone());
-        self.messages.clear();
-        self.typing.clear();
-        self.seen = None;
-        self.messages_view = ListState::default();
-        self.thread_view = ListState::default();
-        self.close_thread();
+        self.conversation = Conversation { channel: Some(id.clone()), ..Conversation::default() };
         self.focus = Focus::Messages;
         self.loading = true;
         left.into_iter().chain([Action::LoadHistory(id)]).collect()
     }
 
     pub(super) fn load_replies(&mut self, channel: String, ts: String) -> Action {
-        self.wanted_thread = Some(ts.clone());
+        self.conversation.wanted_thread = Some(ts.clone());
         Action::LoadReplies { channel, ts }
     }
 
     pub(super) fn close_thread(&mut self) {
-        self.thread = None;
-        self.wanted_thread = None;
+        self.conversation.thread = None;
+        self.conversation.wanted_thread = None;
     }
 
     /// Slack keeps the open channel read up to its newest message, so a restart shows no stale dot.
     pub(super) fn sync_read(&mut self) -> Option<Action> {
-        let channel = self.current_channel.clone()?;
-        let ts = self.messages.last()?.ts.clone();
-        if self.marked.as_ref() == Some(&ts) {
+        let channel = self.conversation.channel.clone()?;
+        let ts = self.conversation.messages.last()?.ts.clone();
+        if self.conversation.marked.as_ref() == Some(&ts) {
             return None;
         }
-        self.marked = Some(ts.clone());
+        self.conversation.marked = Some(ts.clone());
         Some(Action::SyncRead { channel, ts })
     }
 
     pub fn open_inbox(&mut self) -> Vec<Action> {
-        self.inbox = Some(Inbox::new(State::load(&self.workspace)));
+        self.screen = Some(Screen::Inbox(Inbox::new(State::load(&self.workspace))));
         vec![Action::LoadInbox]
     }
 
     pub(super) fn persist_inbox(&self) -> Vec<Action> {
-        match &self.inbox {
-            Some(inbox) => vec![Action::SaveInbox { workspace: self.workspace.clone(), state: inbox.state.clone() }],
-            None => vec![],
+        match &self.screen {
+            Some(Screen::Inbox(inbox)) => vec![Action::SaveInbox { workspace: self.workspace.clone(), state: inbox.state.clone() }],
+            _ => vec![],
         }
     }
 
@@ -296,8 +273,8 @@ impl App {
 
     /// Fetches thumbnails for the images now on screen and forgets the ones that left.
     pub(super) fn refresh_thumbs(&mut self) -> Vec<Action> {
-        let thread = self.thread.iter().flat_map(|t| t.messages.iter());
-        let files: Vec<File> = self.messages.iter().chain(thread).flat_map(|m| m.files.iter().cloned()).collect();
+        let thread = self.conversation.thread.iter().flat_map(|t| t.messages.iter());
+        let files: Vec<File> = self.conversation.messages.iter().chain(thread).flat_map(|m| m.files.iter().cloned()).collect();
         self.thumbs.keep_only(files.iter().map(|f| f.id.clone()));
         self.thumbs.wanted(&files).into_iter().map(|(id, url)| Action::LoadImage { id, url }).collect()
     }

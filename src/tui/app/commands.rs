@@ -1,7 +1,7 @@
-use super::{Action, App, Focus, Input, MyMessage};
+use super::{Action, App, Focus, Input, MyMessage, Overlay, Screen};
 use crate::inbox::Snooze;
 use crate::tui::images::Thumbs;
-use crate::tui::palette::{self, Command, Format};
+use crate::tui::palette::{self, Command, Format, Palette};
 use crate::tui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::borrow::Cow;
@@ -12,48 +12,38 @@ use std::sync::LazyLock;
 type Outcome = Result<Vec<Action>, String>;
 
 impl App {
-    #[allow(clippy::expect_used)]
     pub(super) fn handle_palette_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        let palette = self.palette.as_mut().expect("palette open");
+        let Some(Overlay::Palette(mut palette)) = self.overlay.take() else { return vec![] };
         match key.code {
-            KeyCode::Esc => self.palette = None,
+            KeyCode::Esc => return vec![],
+            KeyCode::Backspace if palette.input.is_empty() => return vec![],
+            KeyCode::Enter => return self.run_line(palette),
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => palette.type_char(c),
-            KeyCode::Backspace => {
-                if palette.input.is_empty() {
-                    self.palette = None;
-                } else {
-                    palette.backspace();
-                }
-            }
-            KeyCode::Tab | KeyCode::BackTab => {
-                let candidates = self.completions_for(&self.palette.as_ref().expect("open").input);
-                self.palette.as_mut().expect("open").complete(&candidates, key.code == KeyCode::BackTab);
-            }
+            KeyCode::Backspace => palette.backspace(),
+            KeyCode::Tab | KeyCode::BackTab => palette.complete(&self.completions_for(&palette.input), key.code == KeyCode::BackTab),
             KeyCode::Up => palette.history_up(),
             KeyCode::Down => palette.history_down(),
-            KeyCode::Right | KeyCode::End => {
-                let candidates = self.completions_for(&self.palette.as_ref().expect("open").input);
-                self.palette.as_mut().expect("open").accept(&candidates);
-            }
-            KeyCode::Enter => {
-                let line = palette.submit();
-                self.palette_history = palette.history.clone();
-                self.palette = None;
-                return match palette::parse(&line) {
-                    Ok(command) => self.run_command(command),
-                    Err(e) => {
-                        self.fail(e);
-                        vec![]
-                    }
-                };
-            }
+            KeyCode::Right | KeyCode::End => palette.accept(&self.completions_for(&palette.input)),
             _ => {}
         }
+        self.overlay = Some(Overlay::Palette(palette));
         vec![]
     }
 
+    fn run_line(&mut self, mut palette: Palette) -> Vec<Action> {
+        let line = palette.submit();
+        self.palette_history = palette.history;
+        match palette::parse(&line) {
+            Ok(command) => self.run_command(command),
+            Err(e) => {
+                self.fail(e);
+                vec![]
+            }
+        }
+    }
+
     pub fn palette_ghost(&self) -> Option<String> {
-        let palette = self.palette.as_ref()?;
+        let Some(Overlay::Palette(palette)) = &self.overlay else { return None };
         palette.ghost(&self.completions_for(&palette.input))
     }
 
@@ -109,7 +99,7 @@ impl App {
     }
 
     fn leave(&mut self, name: Option<String>) -> Outcome {
-        let target = name.or_else(|| self.current_channel.clone()).ok_or("no conversation to leave")?;
+        let target = name.or_else(|| self.conversation.channel.clone()).ok_or("no conversation to leave")?;
         let id = self.channel_named(&target).map_or(target.clone(), |c| c.id.clone());
         Ok(vec![Action::Leave(id)])
     }
@@ -142,7 +132,7 @@ impl App {
     }
 
     fn ask_delete(&mut self) -> Outcome {
-        self.pending_delete = Some(self.my_message("delete")?);
+        self.overlay = Some(Overlay::ConfirmDelete(self.my_message("delete")?));
         Ok(vec![])
     }
 
@@ -160,9 +150,9 @@ impl App {
     }
 
     fn export(&self, format: Format) -> Outcome {
-        let (label, messages) = match (&self.thread, self.focus) {
+        let (label, messages) = match (&self.conversation.thread, self.focus) {
             (Some(t), Focus::Thread) => (format!("{} thread", self.current_label()), t.messages.clone()),
-            _ => (self.current_label(), self.messages.clone()),
+            _ => (self.current_label(), self.conversation.messages.clone()),
         };
         if messages.is_empty() {
             return Err("nothing to export".into());
@@ -171,14 +161,17 @@ impl App {
     }
 
     fn mark_read(&mut self) -> Vec<Action> {
-        let (Some(channel), Some(last)) = (self.current_channel.clone(), self.messages.last()) else { return vec![] };
+        let (Some(channel), Some(last)) = (self.conversation.channel.clone(), self.conversation.messages.last()) else { return vec![] };
         self.unread.remove(&channel);
-        self.marked = Some(last.ts.clone());
+        self.conversation.marked = Some(last.ts.clone());
         vec![Action::MarkChannelRead { channel, ts: last.ts.clone() }]
     }
 
     fn snooze(&mut self, preset: Snooze) -> Outcome {
-        let inbox = self.inbox.as_mut().filter(|i| i.selected_item().is_some()).ok_or("open the inbox (i) and pick an item first")?;
+        let inbox = match &mut self.screen {
+            Some(Screen::Inbox(inbox)) if inbox.selected_item().is_some() => inbox,
+            _ => return Err("open the inbox (i) and pick an item first".into()),
+        };
         inbox.snooze_selected(preset);
         Ok(self.persist_inbox())
     }
@@ -221,7 +214,7 @@ impl App {
     }
 
     fn show_help(&mut self) -> Vec<Action> {
-        self.help = true;
+        self.overlay = Some(Overlay::Help);
         vec![]
     }
 

@@ -1,4 +1,4 @@
-use super::{Action, App, Badge, ChannelRow, Focus, Incoming, Live, Thread};
+use super::{Action, App, Badge, ChannelRow, Conversation, Focus, Incoming, Live, Overlay, Screen, Thread};
 use crate::api::{Message, SearchMatch};
 use crate::inbox::Item;
 use crate::resolve::NameBook;
@@ -28,7 +28,7 @@ impl App {
             Incoming::SearchResults(matches) => self.search_loaded(matches),
             Incoming::Inbox { items, names } => return self.inbox_loaded(items, names),
             Incoming::Priorities(verdicts) => {
-                if let Some(inbox) = &mut self.inbox {
+                if let Some(Screen::Inbox(inbox)) = &mut self.screen {
                     inbox.rank(&verdicts);
                 }
             }
@@ -39,7 +39,7 @@ impl App {
                 }
             }
             Incoming::Threads(candidates) => {
-                if let Some(jump) = &mut self.jump {
+                if let Some(Overlay::Jump(jump)) = &mut self.overlay {
                     jump.threads = candidates;
                 }
             }
@@ -66,7 +66,7 @@ impl App {
 
     fn inbox_loaded(&mut self, items: Vec<Item>, names: NameBook) -> Vec<Action> {
         self.names = names;
-        let Some(inbox) = &mut self.inbox else { return vec![] };
+        let Some(Screen::Inbox(inbox)) = &mut self.screen else { return vec![] };
         inbox.set_items(items);
         if !self.triage || inbox.items.is_empty() {
             return vec![];
@@ -81,11 +81,8 @@ impl App {
     }
 
     fn left(&mut self, channel: &str) -> Vec<Action> {
-        if self.current_channel.as_deref() == Some(channel) {
-            self.current_channel = None;
-            self.messages.clear();
-            self.typing.clear();
-            self.close_thread();
+        if self.conversation.channel.as_deref() == Some(channel) {
+            self.conversation = Conversation::default();
             self.focus = Focus::Channels;
         }
         self.toast("left");
@@ -111,14 +108,14 @@ impl App {
 
     fn history_loaded(&mut self, channel: &str, messages: Vec<Message>, names: NameBook) -> Vec<Action> {
         self.loading = false;
-        if self.current_channel.as_deref() != Some(channel) {
+        if self.conversation.channel.as_deref() != Some(channel) {
             return vec![];
         }
         self.names = names;
         if self.search.is_none() {
             self.message_selected = self.kept_selection(&messages);
         }
-        self.messages = messages;
+        self.conversation.messages = messages;
         let mut actions = self.refresh_thumbs();
         actions.extend(self.sync_read());
         actions
@@ -126,38 +123,37 @@ impl App {
 
     /// The same message stays selected in the new list, unless the selection was following the bottom.
     fn kept_selection(&self, messages: &[Message]) -> usize {
-        let at_bottom = self.message_selected + 1 >= self.messages.len();
-        let selected_ts = self.messages.get(self.message_selected).map(|m| &m.ts);
+        let at_bottom = self.message_selected + 1 >= self.conversation.messages.len();
+        let selected_ts = self.conversation.messages.get(self.message_selected).map(|m| &m.ts);
         let kept = selected_ts.filter(|_| !at_bottom).and_then(|ts| messages.iter().position(|m| &m.ts == ts));
         kept.unwrap_or(messages.len().saturating_sub(1))
     }
 
     fn replies_loaded(&mut self, channel: String, ts: String, messages: Vec<Message>, names: NameBook) -> Vec<Action> {
         self.loading = false;
-        if self.current_channel.as_deref() != Some(&channel) || self.wanted_thread.as_deref() != Some(&ts) {
+        if self.conversation.channel.as_deref() != Some(&channel) || self.conversation.wanted_thread.as_deref() != Some(&ts) {
             return vec![];
         }
         self.names = names;
         let selected = messages.len().saturating_sub(1);
-        if self.thread.as_ref().is_none_or(|t| t.root_ts != ts) {
-            self.thread_view = ListState::default();
+        if self.conversation.thread.as_ref().is_none_or(|t| t.root_ts != ts) {
+            self.conversation.thread_view = ListState::default();
         }
-        self.thread = Some(Thread { channel, root_ts: ts, messages, selected });
+        self.conversation.thread = Some(Thread { channel, root_ts: ts, messages, selected });
         self.refresh_thumbs()
     }
 
     /// The editor replaces the input row: what it wrote is sent, the row goes back to empty.
     fn composed(&mut self, channel: String, thread_ts: Option<String>, text: String) -> Vec<Action> {
-        self.input = None;
-        self.buffer.clear();
+        self.close_input();
         self.send(channel, thread_ts, text)
     }
 
     fn sent(&mut self, channel: String, thread_ts: Option<String>) -> Vec<Action> {
         self.toast("sent ✓");
-        if self.current_channel.as_deref() != Some(&channel) {
+        if self.conversation.channel.as_deref() != Some(&channel) {
             self.loading = false;
-            if let Some(inbox) = &mut self.inbox {
+            if let Some(Screen::Inbox(inbox)) = &mut self.screen {
                 inbox.flash = "sent ✓".into();
             }
             return vec![];
@@ -185,9 +181,9 @@ impl App {
     }
 
     fn reload_when_offline(&self) -> Option<Action> {
-        if self.live == Live::Connected || self.loading || self.input.is_some() {
+        if self.live == Live::Connected || self.loading || matches!(self.overlay, Some(Overlay::Input(_))) {
             return None;
         }
-        self.current_channel.clone().map(Action::LoadHistory)
+        self.conversation.channel.clone().map(Action::LoadHistory)
     }
 }

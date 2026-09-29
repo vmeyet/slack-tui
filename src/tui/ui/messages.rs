@@ -22,7 +22,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     let focused = app.focus == Focus::Messages;
     let mut title = if app.search.is_some() {
         "search".to_owned()
-    } else if app.current_channel.is_some() {
+    } else if app.conversation.channel.is_some() {
         app.current_label()
     } else {
         "messages".to_owned()
@@ -34,7 +34,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     let bodies = std::mem::take(&mut app.message_bodies);
     let (listed, bodies) = match &app.search {
         Some(results) => (results.iter().map(|m| (search_item(&app.theme, m, width), vec![])).collect(), bodies),
-        None => grouped_items(&viewer(app), &app.messages, bodies, width, NAME_W, true, app.message_selected),
+        None => grouped_items(&viewer(app), &app.conversation.messages, bodies, width, NAME_W, true, app.message_selected),
     };
     app.message_bodies = bodies;
     let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) = listed.into_iter().unzip();
@@ -49,13 +49,13 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
         .highlight_symbol(cursor_bar(&app.theme, focused))
         .repeat_highlight_symbol(true)
         .highlight_spacing(HighlightSpacing::Always);
-    app.messages_view.select((!empty).then_some(app.message_selected));
-    f.render_stateful_widget(list, area, &mut app.messages_view);
+    app.conversation.messages_view.select((!empty).then_some(app.message_selected));
+    f.render_stateful_widget(list, area, &mut app.conversation.messages_view);
     if let Some(state) = empty_state(app) {
         draw_empty(f, &app.theme, inner, motion::frame(app.elapsed()), &state);
     }
     let x = inner.x + 1 + text_start(NAME_W) as u16;
-    pictures::placements(inner, x, app.messages_view.offset(), &rows)
+    pictures::placements(inner, x, app.conversation.messages_view.offset(), &rows)
 }
 
 /// Sits on the bottom border, under the last message, while someone types in the open conversation.
@@ -79,7 +79,7 @@ fn empty_state(app: &App) -> Option<Empty> {
             Empty { title: "no results".into(), hint: "try other words with".into(), key: Some("s") }
         }
         (Some(_), _) => return None,
-        _ if !app.messages.is_empty() => return None,
+        _ if !app.conversation.messages.is_empty() => return None,
         (None, None) => Empty { title: "pick a conversation".into(), hint: "on the left, then".into(), key: Some("enter") },
         (None, Some(Kind::Dm | Kind::GroupDm)) => {
             Empty { title: "nothing here yet".into(), hint: format!("say hi to {} with", app.current_label()), key: Some("r") }
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn new_messages_below_the_selection_show_on_the_bottom_border() {
         let mut app = App::new();
-        app.current_channel = Some("C1".into());
+        app.conversation.channel = Some("C1".into());
         app.focus = Focus::Messages;
         let history =
             |messages: &[Message]| Incoming::History { channel: "C1".into(), messages: messages.to_vec(), names: NameBook::default() };
@@ -152,7 +152,7 @@ mod tests {
 
     fn watching_c1() -> App {
         let mut app = App::new();
-        app.current_channel = Some("C1".into());
+        app.conversation.channel = Some("C1".into());
         app.focus = Focus::Messages;
         let messages = vec![message("1694700000.000100", "U1", "first")];
         app.apply(Incoming::History { channel: "C1".into(), messages, names: NameBook::default() });
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn selected_message_shows_its_header_even_when_it_continues_the_previous_one() {
         let mut app = App::new();
-        app.current_channel = Some("C1".into());
+        app.conversation.channel = Some("C1".into());
         app.focus = Focus::Messages;
         let messages = vec![message("1694700000.000100", "U1", "first"), message("1694700010.000100", "U1", "second")];
         app.apply(Incoming::History { channel: "C1".into(), messages, names: NameBook::default() });
@@ -201,7 +201,7 @@ mod tests {
         let sent = crate::markdown::to_blocks("ship it\n```\nls -la\n```", &crate::markdown::NoMentions);
         let show = |blocks: Vec<crate::blocks::Block>| {
             let mut app = App::new();
-            app.current_channel = Some("C1".into());
+            app.conversation.channel = Some("C1".into());
             app.focus = Focus::Messages;
             let m = Message { blocks, ..message("1694700000.000100", "U1", &sent.text) };
             app.apply(Incoming::History { channel: "C1".into(), messages: vec![m], names: NameBook::default() });
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn an_edited_message_carries_its_mark_and_a_bot_post_reads_its_attachment() {
         let mut app = App::new();
-        app.current_channel = Some("C1".into());
+        app.conversation.channel = Some("C1".into());
         app.focus = Focus::Messages;
         let edited = Message { edited: Some(crate::api::Edited::default()), ..message("1694700000.000100", "U1", "ship it") };
         let attachment = crate::api::Attachment { title: "Build".into(), text: String::new(), fallback: "deploy failed".into() };

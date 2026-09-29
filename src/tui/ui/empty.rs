@@ -89,7 +89,7 @@ mod tests {
             badges: HashMap::new(),
             me: "U1".into(),
         });
-        app.current_channel = Some("D1".into());
+        app.conversation.channel = Some("D1".into());
         app.apply(Incoming::History { channel: "D1".into(), messages: vec![], names: NameBook::default() });
         let out = render_at(&mut app, 90, 20);
         assert!(out.contains("╭─────╮") && out.contains("│ ◠ ◠ │") && out.contains("╰┬┬┬┬┬╯"), "{out}");

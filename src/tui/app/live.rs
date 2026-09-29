@@ -1,4 +1,4 @@
-use super::{Action, App, Live};
+use super::{Action, App, Live, Screen};
 use crate::api::rtm;
 use crate::api::{Message, Reaction};
 use crate::firehose::Line as LiveLine;
@@ -21,7 +21,7 @@ impl App {
             rtm::Event::GaveUp(reason) => self.live = Live::Polling(reason),
             rtm::Event::Message { channel, message } => {
                 let line = LiveLine::from_message(&channel, &message);
-                let classify = (self.triage && self.firehose.is_some()).then(|| Action::Classify(line.clone()));
+                let classify = (self.triage && matches!(self.screen, Some(Screen::Firehose(_)))).then(|| Action::Classify(line.clone()));
                 firehose::push(&mut self.wall, line, &self.names, &self.highlighter);
                 let unknown = message.user.clone().filter(|u| self.names.user_label(u) == *u);
                 self.live_message(channel, message);
@@ -33,7 +33,7 @@ impl App {
                 return actions;
             }
             rtm::Event::Changed { channel, message } => {
-                if self.current_channel.as_deref() == Some(&channel) {
+                if self.conversation.channel.as_deref() == Some(&channel) {
                     for m in self.all_messages_mut().into_iter().filter(|m| m.ts == message.ts) {
                         m.text.clone_from(&message.text);
                         m.edited.clone_from(&message.edited);
@@ -41,21 +41,21 @@ impl App {
                 }
             }
             rtm::Event::Deleted { channel, ts } => {
-                if self.current_channel.as_deref() == Some(&channel) {
-                    self.messages.retain(|m| m.ts != ts);
-                    if let Some(t) = &mut self.thread {
+                if self.conversation.channel.as_deref() == Some(&channel) {
+                    self.conversation.messages.retain(|m| m.ts != ts);
+                    if let Some(t) = &mut self.conversation.thread {
                         t.messages.retain(|m| m.ts != ts);
                     }
                     self.clamp_selections();
                 }
             }
             rtm::Event::Typing { channel, user } => {
-                if self.current_channel.as_deref() == Some(&channel) && user != self.me {
+                if self.conversation.channel.as_deref() == Some(&channel) && user != self.me {
                     self.mark_typing(&user);
                 }
             }
             rtm::Event::Reaction { channel, ts, name, user, added } => {
-                if self.current_channel.as_deref() == Some(&channel) {
+                if self.conversation.channel.as_deref() == Some(&channel) {
                     for m in self.all_messages_mut().into_iter().filter(|m| m.ts == ts) {
                         adjust_reaction(&mut m.reactions, &name, &user, added);
                     }
@@ -66,7 +66,7 @@ impl App {
     }
 
     fn live_message(&mut self, channel: String, message: Message) {
-        if self.current_channel.as_deref() != Some(&channel) {
+        if self.conversation.channel.as_deref() != Some(&channel) {
             let badge = self.badges.entry(channel.clone()).or_default();
             badge.unread = true;
             if !self.me.is_empty() && crate::inbox::mentions_me(&message.text, &self.me, None) {
@@ -81,22 +81,22 @@ impl App {
                 return;
             }
         }
-        if self.messages.iter().any(|m| m.ts == message.ts) {
+        if self.conversation.messages.iter().any(|m| m.ts == message.ts) {
             return;
         }
-        let follow = self.message_selected + 1 >= self.messages.len();
-        self.messages.push(message);
+        let follow = self.message_selected + 1 >= self.conversation.messages.len();
+        self.conversation.messages.push(message);
         if follow && self.search.is_none() {
-            self.message_selected = self.messages.len() - 1;
+            self.message_selected = self.conversation.messages.len() - 1;
         }
     }
 
     fn live_reply(&mut self, root: &str, message: &Message) {
-        if let Some(m) = self.messages.iter_mut().find(|m| m.ts == root) {
+        if let Some(m) = self.conversation.messages.iter_mut().find(|m| m.ts == root) {
             m.reply_count += 1;
             m.latest_reply = Some(message.ts.clone());
         }
-        if let Some(t) = self.thread.as_mut().filter(|t| t.root_ts == root && !t.messages.iter().any(|m| m.ts == message.ts)) {
+        if let Some(t) = self.conversation.thread.as_mut().filter(|t| t.root_ts == root && !t.messages.iter().any(|m| m.ts == message.ts)) {
             let follow = t.selected + 1 >= t.messages.len();
             t.messages.push(message.clone());
             if follow {
@@ -106,13 +106,13 @@ impl App {
     }
 
     pub(super) fn all_messages_mut(&mut self) -> Vec<&mut Message> {
-        let thread = self.thread.as_mut().map(|t| t.messages.iter_mut()).into_iter().flatten();
-        self.messages.iter_mut().chain(thread).collect()
+        let thread = self.conversation.thread.as_mut().map(|t| t.messages.iter_mut()).into_iter().flatten();
+        self.conversation.messages.iter_mut().chain(thread).collect()
     }
 
     fn clamp_selections(&mut self) {
-        self.message_selected = self.message_selected.min(self.messages.len().saturating_sub(1));
-        if let Some(t) = &mut self.thread {
+        self.message_selected = self.message_selected.min(self.conversation.messages.len().saturating_sub(1));
+        if let Some(t) = &mut self.conversation.thread {
             t.selected = t.selected.min(t.messages.len().saturating_sub(1));
         }
     }

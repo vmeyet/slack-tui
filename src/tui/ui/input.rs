@@ -1,4 +1,5 @@
-use crate::tui::app::{App, Input, REACT_PAGE};
+use crate::tui::app::{App, Input, Pick, REACT_PAGE};
+use crate::tui::palette::Palette;
 use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -6,14 +7,13 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
-    let label = match &app.input {
-        Some(Input::Reply { label, .. }) => format!("reply to {label}"),
-        Some(Input::InboxReply { item }) => format!("reply to {}", item.label),
-        Some(Input::Edit { .. }) => "edit".into(),
-        Some(Input::Filter) => "filter".into(),
-        Some(Input::Search) => "search".into(),
-        None => return,
+pub(super) fn draw(f: &mut Frame, app: &App, input: &Input, area: Rect) {
+    let label = match input {
+        Input::Reply { label, .. } => format!("reply to {label}"),
+        Input::InboxReply { item } => format!("reply to {}", item.label),
+        Input::Edit { .. } => "edit".into(),
+        Input::Filter => "filter".into(),
+        Input::Search => "search".into(),
     };
     let (before, under, after) = app.buffer.split();
     let line = Line::from(vec![
@@ -35,8 +35,7 @@ fn caret(theme: &Theme, under: &str) -> Span<'static> {
 
 /// The picker: the search typed so far, then the page of choices around the selected one, mine
 /// standing out and the selected one framed; on the strip, the selected one's name after it.
-pub(super) fn draw_react(f: &mut Frame, app: &App, area: Rect) {
-    let Some(pick) = &app.react else { return };
+pub(super) fn draw_react(f: &mut Frame, app: &App, pick: &Pick, area: Rect) {
     let theme = &app.theme;
     let faded = Style::new().fg(theme.faded);
     let mut spans = vec![Span::styled(" react ▸ ", Style::new().fg(theme.accent).bold())];
@@ -74,8 +73,7 @@ fn choice_label(i: usize, name: &str, searching: bool) -> String {
     }
 }
 
-pub(super) fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
-    let Some(palette) = &app.palette else { return };
+pub(super) fn draw_palette(f: &mut Frame, app: &App, palette: &Palette, area: Rect) {
     let line = Line::from(vec![
         Span::styled(" : ", Style::new().fg(app.theme.accent).bold()),
         Span::raw(palette.input.clone()),
@@ -91,7 +89,7 @@ mod tests {
     use super::*;
     use crate::render::text;
     use crate::resolve::NameBook;
-    use crate::tui::app::{ChannelRow, Incoming, Kind};
+    use crate::tui::app::{ChannelRow, Incoming, Kind, Overlay};
     use crate::tui::field::Field;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
@@ -114,7 +112,7 @@ mod tests {
 
     fn filtering(text: &str) -> App {
         let mut app = App::new();
-        app.input = Some(Input::Filter);
+        app.overlay = Some(Overlay::Input(Input::Filter));
         app.buffer = Field::new(text);
         app
     }
@@ -150,13 +148,13 @@ mod tests {
     #[test]
     fn the_picker_numbers_the_strip_and_names_the_selected_one() {
         let mut app = App::new();
-        app.react = Some(crate::tui::app::Pick {
+        app.overlay = Some(Overlay::React(Pick {
             channel: "C1".into(),
             ts: "1".into(),
             strip: vec!["rocket".into(), "partyparrot".into()],
             selected: 1,
             search: None,
-        });
+        }));
         let row = input_row(&mut app);
         let text = shown(&row);
         assert!(text.starts_with(" react ▸  1 🚀") && text.contains(" 2 :partyparrot:   partyparrot"), "{text}");
