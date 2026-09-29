@@ -256,9 +256,11 @@ fn spawn(action: Action, backend: Backend, tx: mpsc::UnboundedSender<Incoming>) 
 }
 
 /// The directory lock is released before the sidebar extras are fetched, so history loads never wait on them.
+/// The list is always fetched again; the disk copy only stands in when Slack cannot be reached.
 async fn load_channels(backend: &Backend) -> Result<Incoming> {
     let (rows, people, names) = {
         let mut d = backend.dir.lock().await;
+        let _ = d.refresh_channels().await;
         d.channels().await?;
         let _ = d.users().await;
         let _ = d.learn_dm_users().await;
@@ -491,4 +493,28 @@ async fn yank(slack: &crate::api::Slack, channel: &str, ts: &str) -> Result<Inco
     child.stdin.take().context("piped stdin")?.write_all(url.as_bytes()).await?;
     child.wait().await?;
     Ok(Incoming::Toast("permalink copied".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::auth::Credentials;
+    use serde_json::json;
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn loading_channels_fetches_the_list_again_even_with_a_disk_copy() {
+        let server = MockServer::start().await;
+        let fresh = json!({"ok": true, "channels": [{"id": "C2", "name": "fresh", "is_member": true}]});
+        Mock::given(path("/conversations.list")).respond_with(ResponseTemplate::new(200).set_body_json(fresh)).mount(&server).await;
+        let cache = Cache::new(tempfile::tempdir().unwrap().keep());
+        cache.save("channels", &json!([{"id": "C1", "name": "stale", "is_member": true}])).await.unwrap();
+        let slack = crate::api::Slack::new(&server.uri(), Credentials::new("xoxc", None)).unwrap();
+        let dir = Directory::new(slack.clone(), cache.clone()).await;
+        let backend = Backend { slack, dir: Arc::new(Mutex::new(dir)), me: Arc::new(OnceCell::new()), cache, jev: None };
+        let Incoming::Channels { rows, .. } = load_channels(&backend).await.unwrap() else { panic!("channels") };
+        assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["C2"]);
+    }
 }
