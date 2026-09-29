@@ -128,6 +128,8 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
                     events = EventStream::new();
                     let _ = tx.send(composed_outcome(channel, thread_ts, composed));
                 }
+                // Saves run one after the other, so an older state never lands over a newer one.
+                action @ (Action::SaveInbox { .. } | Action::SaveFavorites(_)) => answer(action, &backend, &tx).await,
                 action => spawn(action, backend.clone(), tx.clone()),
             }
         }
@@ -249,10 +251,12 @@ fn judged<T>(outcome: std::result::Result<T, Unavailable>, arrived: impl FnOnce(
 }
 
 fn spawn(action: Action, backend: Backend, tx: mpsc::UnboundedSender<Incoming>) {
-    tokio::spawn(async move {
-        let outcome = perform(action, &backend).await;
-        let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(e.to_string())));
-    });
+    tokio::spawn(async move { answer(action, &backend, &tx).await });
+}
+
+async fn answer(action: Action, backend: &Backend, tx: &mpsc::UnboundedSender<Incoming>) {
+    let outcome = perform(action, backend).await;
+    let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(e.to_string())));
 }
 
 /// The directory lock is released before the sidebar extras are fetched, so history loads never wait on them.
