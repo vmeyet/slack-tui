@@ -1,0 +1,12 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.33.0"
+ci = "github"
+installers = ["homebrew"]
+tap = "vmeyet/homebrew-tap"
+publish-jobs = ["homebrew"]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+hosting = "github"
+install-updater = false

@@ -14,6 +14,8 @@ One Rust binary called `slack`, ~10 ms startup.
 ## Install
 
 ```sh
+brew install vmeyet/tap/slack
+# or from source
 cargo install --git https://github.com/vmeyet/slack-tui
 ```
 
