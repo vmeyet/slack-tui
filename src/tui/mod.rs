@@ -147,10 +147,20 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
 /// Asks terminals speaking the kitty keyboard protocol to report ⌘ and other modifiers,
 /// so ⌘K works where the terminal lets it through (Ghostty, Kitty, `WezTerm`, iTerm2 with the option on).
 fn enable_modifier_keys() -> bool {
-    if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+    if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) || !push_modifier_keys() {
         return false;
     }
-    push_modifier_keys()
+    pop_modifier_keys_on_panic();
+    true
+}
+
+/// The hook `ratatui::init` installs gives back raw mode and the screen, not these flags.
+fn pop_modifier_keys_on_panic() {
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        restore(info);
+    }));
 }
 
 fn push_modifier_keys() -> bool {
