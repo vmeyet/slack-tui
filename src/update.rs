@@ -3,8 +3,10 @@ use crate::version;
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 pub const REPO: &str = "https://github.com/vmeyet/slack-tui";
+pub const BREW_FORMULA: &str = "vmeyet/tap/slack";
 
 const CHECK_FILE: &str = "update-check";
 const A_DAY: i64 = 24 * 60 * 60;
@@ -27,9 +29,22 @@ pub fn standing(installed: &str, latest: Option<&str>) -> Standing {
     }
 }
 
+/// Whether the running binary came from Homebrew, which owns its updates.
+pub fn by_brew() -> bool {
+    std::env::current_exe().and_then(std::fs::canonicalize).is_ok_and(|exe| in_cellar(&exe))
+}
+
+fn in_cellar(exe: &Path) -> bool {
+    exe.to_string_lossy().contains("/Cellar/")
+}
+
 /// The newest commit of the repo, asked at most once a day and remembered between runs.
 /// `None` while it cannot be known, which every caller reads as "say nothing".
+/// Brew only ships tagged releases, so comparing its binary to the newest commit would nag forever.
 pub async fn latest_commit() -> Option<String> {
+    if by_brew() {
+        return None;
+    }
     let cache = Cache::shared();
     let last: Option<Check> = cache.load(CHECK_FILE).await;
     let now = Utc::now().timestamp();
@@ -112,6 +127,16 @@ mod tests {
     #[test]
     fn a_binary_built_without_git_says_nothing() {
         assert_eq!(standing(version::UNKNOWN, Some(NEWER)), Standing::Unknown);
+    }
+
+    #[test]
+    fn a_binary_in_the_brew_cellar_is_by_brew() {
+        assert!(in_cellar(Path::new("/opt/homebrew/Cellar/slack/0.1.0/bin/slack")));
+    }
+
+    #[test]
+    fn a_binary_built_by_cargo_is_not_by_brew() {
+        assert!(!in_cellar(Path::new("/Users/me/.cargo/bin/slack")));
     }
 
     #[test]

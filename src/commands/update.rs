@@ -1,8 +1,8 @@
-//! `slack update`: rebuild and install the latest commit.
+//! `slack update`: rebuild and install the latest commit, or let brew upgrade the binary it installed.
 use crate::cache::Cache;
 use crate::cli::UpdateArgs;
 use crate::render::Theme;
-use crate::update::{self, REPO, Standing, remote_head, standing};
+use crate::update::{self, BREW_FORMULA, REPO, Standing, remote_head, standing};
 use crate::version;
 use anyhow::{Context, Result, bail};
 use std::path::Path;
@@ -27,6 +27,9 @@ fn decide(installed: &str, latest: Option<&str>, force: bool) -> Action {
 /// Rebuilds and installs the latest commit unless the running binary already is it.
 pub async fn run(args: &UpdateArgs) -> Result<()> {
     let theme = Theme::detect();
+    if update::by_brew() {
+        return brew(args.force).await;
+    }
     let latest = if args.force { None } else { latest_commit(&theme).await };
     if let Some(commit) = &latest {
         update::remember(commit).await;
@@ -49,6 +52,15 @@ async fn latest_commit(theme: &Theme) -> Option<String> {
             None
         }
     }
+}
+
+async fn brew(force: bool) -> Result<()> {
+    let action = if force { "reinstall" } else { "upgrade" };
+    let status = Command::new("brew").args([action, BREW_FORMULA]).status().await.context("running brew")?;
+    if !status.success() {
+        bail!("brew {action} failed");
+    }
+    Ok(())
 }
 
 /// Built in a kept folder so the next update only recompiles the app, not its dependencies.
