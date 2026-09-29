@@ -399,6 +399,8 @@ mod tests {
             in_thread: true,
             thread_ts: None,
             tag: None,
+            flat: String::new(),
+            hit: false,
         };
         let out = firehose_line(&t, &NameBook::default(), &line, &hl);
         assert!(out.starts_with('!'), "{out}");

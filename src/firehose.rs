@@ -64,6 +64,11 @@ pub struct Line {
     /// Arrives after the line, once Jev answered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<Tag>,
+    /// Filled once the line lands on the wall, so a frame never parses it again.
+    #[serde(skip)]
+    pub flat: String,
+    #[serde(skip)]
+    pub hit: bool,
 }
 
 impl Line {
@@ -82,6 +87,8 @@ impl Line {
             in_thread: m.is_reply(),
             thread_ts: m.thread_ts.clone(),
             tag: None,
+            flat: String::new(),
+            hit: false,
         }
     }
 
