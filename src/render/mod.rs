@@ -23,18 +23,18 @@ const GROUP_WINDOW_SECS: f64 = 5.0 * 60.0;
 /// Slack-style grouping: a message continues the previous one when the same author
 /// sent it within a few minutes, on the same day, and neither is a system notice.
 pub(crate) fn continues(prev: Option<&Message>, m: &Message) -> bool {
-    let Some(prev) = prev else { return false };
+    prev.is_some_and(|prev| same_run(prev, m) && time::day_label(&m.ts) == time::day_label(&prev.ts))
+}
+
+/// `continues` for a caller that already knows both messages sit on the same day.
+pub(crate) fn same_run(prev: &Message, m: &Message) -> bool {
     let same_author = match (&m.user, &prev.user) {
         (Some(a), Some(b)) => a == b,
         (None, None) => m.username == prev.username && m.bot_id == prev.bot_id && (m.username.is_some() || m.bot_id.is_some()),
         _ => false,
     };
     let secs = |ts: &str| ts.parse::<f64>().unwrap_or(0.0);
-    same_author
-        && m.subtype.is_none()
-        && prev.subtype.is_none()
-        && secs(&m.ts) - secs(&prev.ts) < GROUP_WINDOW_SECS
-        && time::day_label(&m.ts) == time::day_label(&prev.ts)
+    same_author && m.subtype.is_none() && prev.subtype.is_none() && secs(&m.ts) - secs(&prev.ts) < GROUP_WINDOW_SECS
 }
 
 pub(crate) fn day_separator(t: &Theme, ts: &str, width: usize) -> String {
