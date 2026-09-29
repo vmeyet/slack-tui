@@ -607,6 +607,19 @@ fn live_reply_updates_root_and_open_thread() {
 }
 
 #[test]
+fn live_broadcast_reply_lands_in_the_thread_and_the_channel() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "root")]));
+    app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
+    let broadcast = Message { thread_ts: Some("1".into()), subtype: Some("thread_broadcast".into()), ..msg("2", "also here") };
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: broadcast });
+    assert_eq!(app.messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1", "2"]);
+    assert_eq!(app.messages[0].reply_count, 1);
+    assert_eq!(app.thread.as_ref().unwrap().messages.len(), 2);
+}
+
+#[test]
 fn live_edit_delete_and_reactions() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));

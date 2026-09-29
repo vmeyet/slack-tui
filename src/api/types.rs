@@ -161,6 +161,11 @@ impl Message {
     pub fn is_reply(&self) -> bool {
         self.thread_ts.as_deref().is_some_and(|t| t != self.ts)
     }
+
+    /// A reply also sent to the channel ("Also send to #channel").
+    pub fn is_broadcast(&self) -> bool {
+        self.subtype.as_deref() == Some("thread_broadcast")
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
