@@ -36,6 +36,8 @@ pub struct App {
     /// Newest message of the open channel already marked read on Slack.
     pub(in crate::tui) marked: Option<String>,
     pub(in crate::tui) thread: Option<Thread>,
+    /// Root of the thread open or on its way; replies for any other arrive too late and are dropped.
+    pub(in crate::tui) wanted_thread: Option<String>,
     pub(in crate::tui) search: Option<Vec<SearchMatch>>,
     pub(in crate::tui) focus: Focus,
     pub(in crate::tui) input: Option<Input>,
@@ -99,6 +101,7 @@ impl Default for App {
             seen: None,
             marked: None,
             thread: None,
+            wanted_thread: None,
             search: None,
             focus: Focus::default(),
             input: None,
@@ -235,10 +238,20 @@ impl App {
         self.seen = None;
         self.messages_view = ListState::default();
         self.thread_view = ListState::default();
-        self.thread = None;
+        self.close_thread();
         self.focus = Focus::Messages;
         self.loading = true;
         left.into_iter().chain([Action::LoadHistory(id)]).collect()
+    }
+
+    pub(super) fn load_replies(&mut self, channel: String, ts: String) -> Action {
+        self.wanted_thread = Some(ts.clone());
+        Action::LoadReplies { channel, ts }
+    }
+
+    pub(super) fn close_thread(&mut self) {
+        self.thread = None;
+        self.wanted_thread = None;
     }
 
     /// Slack keeps the open channel read up to its newest message, so a restart shows no stale dot.

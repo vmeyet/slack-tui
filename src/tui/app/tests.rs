@@ -288,6 +288,40 @@ fn thread_reply_targets_the_root() {
     assert_eq!(actions, vec![Action::Send { channel: "C1".into(), thread_ts: Some("1".into()), text: "x".into() }]);
 }
 
+fn replies(channel: &str, ts: &str) -> Incoming {
+    Incoming::Replies { channel: channel.into(), ts: ts.into(), messages: vec![msg(ts, "root")], names: NameBook::default() }
+}
+
+#[test]
+fn replies_arriving_after_the_thread_was_closed_are_dropped() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(key('h'));
+    app.apply(replies("C1", "1"));
+    assert_eq!(app.thread, None);
+
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(replies("C1", "1"));
+    assert!(app.thread.is_some());
+    app.apply(Incoming::Sent { channel: "C1".into(), thread_ts: Some("1".into()) });
+    app.handle_key(code(KeyCode::Esc));
+    app.apply(replies("C1", "1"));
+    assert_eq!(app.thread, None, "the reload a send asked for lands after the thread was closed");
+}
+
+#[test]
+fn replies_for_a_channel_left_meanwhile_are_dropped() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    app.handle_key(code(KeyCode::Enter));
+    app.open_channel("C2".into());
+    app.apply(replies("C1", "1"));
+    assert_eq!(app.thread, None);
+}
+
 #[test]
 fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
     let mut app = loaded();

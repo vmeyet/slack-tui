@@ -101,7 +101,7 @@ impl App {
                 self.firehose = None;
                 let mut actions = self.open_channel(line.channel.clone());
                 if let Some(root) = line.thread_ts {
-                    actions.push(Action::LoadReplies { channel: line.channel, ts: root });
+                    actions.push(self.load_replies(line.channel, root));
                 }
                 return actions;
             }
@@ -158,7 +158,7 @@ impl App {
                     }
                     Target::Thread { channel, ts } => {
                         let mut actions = self.open_channel(channel.clone());
-                        actions.push(Action::LoadReplies { channel, ts });
+                        actions.push(self.load_replies(channel, ts));
                         actions
                     }
                 };
@@ -229,7 +229,7 @@ impl App {
                     self.inbox = None;
                     let mut actions = self.open_channel(item.channel.clone());
                     if let Some(root) = item.thread_ts.clone().or_else(|| (item.kind != crate::inbox::Kind::Dm).then(|| item.ts.clone())) {
-                        actions.push(Action::LoadReplies { channel: item.channel, ts: root });
+                        actions.push(self.load_replies(item.channel, root));
                     }
                     return actions;
                 }
@@ -442,7 +442,7 @@ impl App {
     fn go_left(&mut self) {
         match self.focus {
             Focus::Thread => {
-                self.thread = None;
+                self.close_thread();
                 self.focus = Focus::Messages;
             }
             Focus::Messages => self.focus = Focus::Channels,
@@ -500,7 +500,7 @@ impl App {
             self.search = None;
             self.message_selected = self.messages.len().saturating_sub(1);
         } else if self.thread.is_some() {
-            self.thread = None;
+            self.close_thread();
             self.focus = Focus::Messages;
         } else if !self.filter.is_empty() {
             self.filter.clear();
@@ -517,7 +517,7 @@ impl App {
                 let Some(m) = self.search.as_ref().and_then(|r| r.get(self.message_selected)).cloned() else { return vec![] };
                 self.search = None;
                 let mut actions = self.open_channel(m.channel.id.clone());
-                actions.push(Action::LoadReplies { channel: m.channel.id, ts: m.ts });
+                actions.push(self.load_replies(m.channel.id, m.ts));
                 actions
             }
             Focus::Messages => {
@@ -526,7 +526,7 @@ impl App {
                 let ts = m.thread_ts.clone().unwrap_or_else(|| m.ts.clone());
                 self.focus = Focus::Thread;
                 self.loading = true;
-                vec![Action::LoadReplies { channel, ts }]
+                vec![self.load_replies(channel, ts)]
             }
             Focus::Thread => vec![],
         }

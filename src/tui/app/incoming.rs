@@ -85,7 +85,7 @@ impl App {
             self.current_channel = None;
             self.messages.clear();
             self.typing.clear();
-            self.thread = None;
+            self.close_thread();
             self.focus = Focus::Channels;
         }
         self.toast("left");
@@ -134,6 +134,9 @@ impl App {
 
     fn replies_loaded(&mut self, channel: String, ts: String, messages: Vec<Message>, names: NameBook) -> Vec<Action> {
         self.loading = false;
+        if self.current_channel.as_deref() != Some(&channel) || self.wanted_thread.as_deref() != Some(&ts) {
+            return vec![];
+        }
         self.names = names;
         let selected = messages.len().saturating_sub(1);
         if self.thread.as_ref().is_none_or(|t| t.root_ts != ts) {
@@ -161,7 +164,7 @@ impl App {
         }
         self.loading = true;
         match thread_ts {
-            Some(ts) => vec![Action::LoadReplies { channel: channel.clone(), ts }, Action::LoadHistory(channel)],
+            Some(ts) => vec![self.load_replies(channel.clone(), ts), Action::LoadHistory(channel)],
             None => vec![Action::LoadHistory(channel)],
         }
     }
