@@ -126,8 +126,8 @@ impl App {
 
     /// The message `ts` in the open channel or thread; both hold it when it is a thread's root.
     fn loaded<'a>(&'a self, ts: &'a str) -> impl Iterator<Item = &'a Message> {
-        let thread = self.thread.iter().flat_map(|t| &t.messages);
-        self.messages.iter().chain(thread).filter(move |m| m.ts == ts)
+        let thread = self.conversation.thread.iter().flat_map(|t| &t.messages);
+        self.conversation.messages.iter().chain(thread).filter(move |m| m.ts == ts)
     }
 
     fn show_reaction(&mut self, ts: &str, name: &str, on: bool) {

@@ -13,7 +13,7 @@ mod tests;
 pub use feedback::{Toast, Typing};
 pub use react::{PAGE as REACT_PAGE, Pick};
 pub use sidebar::{Badge, ChannelRow, Kind, SidebarRow, arrange, sidebar_rows};
-pub use state::{App, Settings};
+pub use state::{App, Conversation, Settings};
 
 use super::firehose::Firehose;
 use super::inbox::Inbox;

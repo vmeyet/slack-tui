@@ -58,7 +58,7 @@ impl App {
 
     fn toggle_reading(&mut self) {
         self.zen = !self.zen;
-        if self.zen && self.current_channel.is_none() {
+        if self.zen && self.conversation.channel.is_none() {
             self.zen = false;
             self.toast("open a conversation first");
         }
@@ -388,7 +388,7 @@ impl App {
     }
 
     fn start_reply(&mut self, in_thread: bool) -> Vec<Action> {
-        if self.current_channel.is_none() {
+        if self.conversation.channel.is_none() {
             self.toast("pick a conversation first");
             return vec![];
         }
@@ -410,13 +410,13 @@ impl App {
 
     /// The conversation a reply goes to, and the thread it belongs to when it belongs to one.
     fn reply_target(&self, in_thread: bool) -> Option<(String, Option<String>)> {
-        let channel = self.current_channel.clone()?;
+        let channel = self.conversation.channel.clone()?;
         if !in_thread {
             return Some((channel, None));
         }
         let root = match self.focus {
-            Focus::Thread => self.thread.as_ref().map(|t| t.root_ts.clone()),
-            _ => self.messages.get(self.message_selected).map(|m| m.thread_ts.clone().unwrap_or_else(|| m.ts.clone())),
+            Focus::Thread => self.conversation.thread.as_ref().map(|t| t.root_ts.clone()),
+            _ => self.conversation.messages.get(self.message_selected).map(|m| m.thread_ts.clone().unwrap_or_else(|| m.ts.clone())),
         };
         Some((channel, Some(root?)))
     }
@@ -424,7 +424,7 @@ impl App {
     /// Right dives in: channel → its messages, message with replies → its thread.
     fn go_right(&mut self) -> Vec<Action> {
         match self.focus {
-            Focus::Messages if self.search.is_none() => match self.messages.get(self.message_selected) {
+            Focus::Messages if self.search.is_none() => match self.conversation.messages.get(self.message_selected) {
                 Some(m) if m.is_thread_root() || m.is_reply() => self.activate(),
                 _ => vec![],
             },
@@ -446,7 +446,7 @@ impl App {
     }
 
     fn next_focus(&self) -> Focus {
-        match (self.focus, self.thread.is_some()) {
+        match (self.focus, self.conversation.thread.is_some()) {
             (Focus::Channels, _) => Focus::Messages,
             (Focus::Messages, true) => Focus::Thread,
             _ => Focus::Channels,
@@ -454,7 +454,7 @@ impl App {
     }
 
     fn prev_focus(&self) -> Focus {
-        match (self.focus, self.thread.is_some()) {
+        match (self.focus, self.conversation.thread.is_some()) {
             (Focus::Channels, true) => Focus::Thread,
             (Focus::Channels, false) | (Focus::Thread, _) => Focus::Messages,
             (Focus::Messages, _) => Focus::Channels,
@@ -465,8 +465,8 @@ impl App {
         let visible = self.visible_channels().len();
         let (selected, len) = match self.focus {
             Focus::Channels => (&mut self.channel_selected, visible),
-            Focus::Messages => (&mut self.message_selected, self.search.as_ref().map_or(self.messages.len(), Vec::len)),
-            Focus::Thread => match self.thread.as_mut() {
+            Focus::Messages => (&mut self.message_selected, self.search.as_ref().map_or(self.conversation.messages.len(), Vec::len)),
+            Focus::Thread => match self.conversation.thread.as_mut() {
                 Some(t) => (&mut t.selected, t.messages.len()),
                 None => return,
             },
@@ -480,10 +480,10 @@ impl App {
 
     pub(super) fn refresh(&mut self) -> Vec<Action> {
         let mut actions = vec![Action::LoadChannels];
-        if let Some(c) = &self.current_channel {
+        if let Some(c) = &self.conversation.channel {
             actions.push(Action::LoadHistory(c.clone()));
         }
-        if let Some(t) = &self.thread {
+        if let Some(t) = &self.conversation.thread {
             actions.push(Action::LoadReplies { channel: t.channel.clone(), ts: t.root_ts.clone() });
         }
         self.loading = true;
@@ -493,8 +493,8 @@ impl App {
     fn escape(&mut self) {
         if self.search.is_some() {
             self.search = None;
-            self.message_selected = self.messages.len().saturating_sub(1);
-        } else if self.thread.is_some() {
+            self.message_selected = self.conversation.messages.len().saturating_sub(1);
+        } else if self.conversation.thread.is_some() {
             self.close_thread();
             self.focus = Focus::Messages;
         } else if !self.filter.is_empty() {
@@ -516,8 +516,8 @@ impl App {
                 actions
             }
             Focus::Messages => {
-                let Some(m) = self.messages.get(self.message_selected) else { return vec![] };
-                let Some(channel) = self.current_channel.clone() else { return vec![] };
+                let Some(m) = self.conversation.messages.get(self.message_selected) else { return vec![] };
+                let Some(channel) = self.conversation.channel.clone() else { return vec![] };
                 let ts = m.thread_ts.clone().unwrap_or_else(|| m.ts.clone());
                 self.focus = Focus::Thread;
                 self.loading = true;

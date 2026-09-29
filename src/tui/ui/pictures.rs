@@ -64,7 +64,7 @@ mod tests {
     fn picture_rows_are_reserved_then_painted_under_the_text() {
         let mut app = App::new();
         app.thumbs = Thumbs::with(ratatui_image::picker::Picker::halfblocks());
-        app.current_channel = Some("C1".into());
+        app.conversation.channel = Some("C1".into());
         app.focus = Focus::Messages;
         let shot = File {
             id: "F1".into(),

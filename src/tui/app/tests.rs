@@ -112,7 +112,7 @@ fn stale_history_is_ignored() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::History { channel: "C9".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
-    assert!(app.messages.is_empty());
+    assert!(app.conversation.messages.is_empty());
 }
 
 #[test]
@@ -213,8 +213,8 @@ fn a_number_reacts_with_that_emoji_of_the_strip_and_shows_it_at_once() {
     let actions = app.handle_key(key('1'));
     assert_eq!(actions[0], Action::React { channel: "C1".into(), ts: "1".into(), name: "+1".into(), on: true });
     assert!(picker(&app).is_none());
-    assert_eq!(app.messages[0].reactions[0].name, "+1");
-    assert_eq!(app.messages[0].reactions[0].users, [app.me.clone()]);
+    assert_eq!(app.conversation.messages[0].reactions[0].name, "+1");
+    assert_eq!(app.conversation.messages[0].reactions[0].users, [app.me.clone()]);
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn picking_one_of_mine_takes_it_off() {
     app.handle_key(key('+'));
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "tada".into(), on: false }]);
-    assert!(app.messages[0].reactions.is_empty());
+    assert!(app.conversation.messages[0].reactions.is_empty());
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn backspace_on_an_empty_search_goes_back_to_the_strip_and_esc_closes() {
     assert_eq!(picker(&app).map(|p| p.search.is_none()), Some(true));
     assert_eq!(app.handle_key(code(KeyCode::Esc)), vec![]);
     assert!(picker(&app).is_none());
-    assert!(app.messages[0].reactions.is_empty());
+    assert!(app.conversation.messages[0].reactions.is_empty());
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn a_refused_reaction_is_put_back() {
     let mut app = picking();
     app.handle_key(key('1'));
     app.apply(Incoming::ReactFailed { ts: "1".into(), name: "+1".into(), on: true, error: "too_many_reactions".into() });
-    assert!(app.messages[0].reactions.is_empty());
+    assert!(app.conversation.messages[0].reactions.is_empty());
     assert_eq!(app.status_line(), "✗ no reaction: too_many_reactions");
 }
 
@@ -349,15 +349,15 @@ fn replies_arriving_after_the_thread_was_closed_are_dropped() {
     app.handle_key(code(KeyCode::Enter));
     app.handle_key(key('h'));
     app.apply(replies("C1", "1"));
-    assert_eq!(app.thread, None);
+    assert_eq!(app.conversation.thread, None);
 
     app.handle_key(code(KeyCode::Enter));
     app.apply(replies("C1", "1"));
-    assert!(app.thread.is_some());
+    assert!(app.conversation.thread.is_some());
     app.apply(Incoming::Sent { channel: "C1".into(), thread_ts: Some("1".into()) });
     app.handle_key(code(KeyCode::Esc));
     app.apply(replies("C1", "1"));
-    assert_eq!(app.thread, None, "the reload a send asked for lands after the thread was closed");
+    assert_eq!(app.conversation.thread, None, "the reload a send asked for lands after the thread was closed");
 }
 
 #[test]
@@ -368,7 +368,7 @@ fn replies_for_a_channel_left_meanwhile_are_dropped() {
     app.handle_key(code(KeyCode::Enter));
     app.open_channel("C2".into());
     app.apply(replies("C1", "1"));
-    assert_eq!(app.thread, None);
+    assert_eq!(app.conversation.thread, None);
 }
 
 #[test]
@@ -561,12 +561,12 @@ fn focus_cycles_through_open_panes() {
     assert_eq!(app.focus, Focus::Messages);
     app.handle_key(code(KeyCode::Tab));
     assert_eq!(app.focus, Focus::Channels);
-    app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![], selected: 0 });
+    app.conversation.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![], selected: 0 });
     app.handle_key(code(KeyCode::Tab));
     app.handle_key(code(KeyCode::Tab));
     assert_eq!(app.focus, Focus::Thread);
     app.handle_key(code(KeyCode::Esc));
-    assert_eq!(app.thread, None);
+    assert_eq!(app.conversation.thread, None);
     assert_eq!(app.focus, Focus::Messages);
 }
 
@@ -578,14 +578,14 @@ fn right_opens_the_selected_thread_and_left_closes_it() {
     root.reply_count = 2;
     root.thread_ts = Some("1".into());
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![root, msg("2", "plain")], names: NameBook::default() });
-    app.thread = Some(Thread { channel: "C1".into(), root_ts: "9".into(), messages: vec![], selected: 0 });
+    app.conversation.thread = Some(Thread { channel: "C1".into(), root_ts: "9".into(), messages: vec![], selected: 0 });
     assert_eq!(app.handle_key(code(KeyCode::Right)), vec![]);
     assert_eq!(app.focus, Focus::Messages);
     app.handle_key(key('k'));
     assert_eq!(app.handle_key(code(KeyCode::Right)), vec![Action::LoadReplies { channel: "C1".into(), ts: "1".into() }]);
     assert_eq!(app.focus, Focus::Thread);
     app.handle_key(code(KeyCode::Left));
-    assert_eq!(app.thread, None);
+    assert_eq!(app.conversation.thread, None);
     assert_eq!(app.focus, Focus::Messages);
     app.handle_key(code(KeyCode::Left));
     assert_eq!(app.focus, Focus::Channels);
@@ -676,13 +676,13 @@ fn live_message_appends_and_follows_bottom() {
     live(&mut app, rtm::Event::Connected);
     assert_eq!(app.live, Live::Connected);
     live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
-    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.conversation.messages.len(), 2);
     assert_eq!(app.message_selected, 1);
     live(&mut app, rtm::Event::Message { channel: "C1".into(), message: msg("2", "b") });
-    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.conversation.messages.len(), 2);
     live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("3", "elsewhere") });
     assert!(app.unread.contains("C2"));
-    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.conversation.messages.len(), 2);
 }
 
 #[test]
@@ -690,12 +690,12 @@ fn live_reply_updates_root_and_open_thread() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "root")], names: NameBook::default() });
-    app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
+    app.conversation.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
     let reply = Message { thread_ts: Some("1".into()), ..msg("2", "reply") };
     live(&mut app, rtm::Event::Message { channel: "C1".into(), message: reply });
-    assert_eq!(app.messages.len(), 1);
-    assert_eq!(app.messages[0].reply_count, 1);
-    let t = app.thread.as_ref().unwrap();
+    assert_eq!(app.conversation.messages.len(), 1);
+    assert_eq!(app.conversation.messages[0].reply_count, 1);
+    let t = app.conversation.thread.as_ref().unwrap();
     assert_eq!(t.messages.len(), 2);
     assert_eq!(t.selected, 1);
 }
@@ -705,12 +705,12 @@ fn live_broadcast_reply_lands_in_the_thread_and_the_channel() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
     app.apply(history(vec![msg("1", "root")]));
-    app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
+    app.conversation.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
     let broadcast = Message { thread_ts: Some("1".into()), subtype: Some("thread_broadcast".into()), ..msg("2", "also here") };
     live(&mut app, rtm::Event::Message { channel: "C1".into(), message: broadcast });
-    assert_eq!(app.messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1", "2"]);
-    assert_eq!(app.messages[0].reply_count, 1);
-    assert_eq!(app.thread.as_ref().unwrap().messages.len(), 2);
+    assert_eq!(app.conversation.messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1", "2"]);
+    assert_eq!(app.conversation.messages[0].reply_count, 1);
+    assert_eq!(app.conversation.thread.as_ref().unwrap().messages.len(), 2);
 }
 
 #[test]
@@ -719,7 +719,7 @@ fn live_edit_delete_and_reactions() {
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::History { channel: "C1".into(), messages: vec![msg("1", "a"), msg("2", "b")], names: NameBook::default() });
     live(&mut app, rtm::Event::Changed { channel: "C1".into(), message: msg("1", "edited") });
-    assert_eq!(app.messages[0].text, "edited");
+    assert_eq!(app.conversation.messages[0].text, "edited");
     let react = |user: &str, added: bool| rtm::Event::Reaction {
         channel: "C1".into(),
         ts: "1".into(),
@@ -729,14 +729,14 @@ fn live_edit_delete_and_reactions() {
     };
     live(&mut app, react("U1", true));
     live(&mut app, react("U2", true));
-    assert_eq!(app.messages[0].reactions[0].count, 2);
-    assert_eq!(app.messages[0].reactions[0].users, vec!["U1", "U2"]);
+    assert_eq!(app.conversation.messages[0].reactions[0].count, 2);
+    assert_eq!(app.conversation.messages[0].reactions[0].users, vec!["U1", "U2"]);
     live(&mut app, react("U1", false));
-    assert_eq!(app.messages[0].reactions[0].users, vec!["U2"]);
+    assert_eq!(app.conversation.messages[0].reactions[0].users, vec!["U2"]);
     live(&mut app, react("U2", false));
-    assert!(app.messages[0].reactions.is_empty());
+    assert!(app.conversation.messages[0].reactions.is_empty());
     live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "2".into() });
-    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.conversation.messages.len(), 1);
     assert_eq!(app.message_selected, 0);
 }
 
@@ -902,7 +902,7 @@ fn inbox_read_snooze_reply_and_open() {
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "9".into() }]);
     assert!(inbox(&app).is_none());
-    assert_eq!(app.current_channel.as_deref(), Some("C2"));
+    assert_eq!(app.conversation.channel.as_deref(), Some("C2"));
 }
 
 fn ctrl(c: char) -> KeyEvent {
@@ -925,7 +925,7 @@ fn jump_opens_channels_people_threads_and_search() {
     }
     assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![Action::OpenDm("U1".into())]);
     assert_eq!(app.apply(Incoming::DmOpened("D1".into())), vec![Action::LoadHistory("D1".into())]);
-    assert_eq!(app.current_channel.as_deref(), Some("D1"));
+    assert_eq!(app.conversation.channel.as_deref(), Some("D1"));
 
     app.handle_key(ctrl('k'));
     app.apply(Incoming::Threads(vec![Candidate {
@@ -1066,7 +1066,7 @@ fn reading_mode_keeps_focus_on_the_conversation() {
     assert_eq!(app.focus, Focus::Thread);
     app.handle_key(code(KeyCode::Esc));
     assert_eq!(app.focus, Focus::Messages);
-    assert!(app.thread.is_none());
+    assert!(app.conversation.thread.is_none());
     app.handle_key(key('z'));
     assert!(!app.zen);
 }
@@ -1109,7 +1109,7 @@ fn palette_runs_verbs() {
     assert!(app.status_line().contains("did you mean :join"));
     assert_eq!(palette_run(&mut app, "leave"), vec![Action::Leave("C2".into())]);
     app.apply(Incoming::Left("C2".into()));
-    assert_eq!(app.current_channel, None);
+    assert_eq!(app.conversation.channel, None);
     palette_run(&mut app, "q");
     assert!(app.should_quit);
 }
@@ -1161,9 +1161,9 @@ fn edit_prefills_the_message_and_saves_the_change() {
     app.handle_key(key('!'));
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::Edit { channel: "C1".into(), ts: "1".into(), text: "a!".into() }]);
-    assert_eq!(app.messages[0].text, "a", "the screen waits for the live event");
+    assert_eq!(app.conversation.messages[0].text, "a", "the screen waits for the live event");
     live(&mut app, rtm::Event::Changed { channel: "C1".into(), message: msg("1", "a!") });
-    assert_eq!(app.messages[0].text, "a!");
+    assert_eq!(app.conversation.messages[0].text, "a!");
 }
 
 #[test]
@@ -1185,7 +1185,7 @@ fn an_empty_edit_is_refused_rather_than_deleting() {
     app.handle_key(code(KeyCode::Backspace));
     assert_eq!(app.handle_key(code(KeyCode::Enter)), vec![]);
     assert!(app.status_line().contains(":delete"), "{}", app.status_line());
-    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.conversation.messages.len(), 1);
 }
 
 #[test]
@@ -1204,9 +1204,9 @@ fn delete_asks_first_and_only_y_goes_through() {
     palette_run(&mut app, "delete");
     assert_eq!(app.handle_key(key('y')), vec![Action::Delete { channel: "C1".into(), ts: "1".into() }]);
     assert_eq!(pending_delete(&app), None);
-    assert_eq!(app.messages.len(), 1, "the screen waits for the live event");
+    assert_eq!(app.conversation.messages.len(), 1, "the screen waits for the live event");
     live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "1".into() });
-    assert!(app.messages.is_empty());
+    assert!(app.conversation.messages.is_empty());
 }
 
 #[test]
@@ -1219,13 +1219,13 @@ fn edit_and_delete_refuse_someone_elses_message() {
     }
     assert_eq!(input(&app), None);
     assert_eq!(pending_delete(&app), None);
-    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.conversation.messages.len(), 1);
 }
 
 #[test]
 fn edit_and_delete_follow_the_selection_into_a_thread() {
     let mut app = reading();
-    app.thread = Some(Thread {
+    app.conversation.thread = Some(Thread {
         channel: "C1".into(),
         root_ts: "1".into(),
         messages: vec![msg("1", "a"), from_other("2", "theirs"), msg("3", "mine")],
@@ -1241,7 +1241,7 @@ fn edit_and_delete_follow_the_selection_into_a_thread() {
     assert_eq!(pending_delete(&app).map(|p| p.ts.clone()), Some("3".into()));
     app.handle_key(key('y'));
 
-    app.thread.as_mut().unwrap().selected = 1;
+    app.conversation.thread.as_mut().unwrap().selected = 1;
     palette_run(&mut app, "delete");
     assert_eq!(pending_delete(&app), None);
     assert!(app.status_line().contains("you can only delete your own messages"), "{}", app.status_line());

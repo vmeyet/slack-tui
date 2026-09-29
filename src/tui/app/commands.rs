@@ -99,7 +99,7 @@ impl App {
     }
 
     fn leave(&mut self, name: Option<String>) -> Outcome {
-        let target = name.or_else(|| self.current_channel.clone()).ok_or("no conversation to leave")?;
+        let target = name.or_else(|| self.conversation.channel.clone()).ok_or("no conversation to leave")?;
         let id = self.channel_named(&target).map_or(target.clone(), |c| c.id.clone());
         Ok(vec![Action::Leave(id)])
     }
@@ -150,9 +150,9 @@ impl App {
     }
 
     fn export(&self, format: Format) -> Outcome {
-        let (label, messages) = match (&self.thread, self.focus) {
+        let (label, messages) = match (&self.conversation.thread, self.focus) {
             (Some(t), Focus::Thread) => (format!("{} thread", self.current_label()), t.messages.clone()),
-            _ => (self.current_label(), self.messages.clone()),
+            _ => (self.current_label(), self.conversation.messages.clone()),
         };
         if messages.is_empty() {
             return Err("nothing to export".into());
@@ -161,9 +161,9 @@ impl App {
     }
 
     fn mark_read(&mut self) -> Vec<Action> {
-        let (Some(channel), Some(last)) = (self.current_channel.clone(), self.messages.last()) else { return vec![] };
+        let (Some(channel), Some(last)) = (self.conversation.channel.clone(), self.conversation.messages.last()) else { return vec![] };
         self.unread.remove(&channel);
-        self.marked = Some(last.ts.clone());
+        self.conversation.marked = Some(last.ts.clone());
         vec![Action::MarkChannelRead { channel, ts: last.ts.clone() }]
     }
 

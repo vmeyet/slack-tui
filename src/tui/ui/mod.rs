@@ -54,12 +54,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 /// Channels on the left, the conversation in the middle, the thread on the right when open;
 /// every pane but the focused one recedes.
 fn draw_panes(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Placement> {
-    let thread_w = if app.thread.is_some() { 40 } else { 0 };
+    let thread_w = if app.conversation.thread.is_some() { 40 } else { 0 };
     let [left, middle, right] =
         Layout::horizontal([Constraint::Length(26), Constraint::Min(30), Constraint::Percentage(thread_w)]).areas(area);
     channels::draw(f, app, left);
     let mut pictures = messages::draw(f, app, middle);
-    if app.thread.is_some() {
+    if app.conversation.thread.is_some() {
         pictures.extend(thread::draw(f, app, right));
     }
     if app.focus != Focus::Channels || modal {
@@ -68,7 +68,7 @@ fn draw_panes(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Plac
     if app.focus != Focus::Messages || modal {
         fade(f, middle, if modal { app.theme.faded } else { app.theme.muted });
     }
-    if app.thread.is_some() && (app.focus != Focus::Thread || modal) {
+    if app.conversation.thread.is_some() && (app.focus != Focus::Thread || modal) {
         fade(f, right, app.theme.faded);
     }
     pictures
@@ -79,7 +79,7 @@ fn draw_panes(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Plac
 fn draw_reading(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Placement> {
     let width = zen_width(area.width);
     let column = Rect { x: area.x + (area.width - width) / 2, width, ..area };
-    let pictures = if app.thread.is_some() { thread::draw(f, app, column) } else { messages::draw(f, app, column) };
+    let pictures = if app.conversation.thread.is_some() { thread::draw(f, app, column) } else { messages::draw(f, app, column) };
     if modal {
         fade(f, area, app.theme.faded);
     }
@@ -197,7 +197,7 @@ mod tests {
             badges: std::collections::HashMap::from([("D1".to_string(), app::Badge { unread: true, mentions: 3 })]),
             me: "U1".into(),
         });
-        app.current_channel = Some("C1".into());
+        app.conversation.channel = Some("C1".into());
         let mut root = message(
             "1694700000.000100",
             "U1",
@@ -211,7 +211,7 @@ mod tests {
             messages: vec![root.clone(), message("1694700100.000200", "U2", "ok")],
             names: NameBook::default(),
         });
-        app.thread = Some(Thread {
+        app.conversation.thread = Some(Thread {
             channel: "C1".into(),
             root_ts: root.ts.clone(),
             messages: vec![root, message("1694700050.000300", "U2", "reply")],

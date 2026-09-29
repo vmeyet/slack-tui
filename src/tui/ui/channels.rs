@@ -36,7 +36,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn channel_row(app: &App, c: &app::ChannelRow, width: usize) -> ListItem<'static> {
-    let current = app.current_channel.as_deref() == Some(&c.id);
+    let current = app.conversation.channel.as_deref() == Some(&c.id);
     let badge = app.badges.get(&c.id).copied().unwrap_or_default();
     let unread = badge.unread || app.unread.contains(&c.id);
     let badge_text = match badge.mentions {

@@ -39,12 +39,12 @@ pub struct Typing {
 
 impl App {
     pub(super) fn mark_typing(&mut self, user: &str) {
-        self.typing = refreshed(&self.typing, user, self.now);
+        self.conversation.typing = refreshed(&self.conversation.typing, user, self.now);
     }
 
     /// Sorted, so the line never shuffles names between keystrokes.
     fn typists(&self) -> Vec<String> {
-        let live = self.typing.iter().filter(|t| self.now < t.until);
+        let live = self.conversation.typing.iter().filter(|t| self.now < t.until);
         let mut names: Vec<String> = live.map(|t| self.names.user_label(&t.user)).collect();
         names.sort();
         names
@@ -94,7 +94,7 @@ impl App {
         if let Some(results) = &self.search {
             return format!("{} results · enter to jump · esc to close", results.len());
         }
-        if self.current_channel.is_some() {
+        if self.conversation.channel.is_some() {
             return self.current_label();
         }
         if self.channels.is_empty() {
@@ -130,14 +130,14 @@ impl App {
 
     /// Messages of the open conversation that arrived below the newest one the selection reached.
     pub fn new_below(&self) -> usize {
-        let Some(seen) = self.seen.as_ref().filter(|_| self.search.is_none()) else { return 0 };
-        self.messages.iter().filter(|m| newer(&m.ts, seen) && m.user.as_deref() != Some(&self.me)).count()
+        let Some(seen) = self.conversation.seen.as_ref().filter(|_| self.search.is_none()) else { return 0 };
+        self.conversation.messages.iter().filter(|m| newer(&m.ts, seen) && m.user.as_deref() != Some(&self.me)).count()
     }
 
     pub(super) fn mark_seen(&mut self) {
-        let Some(reached) = self.messages.get(self.message_selected).filter(|_| self.search.is_none()) else { return };
-        if self.seen.as_ref().is_none_or(|seen| newer(&reached.ts, seen)) {
-            self.seen = Some(reached.ts.clone());
+        let Some(reached) = self.conversation.messages.get(self.message_selected).filter(|_| self.search.is_none()) else { return };
+        if self.conversation.seen.as_ref().is_none_or(|seen| newer(&reached.ts, seen)) {
+            self.conversation.seen = Some(reached.ts.clone());
         }
     }
 }

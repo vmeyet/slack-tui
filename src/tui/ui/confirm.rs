@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn the_delete_box_shows_the_message_and_the_key_that_deletes_it() {
         let mut app = App::new();
-        app.current_channel = Some("C1".into());
+        app.conversation.channel = Some("C1".into());
         app.overlay = Some(Overlay::ConfirmDelete(MyMessage { channel: "C1".into(), ts: "1".into(), text: "ship it".into() }));
         let out = render(&mut app);
         assert!(out.contains("delete this message?"), "{out}");
