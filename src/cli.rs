@@ -61,7 +61,7 @@ pub enum Command {
         /// Which shell to generate for.
         shell: clap_complete::Shell,
     },
-    /// Rebuild and install the latest `slack` with cargo.
+    /// Install the latest `slack`, with brew when brew installed it, else with cargo.
     Update(UpdateArgs),
 }
 

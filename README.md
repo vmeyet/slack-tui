@@ -29,6 +29,7 @@ That is all: the `slack` command is now on your path.
 
 Optional shell completions: `slack completions zsh > ~/.zfunc/_slack` (also `bash`, `fish`).
 Update with `slack update` (a no-op when you already run the latest commit, `-f` to rebuild anyway); remove with `cargo uninstall slack`.
+Installed with brew, `slack update` runs `brew upgrade` (`-f` runs `brew reinstall`) and `brew uninstall slack` removes it.
 `slack --version` prints the version and the commit it was built from.
 
 ## Log in
