@@ -31,7 +31,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{Mutex, OnceCell, mpsc};
+use tokio::sync::{OnceCell, mpsc};
 
 /// Opens the interactive client and returns when the user quits.
 pub async fn run(ctx: Ctx) -> Result<()> {
@@ -74,7 +74,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     let jev = triage.then(TypeSafe::connect);
     let backend = Backend {
         slack: ctx.slack.clone(),
-        dir: Arc::new(Mutex::new(ctx.dir)),
+        dir: ctx.dir,
         me: Arc::new(OnceCell::new()),
         cache: ctx.cache,
         jev: jev.clone().and_then(Result::ok),
@@ -204,7 +204,7 @@ fn composed_outcome(channel: String, thread_ts: Option<String>, composed: Result
     match composed {
         Ok(Some(text)) => Incoming::Composed { channel, thread_ts, text },
         Ok(None) => Incoming::Toast("nothing sent".into()),
-        Err(e) => Incoming::Error(e.to_string()),
+        Err(e) => Incoming::Error(format!("{e:#}")),
     }
 }
 
@@ -235,7 +235,7 @@ fn spawn_live(slack: crate::api::Slack, tx: mpsc::UnboundedSender<Incoming>) {
 #[derive(Clone)]
 struct Backend {
     slack: crate::api::Slack,
-    dir: Arc<Mutex<Directory>>,
+    dir: Directory,
     me: Arc<OnceCell<String>>,
     cache: Cache,
     jev: Option<TypeSafe>,
@@ -249,7 +249,7 @@ impl Backend {
     /// What Jev needs besides the question: the client, the names, and the handle of whoever `me` is.
     async fn triage_context(&self) -> Result<(&TypeSafe, NameBook, String)> {
         let jev = self.jev.as_ref().ok_or_else(|| Unavailable("not connected".into()))?;
-        let names = self.dir.lock().await.names();
+        let names = self.dir.names();
         let me = names.user_label(&self.me().await?);
         Ok((jev, names, me))
     }
@@ -266,28 +266,24 @@ fn spawn(action: Action, backend: Backend, tx: mpsc::UnboundedSender<Incoming>) 
 
 async fn answer(action: Action, backend: &Backend, tx: &mpsc::UnboundedSender<Incoming>) {
     let outcome = perform(action, backend).await;
-    let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(e.to_string())));
+    let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(format!("{e:#}"))));
 }
 
-/// The directory lock is released before the sidebar extras are fetched, so history loads never wait on them.
 /// The list is always fetched again; the disk copy only stands in when Slack cannot be reached.
 async fn load_channels(backend: &Backend) -> Result<Incoming> {
-    let (rows, people, names) = {
-        let mut d = backend.dir.lock().await;
-        let _ = d.refresh_channels().await;
-        d.channels().await?;
-        let _ = d.users().await;
-        let _ = d.learn_dm_users().await;
-        let rows: Vec<ChannelRow> =
-            d.conversations(false).into_iter().map(|(c, label)| ChannelRow::new(&c.id, &label, Kind::from(c.kind()))).collect();
-        (rows, d.people(), d.names())
-    };
+    let d = &backend.dir;
+    let _ = d.refresh_channels().await;
+    d.channels().await?;
+    let _ = d.users().await;
+    let _ = d.learn_dm_users().await;
+    let rows: Vec<ChannelRow> =
+        d.conversations(false).into_iter().map(|(c, label)| ChannelRow::new(&c.id, &label, Kind::from(c.kind()))).collect();
     let slack = &backend.slack;
     let (sections, muted, me, counts) = tokio::join!(slack.sections(), slack.muted(), backend.me(), slack.counts());
     Ok(Incoming::Channels {
         rows: app::arrange(rows, &sections.unwrap_or_default(), &muted.unwrap_or_default()),
-        people,
-        names,
+        people: d.people(),
+        names: d.names(),
         badges: counts.map(|c| badges(&c)).unwrap_or_default(),
         me: me.unwrap_or_default(),
     })
@@ -317,7 +313,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             let done = if on { slack.react(&channel, &ts, &name).await } else { slack.unreact(&channel, &ts, &name).await };
             Ok(match done {
                 Ok(()) => Incoming::Toast(String::new()),
-                Err(e) => Incoming::ReactFailed { ts, name, on, error: e.to_string() },
+                Err(e) => Incoming::ReactFailed { ts, name, on, error: format!("{e:#}") },
             })
         }
         Action::LoadEmoji => Ok(Incoming::Emoji {
@@ -347,14 +343,13 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
         }
         Action::LoadThreads => load_threads(backend).await,
         Action::LearnUsers(ids) => {
-            let mut d = backend.dir.lock().await;
-            d.learn_ids(&ids).await?;
-            Ok(Incoming::Names(d.names()))
+            backend.dir.learn_ids(&ids).await?;
+            Ok(Incoming::Names(backend.dir.names()))
         }
         Action::Join(name) => join(backend, &name).await,
         Action::Leave(channel) => {
             slack.leave(&channel).await?;
-            backend.dir.lock().await.refresh_channels().await?;
+            backend.dir.refresh_channels().await?;
             Ok(Incoming::Left(channel))
         }
         Action::SendTo { target, text } => send_to(backend, &target, &text).await,
@@ -396,20 +391,18 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
 
 async fn load_history(backend: &Backend, channel: String) -> Result<Incoming> {
     let messages = backend.slack.history(&channel, 100, None).await?;
-    let mut d = backend.dir.lock().await;
-    d.learn_users(&messages).await?;
-    Ok(Incoming::History { channel, messages, names: d.names() })
+    backend.dir.learn_users(&messages).await?;
+    Ok(Incoming::History { channel, messages, names: backend.dir.names() })
 }
 
 async fn load_replies(backend: &Backend, channel: String, ts: String) -> Result<Incoming> {
     let messages = backend.slack.replies(&channel, &ts).await?;
-    let mut d = backend.dir.lock().await;
-    d.learn_users(&messages).await?;
-    Ok(Incoming::Replies { channel, ts, messages, names: d.names() })
+    backend.dir.learn_users(&messages).await?;
+    Ok(Incoming::Replies { channel, ts, messages, names: backend.dir.names() })
 }
 
 async fn send(backend: &Backend, channel: String, thread_ts: Option<String>, text: &str) -> Result<Incoming> {
-    let names = backend.dir.lock().await.names();
+    let names = backend.dir.names();
     post_markdown(&backend.slack, &channel, text, &names, thread_ts.as_deref()).await?;
     Ok(Incoming::Sent { channel, thread_ts })
 }
@@ -427,7 +420,7 @@ fn open(url: &str) -> Result<()> {
 
 async fn load_threads(backend: &Backend) -> Result<Incoming> {
     let threads = backend.slack.thread_view(30).await.unwrap_or_default();
-    let names = backend.dir.lock().await.names();
+    let names = backend.dir.names();
     let candidates = threads
         .into_iter()
         .map(|t| {
@@ -442,22 +435,21 @@ async fn load_threads(backend: &Backend) -> Result<Incoming> {
 }
 
 async fn join(backend: &Backend, name: &str) -> Result<Incoming> {
-    let mut d = backend.dir.lock().await;
-    let id = d.channel_id(name).await?;
+    let id = backend.dir.channel_id(name).await?;
     backend.slack.join(&id).await?;
-    d.refresh_channels().await?;
+    backend.dir.refresh_channels().await?;
     Ok(Incoming::Joined(id))
 }
 
 async fn send_to(backend: &Backend, target: &str, text: &str) -> Result<Incoming> {
-    let mut d = backend.dir.lock().await;
-    let channel = d.channel_id(target).await?;
-    post_markdown(&backend.slack, &channel, text, &d.names(), None).await?;
-    Ok(Incoming::Toast(format!("sent to {}", d.names().channel_label(&channel))))
+    let channel = backend.dir.channel_id(target).await?;
+    let names = backend.dir.names();
+    post_markdown(&backend.slack, &channel, text, &names, None).await?;
+    Ok(Incoming::Toast(format!("sent to {}", names.channel_label(&channel))))
 }
 
 async fn export(backend: &Backend, path: &Path, label: &str, messages: &[Message], format: palette::Format) -> Result<Incoming> {
-    let names = backend.dir.lock().await.names();
+    let names = backend.dir.names();
     let body = match format {
         palette::Format::Json => serde_json::to_string_pretty(messages)?,
         palette::Format::Markdown => {
@@ -471,9 +463,8 @@ async fn export(backend: &Backend, path: &Path, label: &str, messages: &[Message
 
 async fn load_inbox(backend: &Backend) -> Result<Incoming> {
     let me = backend.me().await?;
-    let mut d = backend.dir.lock().await;
-    let items = crate::inbox::fetch(&backend.slack, &mut d, &me).await?;
-    Ok(Incoming::Inbox { items, names: d.names() })
+    let items = crate::inbox::fetch(&backend.slack, &backend.dir, &me).await?;
+    Ok(Incoming::Inbox { items, names: backend.dir.names() })
 }
 
 async fn load_promises(backend: &Backend) -> Result<Incoming> {
@@ -527,7 +518,7 @@ mod tests {
         cache.save("channels", &json!([{"id": "C1", "name": "stale", "is_member": true}])).await.unwrap();
         let slack = crate::api::Slack::new(&server.uri(), Credentials::new("xoxc", None)).unwrap();
         let dir = Directory::new(slack.clone(), cache.clone()).await;
-        let backend = Backend { slack, dir: Arc::new(Mutex::new(dir)), me: Arc::new(OnceCell::new()), cache, jev: None };
+        let backend = Backend { slack, dir, me: Arc::new(OnceCell::new()), cache, jev: None };
         let Incoming::Channels { rows, .. } = load_channels(&backend).await.unwrap() else { panic!("channels") };
         assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["C2"]);
     }

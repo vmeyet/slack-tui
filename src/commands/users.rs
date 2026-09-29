@@ -14,13 +14,12 @@ pub async fn run(ctx: &mut Ctx, args: UsersArgs) -> Result<()> {
     let mut listed: Vec<_> = ctx
         .dir
         .users_snapshot()
-        .iter()
+        .into_iter()
         .filter(|u| !u.deleted)
         .filter(|u| {
             let hay = format!("{} {} {}", u.handle(), u.real_name, u.profile.real_name).to_lowercase();
             hay.contains(&query)
         })
-        .cloned()
         .collect();
     listed.sort_by_key(|u| u.handle().to_lowercase());
     if ctx.json {

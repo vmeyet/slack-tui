@@ -28,9 +28,7 @@ pub async fn run(ctx: &mut Ctx, args: MessagesArgs) -> Result<()> {
     if ctx.json {
         ctx.emit(&serde_json::json!({"channel": channel, "messages": messages, "replies": replies}))?;
     } else {
-        if ctx.dir.channels_snapshot().is_empty() {
-            let _ = ctx.dir.channels().await;
-        }
+        let _ = ctx.dir.channels().await;
         let names = ctx.dir.names();
         let label = names.channel_label(&channel);
         print!("{}", render::messages(&ctx.theme, &names, &label, &messages, &replies));

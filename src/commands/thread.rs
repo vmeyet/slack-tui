@@ -13,9 +13,7 @@ pub async fn run(ctx: &mut Ctx, args: RefArgs) -> Result<()> {
     if ctx.json {
         return ctx.emit(&serde_json::json!({"channel": r.channel, "thread_ts": r.thread_root(), "messages": messages}));
     }
-    if ctx.dir.channels_snapshot().is_empty() {
-        let _ = ctx.dir.channels().await;
-    }
+    let _ = ctx.dir.channels().await;
     let names = ctx.dir.names();
     print!("{}", render::thread(&ctx.theme, &names, &names.channel_label(&r.channel), &messages));
     Ok(())

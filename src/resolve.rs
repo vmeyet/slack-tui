@@ -1,19 +1,26 @@
-use crate::api::{Channel, ChannelKind, Group, Message, Slack, User};
+use crate::api::{Channel, ChannelKind, Group, Message, Slack, User, in_parallel};
 use crate::cache::Cache;
 use crate::pattern::regex;
 use crate::{fuzzy, markdown, mrkdwn};
 use anyhow::{Result, bail};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 static CHANNEL_ID: LazyLock<Regex> = LazyLock::new(|| regex(r"^[CDG][A-Z0-9]{8,}$"));
 static USER_ID: LazyLock<Regex> = LazyLock::new(|| regex(r"^[UW][A-Z0-9]{8,}$"));
 
 /// Channels, users and usergroups of one workspace, cached on disk and refreshed on a miss.
+/// Clones share what is known; the lock is a sync one so it can never be held while Slack answers.
+#[derive(Clone)]
 pub struct Directory {
     slack: Slack,
     cache: Cache,
+    known: Arc<Mutex<Known>>,
+}
+
+#[derive(Default)]
+struct Known {
     channels: Vec<Channel>,
     users: Vec<User>,
     groups: Vec<Group>,
@@ -26,27 +33,181 @@ pub struct Directory {
 
 impl Directory {
     pub async fn new(slack: Slack, cache: Cache) -> Self {
-        let channels = cache.load("channels").await.unwrap_or_default();
-        let users = cache.load("users").await.unwrap_or_default();
-        let groups = cache.load("usergroups").await.unwrap_or_default();
-        let mut dir = Self {
-            slack,
-            cache,
-            channels: vec![],
-            users: vec![],
-            groups: vec![],
-            user_at: HashMap::new(),
-            names: NameBook::default(),
-            channels_fresh: false,
-            users_fresh: false,
-            groups_fresh: false,
-        };
-        dir.set_channels(channels);
-        dir.set_users(users);
-        dir.set_groups(groups);
-        dir
+        let mut known = Known::default();
+        known.set_channels(cache.load("channels").await.unwrap_or_default());
+        known.set_users(cache.load("users").await.unwrap_or_default());
+        known.set_groups(cache.load("usergroups").await.unwrap_or_default());
+        Self { slack, cache, known: Arc::new(Mutex::new(known)) }
     }
 
+    fn lock(&self) -> MutexGuard<'_, Known> {
+        self.known.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub async fn refresh_channels(&self) -> Result<()> {
+        let channels = self.slack.channels().await?;
+        let saved = self.cache.save("channels", &channels).await;
+        let mut known = self.lock();
+        known.set_channels(channels);
+        known.channels_fresh = true;
+        saved
+    }
+
+    pub async fn refresh_users(&self) -> Result<()> {
+        let users = self.slack.users().await?;
+        let saved = self.cache.save("users", &users).await;
+        let mut known = self.lock();
+        known.set_users(users);
+        known.users_fresh = true;
+        saved
+    }
+
+    async fn refresh_groups(&self) -> Result<()> {
+        let groups = self.slack.groups().await?;
+        let saved = self.cache.save("usergroups", &groups).await;
+        self.lock().set_groups(groups);
+        saved
+    }
+
+    pub async fn channels(&self) -> Result<()> {
+        if self.lock().channels.is_empty() {
+            self.refresh_channels().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn users(&self) -> Result<()> {
+        if self.lock().users.is_empty() {
+            self.refresh_users().await?;
+        }
+        Ok(())
+    }
+
+    /// `#name`, `name`, `@handle`, or a raw id, to a conversation id.
+    pub async fn channel_id(&self, target: &str) -> Result<String> {
+        let target = target.trim();
+        if CHANNEL_ID.is_match(target) {
+            return Ok(target.to_owned());
+        }
+        if let Some(handle) = target.strip_prefix('@') {
+            let user = self.user_id(handle).await?;
+            return self.slack.open_dm(&user).await;
+        }
+        let name = target.trim_start_matches('#');
+        let found = self.lock().find_channel(name);
+        if let Some(id) = found {
+            return Ok(id);
+        }
+        let fresh = self.lock().channels_fresh;
+        if !fresh {
+            self.refresh_channels().await?;
+            let found = self.lock().find_channel(name);
+            if let Some(id) = found {
+                return Ok(id);
+            }
+        }
+        self.lock().closest_channel(target, name)
+    }
+
+    pub async fn user_id(&self, handle: &str) -> Result<String> {
+        let handle = handle.trim().trim_start_matches('@');
+        if USER_ID.is_match(handle) {
+            return Ok(handle.to_owned());
+        }
+        self.users().await?;
+        let found = self.lock().find_user(handle);
+        if let Some(id) = found {
+            return Ok(id);
+        }
+        let fresh = self.lock().users_fresh;
+        if !fresh {
+            self.refresh_users().await?;
+            let found = self.lock().find_user(handle);
+            if let Some(id) = found {
+                return Ok(id);
+            }
+        }
+        self.lock().closest_user(handle)
+    }
+
+    pub fn people(&self) -> Vec<(String, String)> {
+        self.lock().people()
+    }
+
+    /// Conversations worth showing: public, private, group DMs, then DMs, each alphabetical.
+    /// Without `all`, DMs with bots and deactivated people are hidden.
+    pub fn conversations(&self, all: bool) -> Vec<(Channel, String)> {
+        self.lock().conversations(all)
+    }
+
+    /// DMs can point at people `users.list` no longer returns (deactivated, app users); fetch those one by one.
+    pub async fn learn_dm_users(&self) -> Result<()> {
+        let unknown = self.lock().unknown_dm_users();
+        self.fetch_users(unknown).await
+    }
+
+    /// Fetches the users and usergroups mentioned or authoring these messages that are not known yet.
+    pub async fn learn_users(&self, messages: &[Message]) -> Result<()> {
+        let ids: Vec<String> = messages.iter().flat_map(|m| mentioned_users(&m.text).into_iter().chain(m.user.clone())).collect();
+        self.learn_groups(messages).await;
+        self.learn_ids(&ids).await
+    }
+
+    /// Usergroups only come as one whole list, so fetch it once, the first time a message names one we cannot read.
+    /// A workspace without usergroups, or a token without the scope, keeps rendering: the id stands in for the handle.
+    pub async fn learn_groups(&self, messages: &[Message]) {
+        let first = self.lock().claim_groups_fetch(messages);
+        if first {
+            let _ = self.refresh_groups().await;
+        }
+    }
+
+    /// The usergroups `me` belongs to, or nothing while the workspace has not said who is in
+    /// them — a token without the scope must not turn every group mention into a miss.
+    pub fn my_groups(&self, me: &str) -> Option<HashSet<String>> {
+        self.lock().my_groups(me)
+    }
+
+    pub async fn learn_ids(&self, ids: &[String]) -> Result<()> {
+        let mut unknown = self.lock().unknown_users(ids);
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let never_listed = self.lock().never_listed_users();
+        if never_listed {
+            self.refresh_users().await?;
+            unknown = self.lock().unknown_users(&unknown);
+        }
+        self.fetch_users(unknown).await
+    }
+
+    async fn fetch_users(&self, ids: Vec<String>) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let found = in_parallel(ids, |id| async move { Ok(self.slack.user_info(&id).await.ok()) }).await?;
+        let users = {
+            let mut known = self.lock();
+            known.add_users(found.into_iter().flatten().collect());
+            known.users.clone()
+        };
+        self.cache.save("users", &users).await
+    }
+
+    pub fn names(&self) -> NameBook {
+        self.lock().names.clone()
+    }
+
+    pub fn users_snapshot(&self) -> Vec<User> {
+        self.lock().users.clone()
+    }
+
+    pub fn has_dms(&self) -> bool {
+        self.lock().channels.iter().any(|c| c.is_im)
+    }
+}
+
+impl Known {
     fn set_channels(&mut self, channels: Vec<Channel>) {
         self.channels = channels;
         self.names = self.build_names();
@@ -63,11 +224,13 @@ impl Directory {
         self.names = self.build_names();
     }
 
+    /// Two loads can fetch the same person at once; only the first copy is kept.
     fn add_users(&mut self, users: Vec<User>) {
-        if users.is_empty() {
+        let new: Vec<User> = users.into_iter().filter(|u| self.user(&u.id).is_none()).collect();
+        if new.is_empty() {
             return;
         }
-        let all = std::mem::take(&mut self.users).into_iter().chain(users).collect();
+        let all = std::mem::take(&mut self.users).into_iter().chain(new).collect();
         self.set_users(all);
     }
 
@@ -75,60 +238,11 @@ impl Directory {
         self.user_at.get(id).map(|&i| &self.users[i])
     }
 
-    pub async fn refresh_channels(&mut self) -> Result<()> {
-        let channels = self.slack.channels().await?;
-        self.set_channels(channels);
-        self.channels_fresh = true;
-        self.cache.save("channels", &self.channels).await
+    fn find_channel(&self, name: &str) -> Option<String> {
+        self.channels.iter().find(|c| c.name == name).map(|c| c.id.clone())
     }
 
-    pub async fn refresh_users(&mut self) -> Result<()> {
-        let users = self.slack.users().await?;
-        self.set_users(users);
-        self.users_fresh = true;
-        self.cache.save("users", &self.users).await
-    }
-
-    async fn refresh_groups(&mut self) -> Result<()> {
-        let groups = self.slack.groups().await?;
-        self.set_groups(groups);
-        self.cache.save("usergroups", &self.groups).await
-    }
-
-    pub async fn channels(&mut self) -> Result<&[Channel]> {
-        if self.channels.is_empty() {
-            self.refresh_channels().await?;
-        }
-        Ok(&self.channels)
-    }
-
-    pub async fn users(&mut self) -> Result<&[User]> {
-        if self.users.is_empty() {
-            self.refresh_users().await?;
-        }
-        Ok(&self.users)
-    }
-
-    /// `#name`, `name`, `@handle`, or a raw id, to a conversation id.
-    pub async fn channel_id(&mut self, target: &str) -> Result<String> {
-        let target = target.trim();
-        if CHANNEL_ID.is_match(target) {
-            return Ok(target.to_owned());
-        }
-        if let Some(handle) = target.strip_prefix('@') {
-            let user = self.user_id(handle).await?;
-            return self.slack.open_dm(&user).await;
-        }
-        let name = target.trim_start_matches('#');
-        if let Some(id) = self.find_channel(name) {
-            return Ok(id);
-        }
-        if !self.channels_fresh {
-            self.refresh_channels().await?;
-            if let Some(id) = self.find_channel(name) {
-                return Ok(id);
-            }
-        }
+    fn closest_channel(&self, target: &str, name: &str) -> Result<String> {
         let named = || self.channels.iter().filter(|c| !c.name.is_empty()).map(|c| (c.name.as_str(), c));
         if let Some(c) = fuzzy::best(name, named()) {
             eprintln!("→ #{}", c.name);
@@ -141,25 +255,15 @@ impl Directory {
         bail!("channel `{target}` not found. Did you mean: {}", close.join(", "))
     }
 
-    fn find_channel(&self, name: &str) -> Option<String> {
-        self.channels.iter().find(|c| c.name == name).map(|c| c.id.clone())
+    fn find_user(&self, handle: &str) -> Option<String> {
+        let lower = handle.to_lowercase();
+        let exact = |u: &&User| u.handle().eq_ignore_ascii_case(handle) || u.name.eq_ignore_ascii_case(handle);
+        let loose = |u: &&User| u.real_name.to_lowercase() == lower || u.profile.real_name.to_lowercase() == lower;
+        let active = || self.users.iter().filter(|u| !u.deleted);
+        active().find(exact).or_else(|| active().find(loose)).map(|u| u.id.clone())
     }
 
-    pub async fn user_id(&mut self, handle: &str) -> Result<String> {
-        let handle = handle.trim().trim_start_matches('@');
-        if USER_ID.is_match(handle) {
-            return Ok(handle.to_owned());
-        }
-        self.users().await?;
-        if let Some(id) = self.find_user(handle) {
-            return Ok(id);
-        }
-        if !self.users_fresh {
-            self.refresh_users().await?;
-            if let Some(id) = self.find_user(handle) {
-                return Ok(id);
-            }
-        }
+    fn closest_user(&self, handle: &str) -> Result<String> {
         let labelled: Vec<(String, &User)> =
             self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (format!("{} {}", u.handle(), u.real_name), u)).collect();
         let people = || labelled.iter().map(|(label, u)| (label.as_str(), *u));
@@ -174,29 +278,19 @@ impl Directory {
         bail!("user `@{handle}` not found. Did you mean: {}", close.join(", "))
     }
 
-    pub fn people(&self) -> Vec<(String, String)> {
+    fn people(&self) -> Vec<(String, String)> {
         let mut people: Vec<(String, String)> =
             self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (u.id.clone(), u.handle().to_owned())).collect();
         people.sort_by_key(|(_, h)| h.to_lowercase());
         people
     }
 
-    fn find_user(&self, handle: &str) -> Option<String> {
-        let lower = handle.to_lowercase();
-        let exact = |u: &&User| u.handle().eq_ignore_ascii_case(handle) || u.name.eq_ignore_ascii_case(handle);
-        let loose = |u: &&User| u.real_name.to_lowercase() == lower || u.profile.real_name.to_lowercase() == lower;
-        let active = || self.users.iter().filter(|u| !u.deleted);
-        active().find(exact).or_else(|| active().find(loose)).map(|u| u.id.clone())
-    }
-
-    /// Conversations worth showing: public, private, group DMs, then DMs, each alphabetical.
-    /// Without `all`, DMs with bots and deactivated people are hidden.
-    pub fn conversations(&self, all: bool) -> Vec<(&Channel, String)> {
-        let mut rows: Vec<(&Channel, String)> = self
+    fn conversations(&self, all: bool) -> Vec<(Channel, String)> {
+        let mut rows: Vec<(Channel, String)> = self
             .channels
             .iter()
             .filter(|c| all || c.is_member || c.is_mpim || (c.is_im && self.is_person(c.user.as_deref().unwrap_or(""))))
-            .map(|c| (c, self.display_channel(c)))
+            .map(|c| (c.clone(), self.display_channel(c)))
             .collect();
         rows.sort_by_cached_key(|(c, label)| (kind_rank(c.kind()), label.trim_start_matches(['#', '🔒', '@']).to_lowercase()));
         rows
@@ -206,77 +300,43 @@ impl Directory {
         !SLACKBOT.contains(&user_id) && self.user(user_id).is_none_or(|u| !u.deleted && !u.is_bot)
     }
 
-    /// DMs can point at people `users.list` no longer returns (deactivated, app users); fetch those one by one.
-    pub async fn learn_dm_users(&mut self) -> Result<()> {
-        let unknown: Vec<String> = self
-            .channels
+    fn unknown_dm_users(&self) -> Vec<String> {
+        self.channels
             .iter()
             .filter(|c| c.is_im)
             .filter_map(|c| c.user.clone())
             .filter(|id| !SLACKBOT.contains(&id.as_str()) && self.user(id).is_none())
-            .collect();
-        self.fetch_users(unknown).await
+            .collect()
     }
 
-    /// Fetches the users and usergroups mentioned or authoring these messages that are not known yet.
-    pub async fn learn_users(&mut self, messages: &[Message]) -> Result<()> {
-        let ids: Vec<String> = messages.iter().flat_map(|m| mentioned_users(&m.text).into_iter().chain(m.user.clone())).collect();
-        self.learn_groups(messages).await;
-        self.learn_ids(&ids).await
+    fn unknown_users(&self, ids: &[String]) -> Vec<String> {
+        let mut unknown: Vec<String> = ids.iter().filter(|id| self.user(id).is_none()).cloned().collect();
+        unknown.sort();
+        unknown.dedup();
+        unknown
     }
 
-    /// Usergroups only come as one whole list, so fetch it once, the first time a message names one we cannot read.
-    /// A workspace without usergroups, or a token without the scope, keeps rendering: the id stands in for the handle.
-    pub async fn learn_groups(&mut self, messages: &[Message]) {
+    fn never_listed_users(&self) -> bool {
+        self.users.is_empty() && !self.users_fresh
+    }
+
+    /// True for the one caller that should fetch the usergroups; later callers read what it stored.
+    fn claim_groups_fetch(&mut self, messages: &[Message]) -> bool {
         let unknown = |m: &Message| mentioned_groups(&m.text).iter().any(|id| !self.knows_group(id));
         if self.groups_fresh || !messages.iter().any(unknown) {
-            return;
+            return false;
         }
         self.groups_fresh = true;
-        let _ = self.refresh_groups().await;
+        true
     }
 
     fn knows_group(&self, id: &str) -> bool {
         self.groups.iter().any(|g| g.id == id)
     }
 
-    /// The usergroups `me` belongs to, or nothing while the workspace has not said who is in
-    /// them — a token without the scope must not turn every group mention into a miss.
-    pub fn my_groups(&self, me: &str) -> Option<HashSet<String>> {
+    fn my_groups(&self, me: &str) -> Option<HashSet<String>> {
         let listed = self.groups.iter().any(|g| !g.users.is_empty());
         listed.then(|| self.groups.iter().filter(|g| g.users.iter().any(|u| u == me)).map(|g| g.id.clone()).collect())
-    }
-
-    pub async fn learn_ids(&mut self, ids: &[String]) -> Result<()> {
-        let mut unknown: Vec<String> = ids.iter().filter(|id| self.user(id).is_none()).cloned().collect();
-        unknown.sort();
-        unknown.dedup();
-        if unknown.is_empty() {
-            return Ok(());
-        }
-        if self.users.is_empty() && !self.users_fresh {
-            self.refresh_users().await?;
-            unknown.retain(|id| self.user(id).is_none());
-        }
-        self.fetch_users(unknown).await
-    }
-
-    async fn fetch_users(&mut self, ids: Vec<String>) -> Result<()> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-        let mut found = vec![];
-        for id in ids {
-            if let Ok(user) = self.slack.user_info(&id).await {
-                found.push(user);
-            }
-        }
-        self.add_users(found);
-        self.cache.save("users", &self.users).await
-    }
-
-    pub fn names(&self) -> NameBook {
-        self.names.clone()
     }
 
     fn build_names(&self) -> NameBook {
@@ -289,7 +349,7 @@ impl Directory {
         }))
     }
 
-    pub fn display_channel(&self, channel: &Channel) -> String {
+    fn display_channel(&self, channel: &Channel) -> String {
         match channel.kind() {
             ChannelKind::Dm => {
                 let user = channel.user.as_deref().unwrap_or("");
@@ -300,14 +360,6 @@ impl Directory {
             ChannelKind::Private => format!("🔒{}", channel.name),
             ChannelKind::Public => format!("#{}", channel.name),
         }
-    }
-
-    pub fn users_snapshot(&self) -> &[User] {
-        &self.users
-    }
-
-    pub fn channels_snapshot(&self) -> &[Channel] {
-        &self.channels
     }
 }
 
@@ -414,7 +466,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let d = directory(&server).await;
         assert_eq!(d.channel_id("#general").await.unwrap(), "C1");
         assert_eq!(d.channel_id("general-fr").await.unwrap(), "C2");
         assert_eq!(d.channel_id("C0AAAAAAAA").await.unwrap(), "C0AAAAAAAA");
@@ -436,7 +488,7 @@ mod tests {
             .respond_with(ok(serde_json::json!({"channel": {"id": "D1"}})))
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let d = directory(&server).await;
         assert_eq!(d.channel_id("@vivien").await.unwrap(), "D1");
         assert_eq!(d.channel_id("@VMEYET").await.unwrap(), "D1");
         assert!(d.channel_id("@ghost").await.unwrap_err().to_string().contains("@ghost"));
@@ -452,11 +504,48 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let d = directory(&server).await;
         let messages = vec![Message { ts: "1".into(), user: Some("U9".into()), text: "hi <@U9>".into(), ..Default::default() }];
         d.learn_users(&messages).await.unwrap();
         assert_eq!(d.names().user_label("U9"), "bob");
         assert_eq!(d.names().user_label("U0"), "U0");
+    }
+
+    /// A directory that already listed its users, and a `users.info` for U9 that takes a while.
+    async fn slow_user_lookup(server: &MockServer) -> Directory {
+        Mock::given(path("/users.info"))
+            .respond_with(ok(serde_json::json!({"user": {"id": "U9", "name": "bob"}})).set_delay(std::time::Duration::from_millis(200)))
+            .mount(server)
+            .await;
+        let d = directory(server).await;
+        d.lock().add_users(vec![User { id: "U1".into(), name: "ann".into(), ..Default::default() }]);
+        d
+    }
+
+    #[tokio::test]
+    async fn names_stay_readable_while_a_user_is_fetched() {
+        let server = MockServer::start().await;
+        let d = slow_user_lookup(&server).await;
+        let ids = ["U9".to_owned()];
+        let peek = async {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            d.known.try_lock().is_ok()
+        };
+        let (learned, readable) = tokio::join!(d.learn_ids(&ids), peek);
+        learned.unwrap();
+        assert!(readable, "the lock is free while Slack answers");
+        assert_eq!(d.names().user_label("U9"), "bob");
+    }
+
+    #[tokio::test]
+    async fn a_user_learned_twice_at_once_is_kept_once() {
+        let server = MockServer::start().await;
+        let d = slow_user_lookup(&server).await;
+        let ids = ["U9".to_owned()];
+        let (first, second) = tokio::join!(d.learn_ids(&ids), d.learn_ids(&ids));
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(d.users_snapshot().iter().filter(|u| u.id == "U9").count(), 1);
     }
 
     fn mentioning_groups(text: &str) -> Vec<Message> {
@@ -474,7 +563,7 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let d = directory(&server).await;
         d.learn_users(&mentioning_groups("<!subteam^S1> <!subteam^S2> <!subteam^S3>")).await.unwrap();
         d.learn_users(&mentioning_groups("<!subteam^S3>")).await.unwrap();
         let names = d.names();
@@ -490,7 +579,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"ok": false, "error": "missing_scope"})))
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
+        let d = directory(&server).await;
         d.learn_users(&mentioning_groups("<!subteam^S1>")).await.unwrap();
         assert_eq!(mrkdwn::plain("<!subteam^S1>", &d.names()), "@S1");
     }
@@ -499,14 +588,14 @@ mod tests {
     async fn conversations_are_grouped_sorted_and_filtered() {
         let slack = Slack::new("http://x", Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let mut d = Directory::new(slack, Cache::new(dir.keep())).await;
-        d.add_users(vec![
+        let d = Directory::new(slack, Cache::new(dir.keep())).await;
+        d.lock().add_users(vec![
             User { id: "U1".into(), name: "zoe".into(), ..Default::default() },
             User { id: "U2".into(), name: "gone".into(), deleted: true, ..Default::default() },
             User { id: "U3".into(), name: "robot".into(), is_bot: true, ..Default::default() },
             User { id: "U4".into(), name: "adam".into(), ..Default::default() },
         ]);
-        d.set_channels(vec![
+        d.lock().set_channels(vec![
             Channel { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() },
             Channel { id: "D2".into(), is_im: true, user: Some("U2".into()), ..Default::default() },
             Channel { id: "D3".into(), is_im: true, user: Some("U3".into()), ..Default::default() },
@@ -521,7 +610,7 @@ mod tests {
         let labels: Vec<String> = d.conversations(false).into_iter().map(|(_, l)| l).collect();
         assert_eq!(labels, ["#Beta", "#zebra", "🔒apple", "zoe, adam", "@adam", "@zoe"]);
         assert_eq!(d.conversations(true).len(), 10);
-        assert_eq!(d.find_user("gone"), None);
+        assert_eq!(d.lock().find_user("gone"), None);
     }
 
     #[tokio::test]
@@ -533,8 +622,8 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        let mut d = directory(&server).await;
-        d.set_channels(vec![
+        let d = directory(&server).await;
+        d.lock().set_channels(vec![
             Channel { id: "D7".into(), is_im: true, user: Some("U7".into()), ..Default::default() },
             Channel { id: "D8".into(), is_im: true, user: Some("USLACKBOT".into()), ..Default::default() },
         ]);
@@ -548,14 +637,14 @@ mod tests {
     async fn namebook_maps_both_directions() {
         let slack = Slack::new("http://x", Credentials::new("t", None)).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let mut d = Directory::new(slack, Cache::new(dir.keep())).await;
-        d.add_users(vec![User {
+        let d = Directory::new(slack, Cache::new(dir.keep())).await;
+        d.lock().add_users(vec![User {
             id: "U1".into(),
             name: "vmeyet".into(),
             profile: crate::api::Profile { display_name: "Vivien".into(), ..Default::default() },
             ..Default::default()
         }]);
-        d.set_channels(vec![
+        d.lock().set_channels(vec![
             Channel { id: "C1".into(), name: "general".into(), ..Default::default() },
             Channel { id: "D1".into(), is_im: true, user: Some("U1".into()), ..Default::default() },
         ]);

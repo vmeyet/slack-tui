@@ -1,5 +1,5 @@
 //! Everything waiting for you: unread DMs, mentions, and threads with new replies.
-use crate::api::{Message, ReadState, Slack};
+use crate::api::{Message, ReadState, Slack, ThreadView, in_parallel};
 use crate::cache::Cache;
 use crate::mrkdwn;
 use crate::pattern::regex;
@@ -197,18 +197,16 @@ pub fn mentions_me(text: &str, me: &str, my_groups: Option<&HashSet<String>>) ->
 }
 
 /// Collects every unread item from Slack, newest first.
-pub async fn fetch(slack: &Slack, dir: &mut Directory, me: &str) -> Result<Vec<Item>> {
+pub async fn fetch(slack: &Slack, dir: &Directory, me: &str) -> Result<Vec<Item>> {
     let counts = slack.counts().await?;
-    let mut items = Vec::new();
-    for state in counts.ims.iter().chain(&counts.mpims).filter(|s| s.has_unreads) {
-        if let Some(item) = dm_item(slack, dir, state).await? {
-            items.push(item);
-        }
+    let unread_dms: Vec<&ReadState> = counts.ims.iter().chain(&counts.mpims).filter(|s| s.has_unreads).collect();
+    let mentioned: Vec<&ReadState> = counts.channels.iter().filter(|s| s.mention_count > 0).collect();
+    let mut items = dm_items(slack, unread_dms).await?;
+    items.extend(mention_items(slack, dir, mentioned, me).await?);
+    items.extend(thread_items(slack).await?);
+    if !items.is_empty() {
+        dir.channels().await?;
     }
-    for state in counts.channels.iter().filter(|s| s.mention_count > 0) {
-        items.extend(mention_items(slack, dir, state, me).await?);
-    }
-    items.extend(thread_items(slack, dir).await?);
     let all: Vec<Message> = items.iter().flat_map(|i| i.unread.clone()).collect();
     dir.learn_users(&all).await?;
     let names = dir.names();
@@ -219,11 +217,15 @@ pub async fn fetch(slack: &Slack, dir: &mut Directory, me: &str) -> Result<Vec<I
     Ok(items)
 }
 
-async fn dm_item(slack: &Slack, dir: &mut Directory, state: &ReadState) -> Result<Option<Item>> {
+async fn dm_items(slack: &Slack, states: Vec<&ReadState>) -> Result<Vec<Item>> {
+    let items = in_parallel(states, |state| dm_item(slack, state)).await?;
+    Ok(items.into_iter().flatten().collect())
+}
+
+async fn dm_item(slack: &Slack, state: &ReadState) -> Result<Option<Item>> {
     let unread: Vec<Message> =
         slack.history(&state.id, 20, Some(&state.last_read)).await?.into_iter().filter(|m| newer(&m.ts, &state.last_read)).collect();
     let Some(last) = unread.last() else { return Ok(None) };
-    dir.channels().await?;
     Ok(Some(Item {
         key: state.id.clone(),
         kind: Kind::Dm,
@@ -236,14 +238,21 @@ async fn dm_item(slack: &Slack, dir: &mut Directory, state: &ReadState) -> Resul
     }))
 }
 
-async fn mention_items(slack: &Slack, dir: &mut Directory, state: &ReadState, me: &str) -> Result<Vec<Item>> {
-    dir.channels().await?;
-    let recent = slack.history(&state.id, 100, Some(&state.last_read)).await?;
-    dir.learn_groups(&recent).await;
+/// Usergroups are learned from every fetched channel before any is filtered, so each sees who `me` is in.
+async fn mention_items(slack: &Slack, dir: &Directory, states: Vec<&ReadState>, me: &str) -> Result<Vec<Item>> {
+    let recent =
+        in_parallel(states, |state| async move { Ok((state, slack.history(&state.id, 100, Some(&state.last_read)).await?)) }).await?;
+    for (_, messages) in &recent {
+        dir.learn_groups(messages).await;
+    }
     let my_groups = dir.my_groups(me);
-    let mine = |m: &Message| newer(&m.ts, &state.last_read) && mentions_me(&m.text, me, my_groups.as_ref());
+    Ok(recent.into_iter().flat_map(|(state, messages)| mentions(state, messages, me, my_groups.as_ref())).collect())
+}
+
+fn mentions(state: &ReadState, recent: Vec<Message>, me: &str, my_groups: Option<&HashSet<String>>) -> Vec<Item> {
+    let mine = |m: &Message| newer(&m.ts, &state.last_read) && mentions_me(&m.text, me, my_groups);
     let mentions: Vec<Message> = recent.into_iter().filter(mine).collect();
-    Ok(mentions
+    mentions
         .into_iter()
         .rev()
         .take(state.mention_count as usize)
@@ -257,37 +266,38 @@ async fn mention_items(slack: &Slack, dir: &mut Directory, state: &ReadState, me
             unread: vec![m],
             priority: None,
         })
-        .collect())
+        .collect()
 }
 
-async fn thread_items(slack: &Slack, dir: &mut Directory) -> Result<Vec<Item>> {
+async fn thread_items(slack: &Slack) -> Result<Vec<Item>> {
     let Ok(threads) = slack.thread_view(50).await else { return Ok(vec![]) };
-    let mut items = Vec::new();
-    for t in threads.into_iter().filter(|t| newer(&t.root_msg.latest_reply, &t.root_msg.last_read)) {
-        let root = t.root_msg;
-        let mut unread: Vec<Message> = t.latest_replies.into_iter().filter(|m| newer(&m.ts, &root.last_read)).collect();
-        if unread.is_empty() {
-            unread = slack
-                .replies(&root.channel, &root.ts)
-                .await?
-                .into_iter()
-                .filter(|m| newer(&m.ts, &root.last_read) && m.ts != root.ts)
-                .collect();
-        }
-        let Some(last) = unread.last() else { continue };
-        dir.channels().await?;
-        items.push(Item {
-            key: format!("{}/{}", root.channel, root.ts),
-            kind: Kind::Thread,
-            channel: root.channel.clone(),
-            label: String::new(),
-            thread_ts: Some(root.ts.clone()),
-            ts: last.ts.clone(),
-            unread,
-            priority: None,
-        });
+    let unread = threads.into_iter().filter(|t| newer(&t.root_msg.latest_reply, &t.root_msg.last_read));
+    let items = in_parallel(unread, |thread| thread_item(slack, thread)).await?;
+    Ok(items.into_iter().flatten().collect())
+}
+
+async fn thread_item(slack: &Slack, thread: ThreadView) -> Result<Option<Item>> {
+    let root = thread.root_msg;
+    let mut unread: Vec<Message> = thread.latest_replies.into_iter().filter(|m| newer(&m.ts, &root.last_read)).collect();
+    if unread.is_empty() {
+        unread = slack
+            .replies(&root.channel, &root.ts)
+            .await?
+            .into_iter()
+            .filter(|m| newer(&m.ts, &root.last_read) && m.ts != root.ts)
+            .collect();
     }
-    Ok(items)
+    let Some(last) = unread.last() else { return Ok(None) };
+    Ok(Some(Item {
+        key: format!("{}/{}", root.channel, root.ts),
+        kind: Kind::Thread,
+        channel: root.channel.clone(),
+        label: String::new(),
+        thread_ts: Some(root.ts.clone()),
+        ts: last.ts.clone(),
+        unread,
+        priority: None,
+    }))
 }
 
 /// Tells Slack the item was read, so the badge clears everywhere.
@@ -528,6 +538,12 @@ mod tests {
         ResponseTemplate::new(200).set_body_json(body)
     }
 
+    async fn fetched(server: &MockServer) -> Vec<Item> {
+        let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
+        let dir = Directory::new(slack.clone(), Cache::new(tempfile::tempdir().unwrap().keep())).await;
+        fetch(&slack, &dir, "U1").await.unwrap()
+    }
+
     #[tokio::test]
     async fn fetch_collects_dms_mentions_and_threads() {
         let server = MockServer::start().await;
@@ -565,13 +581,34 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(path("/users.list")).respond_with(ok(json!({"members": [{"id": "U2", "name": "bob"}]}))).mount(&server).await;
-        let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let mut dir = Directory::new(slack.clone(), Cache::new(tmp.keep())).await;
-        let items = fetch(&slack, &mut dir, "U1").await.unwrap();
+        let items = fetched(&server).await;
         let summary: Vec<(Kind, &str, &str, usize)> =
             items.iter().map(|i| (i.kind, i.key.as_str(), i.label.as_str(), i.unread.len())).collect();
         assert_eq!(summary, vec![(Kind::Mention, "C1/12.0", "#ops", 1), (Kind::Dm, "D1", "@bob", 2), (Kind::Thread, "C2/1.0", "C2", 1)]);
+    }
+
+    #[tokio::test]
+    async fn fetch_keeps_the_slack_order_when_a_slower_answer_ties() {
+        let server = MockServer::start().await;
+        Mock::given(path("/client.counts"))
+            .respond_with(ok(json!({"channels": [], "mpims": [], "ims": [
+                {"id": "D1", "last_read": "5.0", "has_unreads": true},
+                {"id": "D2", "last_read": "5.0", "has_unreads": true}
+            ]})))
+            .mount(&server)
+            .await;
+        let same_ts = json!({"messages": [{"ts": "6.0", "user": "U2", "text": "hi"}]});
+        Mock::given(path("/conversations.history"))
+            .and(body_string_contains("channel=D1"))
+            .respond_with(ok(same_ts.clone()).set_delay(std::time::Duration::from_millis(100)))
+            .mount(&server)
+            .await;
+        Mock::given(path("/conversations.history")).and(body_string_contains("channel=D2")).respond_with(ok(same_ts)).mount(&server).await;
+        Mock::given(path("/subscriptions.thread.getView")).respond_with(ok(json!({"threads": []}))).mount(&server).await;
+        Mock::given(path("/conversations.list")).respond_with(ok(json!({"channels": []}))).mount(&server).await;
+        Mock::given(path("/users.list")).respond_with(ok(json!({"members": [{"id": "U2", "name": "bob"}]}))).mount(&server).await;
+        let items = fetched(&server).await;
+        assert_eq!(items.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), ["D1", "D2"]);
     }
 
     #[tokio::test]
@@ -582,9 +619,6 @@ mod tests {
             .respond_with(ok(json!({"ok": false, "error": "unknown_method"})))
             .mount(&server)
             .await;
-        let slack = Slack::new(&server.uri(), Credentials::new("t", None)).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let mut dir = Directory::new(slack.clone(), Cache::new(tmp.keep())).await;
-        assert!(fetch(&slack, &mut dir, "U1").await.unwrap().is_empty());
+        assert!(fetched(&server).await.is_empty());
     }
 }

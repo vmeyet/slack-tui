@@ -296,7 +296,7 @@ pub(crate) fn promises(t: &Theme, names: &NameBook, promises: &[crate::promises:
     out
 }
 
-pub(crate) fn channels(t: &Theme, channels: &[(&Channel, String)]) -> String {
+pub(crate) fn channels(t: &Theme, channels: &[(Channel, String)]) -> String {
     let mut out = String::new();
     let name_width = channels.iter().map(|(_, n)| n.width()).max().unwrap_or(10).min(40);
     for (c, label) in channels {
