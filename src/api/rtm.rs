@@ -202,10 +202,24 @@ mod tests {
         assert_eq!(Event::parse(&event("ta da")), None);
     }
 
+    /// Streams from `listener` as if Slack handed out its address; the mock server must outlive the stream.
+    async fn stream_from(listener: &tokio::net::TcpListener) -> (MockServer, mpsc::UnboundedReceiver<Event>) {
+        let ws_url = format!("ws://{}", listener.local_addr().unwrap());
+        let server = MockServer::start().await;
+        Mock::given(path("/rtm.connect"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "url": ws_url})))
+            .mount(&server)
+            .await;
+        let slack = Slack::new(&server.uri(), Credentials::new("xoxc", Some("xoxd"))).unwrap();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(stream(slack, tx));
+        (server, rx)
+    }
+
     #[tokio::test]
     async fn streams_events_from_a_socket() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ws_url = format!("ws://{}", listener.local_addr().unwrap());
+        let (_server, mut rx) = stream_from(&listener).await;
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
@@ -215,14 +229,6 @@ mod tests {
                 .unwrap();
             tokio::time::sleep(Duration::from_secs(5)).await;
         });
-        let server = MockServer::start().await;
-        Mock::given(path("/rtm.connect"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "url": ws_url})))
-            .mount(&server)
-            .await;
-        let slack = Slack::new(&server.uri(), Credentials::new("xoxc", Some("xoxd"))).unwrap();
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tokio::spawn(stream(slack, tx));
         assert_eq!(rx.recv().await, Some(Event::Connected));
         let Some(Event::Message { message, .. }) = rx.recv().await else { panic!() };
         assert_eq!(message.text, "live");
@@ -251,21 +257,13 @@ mod tests {
     #[tokio::test]
     async fn a_socket_that_goes_silent_is_dropped() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ws_url = format!("ws://{}", listener.local_addr().unwrap());
+        let (_server, mut rx) = stream_from(&listener).await;
         tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
             ws.send(Frame::Text(json!({"type": "hello"}).to_string().into())).await.unwrap();
             while ws.next().await.is_some() {}
         });
-        let server = MockServer::start().await;
-        Mock::given(path("/rtm.connect"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "url": ws_url})))
-            .mount(&server)
-            .await;
-        let slack = Slack::new(&server.uri(), Credentials::new("xoxc", Some("xoxd"))).unwrap();
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tokio::spawn(stream(slack, tx));
         assert_eq!(rx.recv().await, Some(Event::Connected));
         tokio::time::pause();
         let dropped = tokio::time::timeout(SILENT_FOR * 3, rx.recv()).await.expect("dropped within a few pings");
@@ -275,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn connections_that_drop_after_opening_never_give_up() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ws_url = format!("ws://{}", listener.local_addr().unwrap());
+        let (_server, mut rx) = stream_from(&listener).await;
         tokio::spawn(async move {
             loop {
                 let (stream, _) = listener.accept().await.unwrap();
@@ -284,14 +282,6 @@ mod tests {
                 ws.close(None).await.unwrap();
             }
         });
-        let server = MockServer::start().await;
-        Mock::given(path("/rtm.connect"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "url": ws_url})))
-            .mount(&server)
-            .await;
-        let slack = Slack::new(&server.uri(), Credentials::new("xoxc", Some("xoxd"))).unwrap();
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tokio::spawn(stream(slack, tx));
         let mut drops = 0;
         while drops <= MAX_FAILURES {
             match rx.recv().await.unwrap() {
