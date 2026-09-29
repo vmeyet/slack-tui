@@ -21,14 +21,14 @@ indexmap = { version = "2.14.2", features = ["serde"] }
 owo-colors = "4.4.0"
 ratatui = "0.30.2"
 ratatui-image = { version = "11", default-features = false, features = ["crossterm"] }
-regex = "1.13.1"
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "form"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 tempfile = "3.27.0"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "time", "fs", "sync", "io-util"] }
-tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 toml = "1.1.6"
 unicode-width = "0.2.2"
 
@@ -45,6 +45,7 @@ wiremock = "0.6.5"
 lto = true
 codegen-units = 1
 strip = true
+opt-level = "s"
 
 [lints.rust]
 missing_docs = "warn"
