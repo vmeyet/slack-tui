@@ -5,6 +5,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as Frame;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
@@ -75,6 +76,8 @@ fn is_emoji_name(name: &str) -> bool {
 }
 
 const PING_EVERY: Duration = Duration::from_secs(30);
+/// Slack answers every ping, so this long without a frame means the socket died without closing.
+const SILENT_FOR: Duration = PING_EVERY.saturating_mul(2);
 /// Short under test: reconnects go through real HTTP, which a paused clock would time out.
 const RECONNECT_AFTER: Duration = if cfg!(test) { Duration::from_millis(10) } else { Duration::from_secs(5) };
 const MAX_FAILURES: u32 = 3;
@@ -126,14 +129,19 @@ async fn forward(socket: Socket, tx: &mpsc::UnboundedSender<Event>) -> Result<()
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
     let mut ping_id = 0u64;
+    let mut heard_at = Instant::now();
     loop {
         tokio::select! {
             _ = ping.tick() => {
+                if heard_at.elapsed() > SILENT_FOR {
+                    bail!("RTM stopped answering");
+                }
                 ping_id += 1;
                 sink.send(Frame::Text(json!({"id": ping_id, "type": "ping"}).to_string().into())).await.context("ping")?;
             }
             frame = source.next() => {
                 let Some(frame) = frame else { bail!("RTM connection closed") };
+                heard_at = Instant::now();
                 let Frame::Text(text) = frame.context("RTM read")? else { continue };
                 let Ok(raw) = serde_json::from_str::<Value>(&text) else { continue };
                 if let Some(event) = Event::parse(&raw)
@@ -238,6 +246,30 @@ mod tests {
         assert_eq!(events.len(), MAX_FAILURES as usize);
         assert!(matches!(events.pop(), Some(Event::GaveUp(_))));
         assert!(events.iter().all(|e| matches!(e, Event::Disconnected(_))));
+    }
+
+    #[tokio::test]
+    async fn a_socket_that_goes_silent_is_dropped() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws_url = format!("ws://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            ws.send(Frame::Text(json!({"type": "hello"}).to_string().into())).await.unwrap();
+            while ws.next().await.is_some() {}
+        });
+        let server = MockServer::start().await;
+        Mock::given(path("/rtm.connect"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true, "url": ws_url})))
+            .mount(&server)
+            .await;
+        let slack = Slack::new(&server.uri(), Credentials::new("xoxc", Some("xoxd"))).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::spawn(stream(slack, tx));
+        assert_eq!(rx.recv().await, Some(Event::Connected));
+        tokio::time::pause();
+        let dropped = tokio::time::timeout(SILENT_FOR * 3, rx.recv()).await.expect("dropped within a few pings");
+        assert_eq!(dropped, Some(Event::Disconnected("RTM stopped answering".into())));
     }
 
     #[tokio::test]
