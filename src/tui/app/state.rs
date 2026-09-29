@@ -10,6 +10,7 @@ use crate::tui::inbox::Inbox;
 use crate::tui::jump::Jump;
 use crate::tui::palette::Palette;
 use crate::tui::theme::Theme;
+use crate::tui::ui::Bodies;
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
@@ -86,6 +87,8 @@ pub struct App {
     pub(in crate::tui) channels_view: ListState,
     pub(in crate::tui) messages_view: ListState,
     pub(in crate::tui) thread_view: ListState,
+    pub(in crate::tui) message_bodies: Bodies,
+    pub(in crate::tui) thread_bodies: Bodies,
 }
 
 impl Default for App {
@@ -140,6 +143,8 @@ impl Default for App {
             channels_view: ListState::default(),
             messages_view: ListState::default(),
             thread_view: ListState::default(),
+            message_bodies: Bodies::default(),
+            thread_bodies: Bodies::default(),
         }
     }
 }

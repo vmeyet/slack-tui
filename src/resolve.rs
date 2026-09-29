@@ -355,6 +355,11 @@ impl NameBook {
     pub fn user_label(&self, id: &str) -> String {
         self.0.users.get(id).cloned().unwrap_or_else(|| id.to_owned())
     }
+
+    /// Both copies share the same tables, so they know the same names.
+    pub fn same(&self, other: &NameBook) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 impl mrkdwn::Names for NameBook {

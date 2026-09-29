@@ -22,7 +22,7 @@ impl App {
             rtm::Event::Message { channel, message } => {
                 let line = LiveLine::from_message(&channel, &message);
                 let classify = (self.triage && self.firehose.is_some()).then(|| Action::Classify(line.clone()));
-                firehose::push(&mut self.wall, line);
+                firehose::push(&mut self.wall, line, &self.names, &self.highlighter);
                 let unknown = message.user.clone().filter(|u| self.names.user_label(u) == *u);
                 self.live_message(channel, message);
                 let mut actions = self.refresh_thumbs();

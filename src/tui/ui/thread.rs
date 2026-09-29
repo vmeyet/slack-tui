@@ -12,8 +12,10 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
     let focused = app.focus == Focus::Thread;
     let Some(thread) = &app.thread else { return vec![] };
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
-    let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) =
-        grouped_items(&viewer(app), &thread.messages, width, THREAD_NAME_W, false, thread.selected, app.zen).into_iter().unzip();
+    let bodies = std::mem::take(&mut app.thread_bodies);
+    let (listed, bodies) = grouped_items(&viewer(app), &thread.messages, bodies, width, THREAD_NAME_W, false, thread.selected);
+    app.thread_bodies = bodies;
+    let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) = listed.into_iter().unzip();
     let rows: Vec<(usize, Vec<Slot>)> = items.iter().map(ListItem::height).zip(slots).collect();
     let title = format!("thread · {} replies", thread.messages.len().saturating_sub(1));
     let block = frame(app, &title, focused);

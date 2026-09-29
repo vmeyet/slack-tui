@@ -13,6 +13,7 @@ mod testing;
 mod thread;
 
 pub use empty::{Empty, draw_empty};
+pub use items::Bodies;
 pub use style::{body_spans, user_style};
 
 use super::app::{App, Focus};

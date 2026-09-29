@@ -31,10 +31,13 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
         title.push_str(&format!(" {} loading", motion::spinner(app.elapsed())));
     }
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
-    let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) = match &app.search {
-        Some(results) => results.iter().map(|m| (search_item(&app.theme, m, width), vec![])).unzip(),
-        None => grouped_items(&viewer(app), &app.messages, width, NAME_W, true, app.message_selected, app.zen).into_iter().unzip(),
+    let bodies = std::mem::take(&mut app.message_bodies);
+    let (listed, bodies) = match &app.search {
+        Some(results) => (results.iter().map(|m| (search_item(&app.theme, m, width), vec![])).collect(), bodies),
+        None => grouped_items(&viewer(app), &app.messages, bodies, width, NAME_W, true, app.message_selected),
     };
+    app.message_bodies = bodies;
+    let (items, slots): (Vec<ListItem>, Vec<Vec<Slot>>) = listed.into_iter().unzip();
     let rows: Vec<(usize, Vec<Slot>)> = items.iter().map(ListItem::height).zip(slots).collect();
     let empty = items.is_empty();
     let pills = [typing_pill(app), new_below_pill(app)];
@@ -115,7 +118,7 @@ mod tests {
     use crate::api::Message;
     use crate::resolve::NameBook;
     use crate::tui::app::Incoming;
-    use crate::tui::ui::testing::{message, render};
+    use crate::tui::ui::testing::{message, render, render_at};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -207,6 +210,18 @@ mod tests {
         let rich = show(serde_json::from_value(serde_json::json!(sent.blocks)).unwrap());
         assert!(rich.contains("ship it") && rich.contains("▎ ls -la"), "{rich}");
         assert!(!show(vec![]).contains("▎ ls -la"), "the flat text has no code block to show");
+    }
+
+    #[test]
+    fn a_live_edit_and_a_resize_redraw_the_message() {
+        let mut app = watching_c1();
+        assert!(render(&mut app).contains("first"));
+        let edited = Message { edited: Some(crate::api::Edited::default()), ..message("1694700000.000100", "U1", "second take") };
+        app.apply(Incoming::Live(Box::new(crate::api::rtm::Event::Changed { channel: "C1".into(), message: edited })));
+        let out = render(&mut app);
+        assert!(out.contains("second take (edited)") && !out.contains("first"), "{out}");
+        let narrow = render_at(&mut app, 40, 10);
+        assert!(narrow.contains("(edited)") && !narrow.contains("second take (edited)"), "{narrow}");
     }
 
     #[test]
