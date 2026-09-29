@@ -413,6 +413,17 @@ fn search_results_jump_to_channel_and_thread() {
 }
 
 #[test]
+fn history_reload_leaves_the_search_cursor_alone() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a"), msg("2", "b"), msg("3", "c")]));
+    app.apply(Incoming::SearchResults(vec![SearchMatch::default(); 3]));
+    app.handle_key(key('G'));
+    app.apply(history(vec![msg("1", "a"), msg("2", "b"), msg("3", "c"), msg("4", "d")]));
+    assert_eq!(app.message_selected, 2);
+}
+
+#[test]
 fn status_follows_where_you_are() {
     let mut app = App::new();
     assert_eq!(app.status_line(), "loading channels…");

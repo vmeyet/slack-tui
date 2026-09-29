@@ -115,14 +115,21 @@ impl App {
             return vec![];
         }
         self.names = names;
-        let at_bottom = self.message_selected + 1 >= self.messages.len();
-        let selected_ts = self.messages.get(self.message_selected).map(|m| m.ts.clone());
-        let kept = selected_ts.filter(|_| !at_bottom).and_then(|ts| messages.iter().position(|m| m.ts == ts));
-        self.message_selected = kept.unwrap_or(messages.len().saturating_sub(1));
+        if self.search.is_none() {
+            self.message_selected = self.kept_selection(&messages);
+        }
         self.messages = messages;
         let mut actions = self.refresh_thumbs();
         actions.extend(self.sync_read());
         actions
+    }
+
+    /// The same message stays selected in the new list, unless the selection was following the bottom.
+    fn kept_selection(&self, messages: &[Message]) -> usize {
+        let at_bottom = self.message_selected + 1 >= self.messages.len();
+        let selected_ts = self.messages.get(self.message_selected).map(|m| &m.ts);
+        let kept = selected_ts.filter(|_| !at_bottom).and_then(|ts| messages.iter().position(|m| &m.ts == ts));
+        kept.unwrap_or(messages.len().saturating_sub(1))
     }
 
     fn replies_loaded(&mut self, channel: String, ts: String, messages: Vec<Message>, names: NameBook) -> Vec<Action> {
