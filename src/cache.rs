@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -28,9 +29,7 @@ impl Cache {
     }
 
     pub async fn save<T: Serialize>(&self, name: &str, value: &T) -> Result<()> {
-        tokio::fs::create_dir_all(&self.dir).await?;
-        let path = self.dir.join(format!("{name}.json"));
-        tokio::fs::write(&path, serde_json::to_vec(value)?).await.with_context(|| format!("writing {}", path.display()))
+        write_atomic(self.dir.join(format!("{name}.json")), serde_json::to_vec(value)?).await
     }
 
     /// A folder for files that are not JSON, created on first use.
@@ -47,6 +46,21 @@ impl Cache {
             Err(e) => Err(e.into()),
         }
     }
+}
+
+/// Writes to a temporary file next to `path` then renames it, so a reader sees the old file or the new one, never half of it.
+pub async fn write_atomic(path: PathBuf, bytes: Vec<u8>) -> Result<()> {
+    let context = format!("writing {}", path.display());
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let dir = path.parent().context("no parent folder")?;
+        std::fs::create_dir_all(dir)?;
+        let mut file = tempfile::NamedTempFile::new_in(dir)?;
+        file.write_all(&bytes)?;
+        file.persist(&path)?;
+        Ok(())
+    })
+    .await?
+    .context(context)
 }
 
 fn root() -> PathBuf {
@@ -81,6 +95,17 @@ mod tests {
         cache.clear().await.unwrap();
         cache.clear().await.unwrap();
         assert_eq!(cache.load::<Vec<u32>>("x").await, None);
+    }
+
+    #[tokio::test]
+    async fn saving_replaces_the_file_whole_and_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::new(dir.path().join("t"));
+        cache.save("x", &vec![1, 2, 3]).await.unwrap();
+        cache.save("x", &vec![4]).await.unwrap();
+        assert_eq!(cache.load::<Vec<u32>>("x").await, Some(vec![4]));
+        let files: Vec<_> = std::fs::read_dir(dir.path().join("t")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(files, ["x.json"]);
     }
 
     #[tokio::test]

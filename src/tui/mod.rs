@@ -128,6 +128,8 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
                     events = EventStream::new();
                     let _ = tx.send(composed_outcome(channel, thread_ts, composed));
                 }
+                // Saves run one after the other, so an older state never lands over a newer one.
+                action @ (Action::SaveInbox { .. } | Action::SaveFavorites(_)) => answer(action, &backend, &tx).await,
                 action => spawn(action, backend.clone(), tx.clone()),
             }
         }
@@ -145,10 +147,20 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
 /// Asks terminals speaking the kitty keyboard protocol to report ⌘ and other modifiers,
 /// so ⌘K works where the terminal lets it through (Ghostty, Kitty, `WezTerm`, iTerm2 with the option on).
 fn enable_modifier_keys() -> bool {
-    if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) {
+    if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) || !push_modifier_keys() {
         return false;
     }
-    push_modifier_keys()
+    pop_modifier_keys_on_panic();
+    true
+}
+
+/// The hook `ratatui::init` installs gives back raw mode and the screen, not these flags.
+fn pop_modifier_keys_on_panic() {
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+        restore(info);
+    }));
 }
 
 fn push_modifier_keys() -> bool {
@@ -249,16 +261,20 @@ fn judged<T>(outcome: std::result::Result<T, Unavailable>, arrived: impl FnOnce(
 }
 
 fn spawn(action: Action, backend: Backend, tx: mpsc::UnboundedSender<Incoming>) {
-    tokio::spawn(async move {
-        let outcome = perform(action, &backend).await;
-        let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(e.to_string())));
-    });
+    tokio::spawn(async move { answer(action, &backend, &tx).await });
+}
+
+async fn answer(action: Action, backend: &Backend, tx: &mpsc::UnboundedSender<Incoming>) {
+    let outcome = perform(action, backend).await;
+    let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(e.to_string())));
 }
 
 /// The directory lock is released before the sidebar extras are fetched, so history loads never wait on them.
+/// The list is always fetched again; the disk copy only stands in when Slack cannot be reached.
 async fn load_channels(backend: &Backend) -> Result<Incoming> {
     let (rows, people, names) = {
         let mut d = backend.dir.lock().await;
+        let _ = d.refresh_channels().await;
         d.channels().await?;
         let _ = d.users().await;
         let _ = d.learn_dm_users().await;
@@ -491,4 +507,28 @@ async fn yank(slack: &crate::api::Slack, channel: &str, ts: &str) -> Result<Inco
     child.stdin.take().context("piped stdin")?.write_all(url.as_bytes()).await?;
     child.wait().await?;
     Ok(Incoming::Toast("permalink copied".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+    use crate::auth::Credentials;
+    use serde_json::json;
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn loading_channels_fetches_the_list_again_even_with_a_disk_copy() {
+        let server = MockServer::start().await;
+        let fresh = json!({"ok": true, "channels": [{"id": "C2", "name": "fresh", "is_member": true}]});
+        Mock::given(path("/conversations.list")).respond_with(ResponseTemplate::new(200).set_body_json(fresh)).mount(&server).await;
+        let cache = Cache::new(tempfile::tempdir().unwrap().keep());
+        cache.save("channels", &json!([{"id": "C1", "name": "stale", "is_member": true}])).await.unwrap();
+        let slack = crate::api::Slack::new(&server.uri(), Credentials::new("xoxc", None)).unwrap();
+        let dir = Directory::new(slack.clone(), cache.clone()).await;
+        let backend = Backend { slack, dir: Arc::new(Mutex::new(dir)), me: Arc::new(OnceCell::new()), cache, jev: None };
+        let Incoming::Channels { rows, .. } = load_channels(&backend).await.unwrap() else { panic!("channels") };
+        assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), ["C2"]);
+    }
 }

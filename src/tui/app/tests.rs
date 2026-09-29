@@ -288,6 +288,40 @@ fn thread_reply_targets_the_root() {
     assert_eq!(actions, vec![Action::Send { channel: "C1".into(), thread_ts: Some("1".into()), text: "x".into() }]);
 }
 
+fn replies(channel: &str, ts: &str) -> Incoming {
+    Incoming::Replies { channel: channel.into(), ts: ts.into(), messages: vec![msg(ts, "root")], names: NameBook::default() }
+}
+
+#[test]
+fn replies_arriving_after_the_thread_was_closed_are_dropped() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(key('h'));
+    app.apply(replies("C1", "1"));
+    assert_eq!(app.thread, None);
+
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(replies("C1", "1"));
+    assert!(app.thread.is_some());
+    app.apply(Incoming::Sent { channel: "C1".into(), thread_ts: Some("1".into()) });
+    app.handle_key(code(KeyCode::Esc));
+    app.apply(replies("C1", "1"));
+    assert_eq!(app.thread, None, "the reload a send asked for lands after the thread was closed");
+}
+
+#[test]
+fn replies_for_a_channel_left_meanwhile_are_dropped() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    app.handle_key(code(KeyCode::Enter));
+    app.open_channel("C2".into());
+    app.apply(replies("C1", "1"));
+    assert_eq!(app.thread, None);
+}
+
 #[test]
 fn compose_seeds_the_editor_with_the_input_row_and_clears_it_once_sent() {
     let mut app = loaded();
@@ -410,6 +444,17 @@ fn search_results_jump_to_channel_and_thread() {
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::LoadHistory("C2".into()), Action::LoadReplies { channel: "C2".into(), ts: "5".into() }]);
     assert_eq!(app.search, None);
+}
+
+#[test]
+fn history_reload_leaves_the_search_cursor_alone() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a"), msg("2", "b"), msg("3", "c")]));
+    app.apply(Incoming::SearchResults(vec![SearchMatch::default(); 3]));
+    app.handle_key(key('G'));
+    app.apply(history(vec![msg("1", "a"), msg("2", "b"), msg("3", "c"), msg("4", "d")]));
+    assert_eq!(app.message_selected, 2);
 }
 
 #[test]
@@ -607,6 +652,19 @@ fn live_reply_updates_root_and_open_thread() {
 }
 
 #[test]
+fn live_broadcast_reply_lands_in_the_thread_and_the_channel() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "root")]));
+    app.thread = Some(Thread { channel: "C1".into(), root_ts: "1".into(), messages: vec![msg("1", "root")], selected: 0 });
+    let broadcast = Message { thread_ts: Some("1".into()), subtype: Some("thread_broadcast".into()), ..msg("2", "also here") };
+    live(&mut app, rtm::Event::Message { channel: "C1".into(), message: broadcast });
+    assert_eq!(app.messages.iter().map(|m| m.ts.as_str()).collect::<Vec<_>>(), ["1", "2"]);
+    assert_eq!(app.messages[0].reply_count, 1);
+    assert_eq!(app.thread.as_ref().unwrap().messages.len(), 2);
+}
+
+#[test]
 fn live_edit_delete_and_reactions() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
@@ -705,6 +763,20 @@ fn polling_only_when_feed_is_down() {
     live(&mut app, rtm::Event::GaveUp("boom".into()));
     assert!(matches!(app.live, Live::Polling(_)));
     assert_eq!(app.apply(Incoming::Tick), vec![Action::LoadHistory("C1".into())]);
+}
+
+#[test]
+fn a_reconnect_reloads_what_the_feed_missed_but_the_first_connect_does_not() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    live(&mut app, rtm::Event::Disconnected("refused".into()));
+    assert_eq!(live(&mut app, rtm::Event::Connected), vec![]);
+    live(&mut app, rtm::Event::Disconnected("dropped".into()));
+    assert_eq!(app.live, Live::Reconnecting);
+    live(&mut app, rtm::Event::Disconnected("still down".into()));
+    assert_eq!(live(&mut app, rtm::Event::Connected), vec![Action::LoadChannels, Action::LoadHistory("C1".into())]);
+    assert_eq!(app.live, Live::Connected);
 }
 
 #[test]

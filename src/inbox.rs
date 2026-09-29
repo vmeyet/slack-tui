@@ -5,7 +5,7 @@ use crate::mrkdwn;
 use crate::pattern::regex;
 use crate::resolve::{Directory, NameBook};
 use crate::typesafe::{Judge, Question, Unavailable};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Datelike, Local, Timelike};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -152,11 +152,7 @@ impl State {
     }
 
     pub async fn save(&self, workspace: &str) -> Result<()> {
-        let path = Self::path(workspace);
-        if let Some(dir) = path.parent() {
-            tokio::fs::create_dir_all(dir).await?;
-        }
-        tokio::fs::write(&path, serde_json::to_vec(self)?).await.with_context(|| format!("writing {}", path.display()))
+        crate::cache::write_atomic(Self::path(workspace), serde_json::to_vec(self)?).await
     }
 
     pub fn snooze(&mut self, key: &str, until: DateTime<Local>) {

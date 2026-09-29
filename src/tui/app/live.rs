@@ -7,8 +7,17 @@ use crate::tui::firehose;
 impl App {
     pub(super) fn apply_live(&mut self, event: rtm::Event) -> Vec<Action> {
         match event {
-            rtm::Event::Connected => self.live = Live::Connected,
-            rtm::Event::Disconnected(_) => self.live = Live::Connecting,
+            rtm::Event::Connected => {
+                let missed = std::mem::replace(&mut self.live, Live::Connected) == Live::Reconnecting;
+                if missed {
+                    return self.refresh();
+                }
+            }
+            rtm::Event::Disconnected(_) => {
+                if self.live == Live::Connected {
+                    self.live = Live::Reconnecting;
+                }
+            }
             rtm::Event::GaveUp(reason) => self.live = Live::Polling(reason),
             rtm::Event::Message { channel, message } => {
                 let line = LiveLine::from_message(&channel, &message);
@@ -67,18 +76,10 @@ impl App {
             return;
         }
         if let Some(root) = message.thread_ts.clone().filter(|t| t != &message.ts) {
-            if let Some(m) = self.messages.iter_mut().find(|m| m.ts == root) {
-                m.reply_count += 1;
-                m.latest_reply = Some(message.ts.clone());
+            self.live_reply(&root, &message);
+            if !message.is_broadcast() {
+                return;
             }
-            if let Some(t) = self.thread.as_mut().filter(|t| t.root_ts == root && !t.messages.iter().any(|m| m.ts == message.ts)) {
-                let follow = t.selected + 1 >= t.messages.len();
-                t.messages.push(message);
-                if follow {
-                    t.selected = t.messages.len() - 1;
-                }
-            }
-            return;
         }
         if self.messages.iter().any(|m| m.ts == message.ts) {
             return;
@@ -87,6 +88,20 @@ impl App {
         self.messages.push(message);
         if follow && self.search.is_none() {
             self.message_selected = self.messages.len() - 1;
+        }
+    }
+
+    fn live_reply(&mut self, root: &str, message: &Message) {
+        if let Some(m) = self.messages.iter_mut().find(|m| m.ts == root) {
+            m.reply_count += 1;
+            m.latest_reply = Some(message.ts.clone());
+        }
+        if let Some(t) = self.thread.as_mut().filter(|t| t.root_ts == root && !t.messages.iter().any(|m| m.ts == message.ts)) {
+            let follow = t.selected + 1 >= t.messages.len();
+            t.messages.push(message.clone());
+            if follow {
+                t.selected = t.messages.len() - 1;
+            }
         }
     }
 
