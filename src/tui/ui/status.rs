@@ -29,7 +29,7 @@ pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {
 fn live_dot(live: &Live, theme: &Theme) -> (&'static str, Style) {
     match live {
         Live::Connected => ("● ", Style::new().fg(theme.success)),
-        Live::Connecting => ("○ ", Style::new().fg(theme.muted)),
+        Live::Connecting | Live::Reconnecting => ("○ ", Style::new().fg(theme.muted)),
         Live::Polling(_) => ("↻ ", Style::new().fg(theme.warn)),
     }
 }

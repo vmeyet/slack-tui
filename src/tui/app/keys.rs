@@ -483,7 +483,7 @@ impl App {
         *selected = (*selected as i64).saturating_add(delta).clamp(0, len as i64 - 1) as usize;
     }
 
-    fn refresh(&mut self) -> Vec<Action> {
+    pub(super) fn refresh(&mut self) -> Vec<Action> {
         let mut actions = vec![Action::LoadChannels];
         if let Some(c) = &self.current_channel {
             actions.push(Action::LoadHistory(c.clone()));

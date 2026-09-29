@@ -7,8 +7,17 @@ use crate::tui::firehose;
 impl App {
     pub(super) fn apply_live(&mut self, event: rtm::Event) -> Vec<Action> {
         match event {
-            rtm::Event::Connected => self.live = Live::Connected,
-            rtm::Event::Disconnected(_) => self.live = Live::Connecting,
+            rtm::Event::Connected => {
+                let missed = std::mem::replace(&mut self.live, Live::Connected) == Live::Reconnecting;
+                if missed {
+                    return self.refresh();
+                }
+            }
+            rtm::Event::Disconnected(_) => {
+                if self.live == Live::Connected {
+                    self.live = Live::Reconnecting;
+                }
+            }
             rtm::Event::GaveUp(reason) => self.live = Live::Polling(reason),
             rtm::Event::Message { channel, message } => {
                 let line = LiveLine::from_message(&channel, &message);

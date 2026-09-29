@@ -766,6 +766,20 @@ fn polling_only_when_feed_is_down() {
 }
 
 #[test]
+fn a_reconnect_reloads_what_the_feed_missed_but_the_first_connect_does_not() {
+    let mut app = loaded();
+    app.handle_key(code(KeyCode::Enter));
+    app.apply(history(vec![msg("1", "a")]));
+    live(&mut app, rtm::Event::Disconnected("refused".into()));
+    assert_eq!(live(&mut app, rtm::Event::Connected), vec![]);
+    live(&mut app, rtm::Event::Disconnected("dropped".into()));
+    assert_eq!(app.live, Live::Reconnecting);
+    live(&mut app, rtm::Event::Disconnected("still down".into()));
+    assert_eq!(live(&mut app, rtm::Event::Connected), vec![Action::LoadChannels, Action::LoadHistory("C1".into())]);
+    assert_eq!(app.live, Live::Connected);
+}
+
+#[test]
 fn refresh_keeps_selection_when_not_at_bottom() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));

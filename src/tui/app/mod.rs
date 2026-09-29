@@ -159,6 +159,8 @@ pub enum Action {
 pub enum Live {
     #[default]
     Connecting,
+    /// The feed dropped after it was up; what it missed meanwhile is reloaded once it is back.
+    Reconnecting,
     Connected,
     Polling(String),
 }
