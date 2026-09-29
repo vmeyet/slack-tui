@@ -204,7 +204,7 @@ fn composed_outcome(channel: String, thread_ts: Option<String>, composed: Result
     match composed {
         Ok(Some(text)) => Incoming::Composed { channel, thread_ts, text },
         Ok(None) => Incoming::Toast("nothing sent".into()),
-        Err(e) => Incoming::Error(e.to_string()),
+        Err(e) => Incoming::Error(format!("{e:#}")),
     }
 }
 
@@ -266,7 +266,7 @@ fn spawn(action: Action, backend: Backend, tx: mpsc::UnboundedSender<Incoming>) 
 
 async fn answer(action: Action, backend: &Backend, tx: &mpsc::UnboundedSender<Incoming>) {
     let outcome = perform(action, backend).await;
-    let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(e.to_string())));
+    let _ = tx.send(outcome.unwrap_or_else(|e| Incoming::Error(format!("{e:#}"))));
 }
 
 /// The list is always fetched again; the disk copy only stands in when Slack cannot be reached.
@@ -313,7 +313,7 @@ async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
             let done = if on { slack.react(&channel, &ts, &name).await } else { slack.unreact(&channel, &ts, &name).await };
             Ok(match done {
                 Ok(()) => Incoming::Toast(String::new()),
-                Err(e) => Incoming::ReactFailed { ts, name, on, error: e.to_string() },
+                Err(e) => Incoming::ReactFailed { ts, name, on, error: format!("{e:#}") },
             })
         }
         Action::LoadEmoji => Ok(Incoming::Emoji {
