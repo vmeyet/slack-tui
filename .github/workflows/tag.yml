@@ -1,0 +1,17 @@
+name: Tag
+on:
+  push:
+    branches: [main]
+    paths: [Cargo.toml]
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ssh-key: ${{ secrets.RELEASE_TAGGER_KEY }}
+          fetch-tags: true
+      - run: |
+          tag="v$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          git rev-parse -q --verify "refs/tags/$tag" && exit 0
+          git tag "$tag" && git push origin "$tag"
