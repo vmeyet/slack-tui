@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
     paths: [Cargo.toml]
+permissions:
+  contents: read
 jobs:
   tag:
     runs-on: ubuntu-latest
