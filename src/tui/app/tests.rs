@@ -303,6 +303,85 @@ fn a_reply_row_completes_nothing_and_keeps_its_arrows() {
     assert_eq!(app.buffer.text(), "rocket", "→ moved the cursor back to the end");
 }
 
+/// `reading()` with the reply row open on `typed`.
+fn replying(typed: &str) -> App {
+    let mut app = reading();
+    app.handle_key(key('r'));
+    for c in typed.chars() {
+        app.handle_key(key(c));
+    }
+    app
+}
+
+#[test]
+fn tab_completes_an_emoji_name_and_cycles_until_another_key() {
+    let mut app = replying("ship it :rocke");
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "ship it :rocket: ");
+    assert!(app.completion_hint().unwrap().starts_with("[🚀 rocket]"), "{:?}", app.completion_hint());
+    app.handle_key(code(KeyCode::Tab));
+    assert_ne!(app.buffer.text(), "ship it :rocket: ", "a second tab takes the next name");
+    app.handle_key(code(KeyCode::BackTab));
+    assert_eq!(app.buffer.text(), "ship it :rocket: ");
+    app.handle_key(key('!'));
+    assert_eq!(app.buffer.text(), "ship it :rocket: !");
+    assert_eq!(app.completion_hint(), None, "typing ends the cycle");
+}
+
+#[test]
+fn tab_completes_the_word_under_the_cursor_and_leaves_the_rest() {
+    let mut app = replying("hey @viv how");
+    for _ in 0.." how".len() {
+        app.handle_key(code(KeyCode::Left));
+    }
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "hey @vivien how");
+    app.handle_key(key('!'));
+    let actions = app.handle_key(code(KeyCode::Enter));
+    assert_eq!(actions, vec![Action::Send { channel: "C1".into(), thread_ts: None, text: "hey @vivien! how".into() }]);
+}
+
+#[test]
+fn tab_completes_channels_by_the_name_sending_resolves() {
+    let mut app = reading();
+    app.channels.push(ChannelRow::new("G1", "🔒secret", Kind::Private));
+    app.channels.push(ChannelRow::new("D1", "@bob", Kind::Dm));
+    app.handle_key(key('r'));
+    app.handle_key(key('#'));
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.completion_hint().as_deref(), Some("[#general]  #random  #secret"), "a direct message is no channel");
+    app.handle_key(key('x'));
+    for c in " #sec".chars() {
+        app.handle_key(key(c));
+    }
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "#general x #secret ");
+}
+
+#[test]
+fn tab_leaves_smileys_times_and_plain_words_alone() {
+    for typed in ["see you :)", "at 10:30", "rocke", "@nobody"] {
+        let mut app = replying(typed);
+        app.handle_key(code(KeyCode::Tab));
+        assert_eq!(app.buffer.text(), typed);
+        assert_eq!(app.completion_hint(), None, "{typed}");
+    }
+}
+
+#[test]
+fn tab_completes_nothing_in_the_filter_or_the_search() {
+    let mut app = loaded();
+    app.handle_key(key('/'));
+    app.handle_key(key('#'));
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "#");
+    app.handle_key(code(KeyCode::Esc));
+    app.handle_key(key('s'));
+    app.handle_key(key('@'));
+    app.handle_key(code(KeyCode::Tab));
+    assert_eq!(app.buffer.text(), "@");
+}
+
 #[test]
 fn reply_in_channel_sends_and_reloads() {
     let mut app = loaded();

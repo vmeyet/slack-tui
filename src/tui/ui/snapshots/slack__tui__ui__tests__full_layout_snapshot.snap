@@ -19,4 +19,4 @@ expression: stable
 "│                        ││                                      ││                                          │"
 "╰────────────────────────╯╰──────────────────────────────────────╯╰──────────────────────────────────────────╯"
 " reply to #general ▸ typing…▌                                                                                 "
-" ○ C1                                                                                enter send · esc cancel  "
+" ○ C1                                        tab completes :emoji @person #channel · enter send · esc cancel  "

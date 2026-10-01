@@ -5,7 +5,7 @@ use crate::fuzzy;
 const MAX: usize = 50;
 
 /// The candidates for `token`, best first; an empty token offers the head of the list.
-pub fn rank(token: &str, candidates: &[String]) -> Vec<String> {
+fn rank(token: &str, candidates: &[String]) -> Vec<String> {
     if token.is_empty() {
         return candidates.iter().take(MAX).cloned().collect();
     }
@@ -31,18 +31,21 @@ pub fn ghost(token: &str, candidates: &[String]) -> Option<String> {
     Some(best[rest..].to_owned())
 }
 
-/// The candidates one token is being cycled through, until the text changes again.
+/// A token replaced in turn by each of its candidates, the text on both sides of it kept as typed.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Cycle {
+pub struct Swap {
+    before: String,
+    after: String,
     options: Vec<String>,
     at: usize,
 }
 
-impl Cycle {
-    /// Starts on the best candidate for `token`, or nothing when none matches.
-    pub fn new(token: &str, candidates: &[String]) -> Option<Self> {
+impl Swap {
+    /// Starts on the best candidate for `token`, which sits between `before` and `after`, or
+    /// nothing when none matches.
+    pub fn new(before: &str, token: &str, after: &str, candidates: &[String]) -> Option<Self> {
         let options = rank(token, candidates);
-        (!options.is_empty()).then_some(Self { options, at: 0 })
+        (!options.is_empty()).then(|| Self { before: before.to_owned(), after: after.to_owned(), options, at: 0 })
     }
 
     pub fn advance(&mut self, backwards: bool) {
@@ -50,8 +53,9 @@ impl Cycle {
         self.at = if backwards { (self.at + n - 1) % n } else { (self.at + 1) % n };
     }
 
-    pub fn current(&self) -> &str {
-        &self.options[self.at]
+    /// The text up to the end of the candidate in hand, and the rest.
+    pub fn text(&self) -> (String, &str) {
+        (format!("{}{}", self.before, self.options[self.at]), &self.after)
     }
 
     /// The row shown while cycling: the option in hand between brackets, then the next few.
@@ -99,23 +103,29 @@ mod tests {
         assert_eq!(ghost("@İ", &people).as_deref(), Some("lker"));
     }
 
+    fn swap(token: &str) -> Swap {
+        Swap::new("go ", token, " now", &candidates()).expect("matches")
+    }
+
     #[test]
     fn cycling_walks_the_candidates_both_ways_and_wraps() {
-        let mut cycle = Cycle::new("rock", &candidates()).expect("matches");
-        assert_eq!(cycle.current(), "rock");
-        cycle.advance(false);
-        assert_eq!(cycle.current(), "rocket");
-        cycle.advance(false);
-        assert_eq!(cycle.current(), "rock", "two matches, so it wraps");
-        cycle.advance(true);
-        assert_eq!(cycle.current(), "rocket");
-        assert_eq!(Cycle::new("zzz", &candidates()), None);
+        let mut swap = swap("rock");
+        assert_eq!(swap.text(), ("go rock".to_owned(), " now"));
+        swap.advance(false);
+        assert_eq!(swap.text(), ("go rocket".to_owned(), " now"), "the text around the token stays put");
+        swap.advance(false);
+        assert_eq!(swap.text().0, "go rock", "two matches, so it wraps");
+        swap.advance(true);
+        assert_eq!(swap.text().0, "go rocket");
+        assert_eq!(Swap::new("", "zzz", "", &candidates()), None);
     }
 
     #[test]
     fn the_hint_marks_the_option_in_hand_and_labels_them_all() {
-        let cycle = Cycle::new("rock", &candidates()).expect("matches");
-        assert_eq!(cycle.hint(str::to_owned), "[rock]  rocket");
-        assert_eq!(cycle.hint(|o| format!("· {o}")), "[· rock]  · rocket");
+        let mut swap = swap("rock");
+        assert_eq!(swap.hint(str::to_owned), "[rock]  rocket");
+        assert_eq!(swap.hint(|o| format!("· {o}")), "[· rock]  · rocket");
+        swap.advance(false);
+        assert_eq!(swap.hint(str::to_owned), "[rocket]");
     }
 }

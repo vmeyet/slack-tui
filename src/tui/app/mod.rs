@@ -1,4 +1,5 @@
 mod commands;
+mod complete;
 mod feedback;
 mod incoming;
 mod keys;
@@ -43,6 +44,13 @@ pub enum Input {
     Filter,
     Search,
     InboxReply { item: Item },
+}
+
+impl Input {
+    /// A message on its way out, where `:emoji`, `@person` and `#channel` complete.
+    pub fn is_message(&self) -> bool {
+        matches!(self, Input::Reply { .. } | Input::InboxReply { .. } | Input::Edit { .. })
+    }
 }
 
 /// What sits over the panes and the screen and takes every key; one at a time.

@@ -284,7 +284,9 @@ impl App {
 
     fn handle_input_key(&mut self, key: KeyEvent) -> Vec<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let cycling = self.completion.take();
         match key.code {
+            KeyCode::Tab | KeyCode::BackTab => self.complete(cycling, key.code == KeyCode::BackTab),
             KeyCode::Esc => {
                 if self.filtering() {
                     self.filter.clear();
@@ -322,6 +324,7 @@ impl App {
     pub(super) fn close_input(&mut self) {
         self.overlay = None;
         self.buffer.clear();
+        self.completion = None;
     }
 
     fn filtering(&self) -> bool {
@@ -349,6 +352,7 @@ impl App {
 
     pub(super) fn start_input(&mut self, input: Input, initial: String) {
         self.buffer = Field::new(initial);
+        self.completion = None;
         self.overlay = Some(Overlay::Input(input));
     }
 

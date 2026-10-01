@@ -3,6 +3,7 @@ use crate::api::{File, Message, SearchMatch};
 use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
 use crate::resolve::NameBook;
+use crate::tui::complete::Swap;
 use crate::tui::field::Field;
 use crate::tui::images::Thumbs;
 use crate::tui::inbox::Inbox;
@@ -33,6 +34,8 @@ pub struct App {
     pub(in crate::tui) overlay: Option<Overlay>,
     pub(in crate::tui) screen: Option<Screen>,
     pub(in crate::tui) buffer: Field,
+    /// The word tab is cycling through candidates for, until another key.
+    pub(in crate::tui) completion: Option<Swap>,
     /// How often each emoji was put on a message, most used first in the picker.
     pub(in crate::tui) favorites: HashMap<String, u32>,
     pub(in crate::tui) custom_emoji: Vec<String>,
@@ -100,6 +103,7 @@ impl Default for App {
             overlay: None,
             screen: None,
             buffer: Field::default(),
+            completion: None,
             favorites: HashMap::new(),
             custom_emoji: Vec::new(),
             toast: None,
