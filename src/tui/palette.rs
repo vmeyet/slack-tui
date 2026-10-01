@@ -1,5 +1,5 @@
 //! The `:` command line: typed verbs with fuzzy tab completion and history.
-use super::complete::{self, Cycle};
+use super::complete::{self, Swap};
 use crate::fuzzy;
 use crate::inbox::Snooze;
 
@@ -143,14 +143,7 @@ pub struct Palette {
     pub input: String,
     pub history: Vec<String>,
     history_at: Option<usize>,
-    cycle: Option<Cycling>,
-}
-
-/// A cycle over the last token, and the line before it that stays put.
-#[derive(Debug)]
-struct Cycling {
-    prefix: String,
-    cycle: Cycle,
+    cycle: Option<Swap>,
 }
 
 impl Palette {
@@ -170,19 +163,16 @@ impl Palette {
 
     /// Replaces the token being typed with the next candidate; `candidates` supplies the
     /// labels for the slot under the cursor.
-    #[allow(clippy::expect_used)]
     pub fn complete(&mut self, candidates: &[String], backwards: bool) {
-        if let Some(cycling) = &mut self.cycle {
-            cycling.cycle.advance(backwards);
+        if let Some(swap) = &mut self.cycle {
+            swap.advance(backwards);
         } else {
             let (prefix, token) = split_last_token(&self.input);
-            let Some(cycle) = Cycle::new(token, candidates) else { return };
-            self.cycle = Some(Cycling { prefix: prefix.to_owned(), cycle });
+            self.cycle = Swap::new(prefix, token, "", candidates);
         }
-        let cycling = self.cycle.as_ref().expect("set above");
-        let chosen = cycling.cycle.current();
-        let trailing = if chosen.ends_with('=') { "" } else { " " };
-        self.input = format!("{}{chosen}{trailing}", cycling.prefix);
+        let Some(swap) = &self.cycle else { return };
+        self.input = swap.text().0;
+        self.end_token();
     }
 
     /// The grey text zsh-style autosuggestion would show after the cursor: the rest of the
@@ -199,14 +189,19 @@ impl Palette {
     pub fn accept(&mut self, candidates: &[String]) {
         if let Some(rest) = self.ghost(candidates) {
             self.input.push_str(&rest);
-            if !self.input.ends_with('=') {
-                self.input.push(' ');
-            }
+            self.end_token();
+        }
+    }
+
+    /// A space so the next token can start, unless a `key=` waits for its value.
+    fn end_token(&mut self) {
+        if !self.input.ends_with('=') {
+            self.input.push(' ');
         }
     }
 
     pub fn hint(&self) -> Option<String> {
-        Some(self.cycle.as_ref()?.cycle.hint(str::to_owned))
+        Some(self.cycle.as_ref()?.hint(str::to_owned))
     }
 
     pub fn history_up(&mut self) {

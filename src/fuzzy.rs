@@ -132,7 +132,7 @@ mod tests {
         let verbs = ["join", "leave", "go", "msg"];
         assert_eq!(suggestions("jion", verbs, 3), vec!["join"]);
         assert_eq!(suggestions("lev", verbs, 3), vec!["leave"]);
-        assert!(suggestions("zzzzzz", verbs, 3).is_empty());
+        assert_eq!(suggestions("zzzzzz", verbs, 3), [] as [&str; 0]);
     }
 
     #[test]

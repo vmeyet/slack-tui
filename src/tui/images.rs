@@ -174,7 +174,7 @@ mod tests {
             thumbs.wanted(&files),
             vec![("F1".to_string(), "https://files.slack.com/t.png".to_string()), ("F2".into(), "https://files.slack.com/t.png".into())]
         );
-        assert!(thumbs.wanted(&files).is_empty());
+        assert_eq!(thumbs.wanted(&files), [] as [(String, String); 0]);
         thumbs.arrived("F1", decode(&png(8, 8)));
         assert!(thumbs.loading(), "F2 is still on its way");
         thumbs.arrived("F2", None);
@@ -183,7 +183,7 @@ mod tests {
         assert!(matches!(thumbs.get("F2"), Some(Thumb::Failed)));
         thumbs.keep_only(["F2".to_string()]);
         assert!(thumbs.get("F1").is_none() && thumbs.get("F2").is_some());
-        assert!(Thumbs::off().wanted(&files).is_empty());
+        assert_eq!(Thumbs::off().wanted(&files), [] as [(String, String); 0]);
     }
 
     #[test]

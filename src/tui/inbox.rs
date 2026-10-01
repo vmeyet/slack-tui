@@ -223,7 +223,7 @@ mod tests {
         inbox.set_items(vec![item("a", Kind::Dm), item("b", Kind::Mention), item("c", Kind::Thread)]);
         assert_eq!(inbox.items.iter().map(|i| i.key.as_str()).collect::<Vec<_>>(), ["a"]);
         assert_eq!(inbox.read_all().len(), 1);
-        assert!(inbox.items.is_empty());
+        assert_eq!(inbox.items, [] as [crate::inbox::Item; 0]);
         assert!(inbox.read_selected().is_none());
     }
 

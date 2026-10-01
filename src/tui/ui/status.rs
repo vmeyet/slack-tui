@@ -37,6 +37,7 @@ fn live_dot(live: &Live, theme: &Theme) -> (&'static str, Style) {
 fn hints(app: &App) -> String {
     let cycling = match &app.overlay {
         Some(Overlay::Palette(palette)) => palette.hint(),
+        Some(Overlay::Input(_)) => app.completion_hint(),
         _ => None,
     };
     let hints = cycling.as_deref().unwrap_or(key_hints(app));
@@ -51,6 +52,7 @@ fn key_hints(app: &App) -> &'static str {
         (Some(Overlay::React(pick)), _) if pick.search.is_some() => "type a name · ←/→ move · enter react · esc cancel",
         (Some(Overlay::React(_)), _) => "1-8 react · h/l move · enter react · / search · esc cancel",
         (Some(Overlay::Palette(_)), _) => "tab cycle · → accept · ↑ history · enter run · esc cancel",
+        (Some(Overlay::Input(input)), _) if input.is_message() => "tab completes :emoji @person #channel · enter send · esc cancel",
         (Some(Overlay::Input(_)), _) => "enter send · esc cancel",
         (_, Focus::Channels) => "j/k move · enter open · / filter · ^k jump · ? more",
         (_, Focus::Messages) => "j/k move · enter thread · r reply · + react · ? more",
@@ -97,7 +99,7 @@ mod tests {
     fn a_failed_update_check_shows_nothing_and_wakes_nothing() {
         let mut app = App::new();
         let redraw_in = app.redraw_in();
-        assert!(app.apply(Incoming::Latest(None)).is_empty());
+        assert_eq!(app.apply(Incoming::Latest(None)), [] as [crate::tui::app::Action; 0]);
         assert!(!status_bar(&mut app).contains("update available"));
         assert_eq!(app.redraw_in(), redraw_in);
     }

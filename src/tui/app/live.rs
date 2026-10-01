@@ -158,6 +158,6 @@ mod tests {
         assert_eq!(reactions[0].count, 1);
         adjust_reaction(&mut reactions, "tada", "U1", false);
         adjust_reaction(&mut reactions, "tada", "U1", false);
-        assert!(reactions.is_empty());
+        assert_eq!(reactions, [] as [crate::api::types::Reaction; 0]);
     }
 }
