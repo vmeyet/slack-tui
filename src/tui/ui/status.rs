@@ -99,7 +99,7 @@ mod tests {
     fn a_failed_update_check_shows_nothing_and_wakes_nothing() {
         let mut app = App::new();
         let redraw_in = app.redraw_in();
-        assert!(app.apply(Incoming::Latest(None)).is_empty());
+        assert_eq!(app.apply(Incoming::Latest(None)), [] as [crate::tui::app::Action; 0]);
         assert!(!status_bar(&mut app).contains("update available"));
         assert_eq!(app.redraw_in(), redraw_in);
     }

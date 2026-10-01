@@ -161,6 +161,6 @@ mod tests {
         let mut j = jump();
         j.type_char('>');
         assert!(j.is_search());
-        assert!(j.matches().is_empty());
+        assert_eq!(j.matches(), [] as [crate::tui::jump::Candidate; 0]);
     }
 }

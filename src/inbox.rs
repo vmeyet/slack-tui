@@ -465,7 +465,7 @@ mod tests {
     fn read_items_hide_until_something_newer() {
         let mut state = State::default();
         state.mark_read("a", "5");
-        assert!(state.visible(vec![item("a", "5")], at(0)).is_empty());
+        assert_eq!(state.visible(vec![item("a", "5")], at(0)), [] as [crate::inbox::Item; 0]);
         assert_eq!(state.visible(vec![item("a", "6")], at(0)).len(), 1);
     }
 
@@ -619,6 +619,6 @@ mod tests {
             .respond_with(ok(json!({"ok": false, "error": "unknown_method"})))
             .mount(&server)
             .await;
-        assert!(fetched(&server).await.is_empty());
+        assert_eq!(fetched(&server).await, [] as [crate::inbox::Item; 0]);
     }
 }

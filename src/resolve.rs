@@ -630,7 +630,7 @@ mod tests {
         assert_eq!(d.conversations(false).len(), 1);
         d.learn_dm_users().await.unwrap();
         d.learn_dm_users().await.unwrap();
-        assert!(d.conversations(false).is_empty());
+        assert_eq!(d.conversations(false), [] as [(crate::api::types::Channel, String); 0]);
     }
 
     #[tokio::test]

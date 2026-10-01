@@ -342,7 +342,7 @@ mod tests {
         let texts: Vec<&str> = block.iter().map(|r| r[0].text.as_str()).collect();
         assert_eq!(texts, vec!["", "fn a() {", "", "    x", "}", ""]);
         assert!(block.iter().all(|r| r.len() == 1 && r[0].style == Style::Block));
-        assert!(rows.last().unwrap().is_empty());
+        assert_eq!(rows.last().unwrap().as_slice(), []);
     }
 
     #[test]

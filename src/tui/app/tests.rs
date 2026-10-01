@@ -112,7 +112,7 @@ fn stale_history_is_ignored() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));
     app.apply(Incoming::History { channel: "C9".into(), messages: vec![msg("1", "a")], names: NameBook::default() });
-    assert!(app.conversation.messages.is_empty());
+    assert_eq!(app.conversation.messages, [] as [crate::api::types::Message; 0]);
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn filter_follows_an_edit_made_mid_text() {
     app.handle_key(code(KeyCode::Left));
     app.handle_key(key('e'));
     assert_eq!(app.filter, "raen");
-    assert!(app.visible_channels().is_empty());
+    assert_eq!(app.visible_channels(), [] as [&crate::tui::app::sidebar::ChannelRow; 0]);
     app.handle_key(code(KeyCode::Backspace));
     assert_eq!(app.filter, "ran");
     assert_eq!(app.visible_channels().len(), 1);
@@ -235,7 +235,7 @@ fn picking_one_of_mine_takes_it_off() {
     app.handle_key(key('+'));
     let actions = app.handle_key(code(KeyCode::Enter));
     assert_eq!(actions, vec![Action::React { channel: "C1".into(), ts: "1".into(), name: "tada".into(), on: false }]);
-    assert!(app.conversation.messages[0].reactions.is_empty());
+    assert_eq!(app.conversation.messages[0].reactions, [] as [crate::api::types::Reaction; 0]);
 }
 
 #[test]
@@ -276,7 +276,7 @@ fn backspace_on_an_empty_search_goes_back_to_the_strip_and_esc_closes() {
     assert_eq!(picker(&app).map(|p| p.search.is_none()), Some(true));
     assert_eq!(app.handle_key(code(KeyCode::Esc)), vec![]);
     assert!(picker(&app).is_none());
-    assert!(app.conversation.messages[0].reactions.is_empty());
+    assert_eq!(app.conversation.messages[0].reactions, [] as [crate::api::types::Reaction; 0]);
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn a_refused_reaction_is_put_back() {
     let mut app = picking();
     app.handle_key(key('1'));
     app.apply(Incoming::ReactFailed { ts: "1".into(), name: "+1".into(), on: true, error: "too_many_reactions".into() });
-    assert!(app.conversation.messages[0].reactions.is_empty());
+    assert_eq!(app.conversation.messages[0].reactions, [] as [crate::api::types::Reaction; 0]);
     assert_eq!(app.status_line(), "✗ no reaction: too_many_reactions");
 }
 
@@ -813,7 +813,7 @@ fn live_edit_delete_and_reactions() {
     live(&mut app, react("U1", false));
     assert_eq!(app.conversation.messages[0].reactions[0].users, vec!["U2"]);
     live(&mut app, react("U2", false));
-    assert!(app.conversation.messages[0].reactions.is_empty());
+    assert_eq!(app.conversation.messages[0].reactions, [] as [crate::api::types::Reaction; 0]);
     live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "2".into() });
     assert_eq!(app.conversation.messages.len(), 1);
     assert_eq!(app.message_selected, 0);
@@ -968,7 +968,7 @@ fn inbox_read_snooze_reply_and_open() {
     assert!(inbox(&app).unwrap().picking_snooze);
     let actions = app.handle_key(key('3'));
     assert!(matches!(&actions[0], Action::SaveInbox { state, .. } if state.snoozed.contains_key("b")));
-    assert!(inbox(&app).unwrap().items.is_empty());
+    assert_eq!(inbox(&app).unwrap().items, [] as [crate::inbox::Item; 0]);
     app.apply(Incoming::Inbox { items: vec![inbox_item("c")], names: NameBook::default() });
     app.handle_key(key('r'));
     for c in "ok".chars() {
@@ -1107,7 +1107,7 @@ fn triage_failure_turns_it_off_with_one_notice() {
 #[test]
 fn promises_need_triage_and_open_as_results_to_jump_to() {
     let mut app = loaded();
-    assert!(app.handle_key(key('p')).is_empty());
+    assert_eq!(app.handle_key(key('p')), [] as [crate::tui::app::Action; 0]);
     assert_eq!(app.status_line(), "promises need Jev: set `[typesafe] enabled = true`");
     app.triage = true;
     assert_eq!(app.handle_key(key('p')), vec![Action::LoadPromises]);
@@ -1285,7 +1285,7 @@ fn delete_asks_first_and_only_y_goes_through() {
     assert_eq!(pending_delete(&app), None);
     assert_eq!(app.conversation.messages.len(), 1, "the screen waits for the live event");
     live(&mut app, rtm::Event::Deleted { channel: "C1".into(), ts: "1".into() });
-    assert!(app.conversation.messages.is_empty());
+    assert_eq!(app.conversation.messages, [] as [crate::api::types::Message; 0]);
 }
 
 #[test]
