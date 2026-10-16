@@ -39,6 +39,7 @@ impl Names for NoNames {
 
 static ANGLE: LazyLock<Regex> = LazyLock::new(|| regex(r"<([^<>]+)>"));
 static EMOJI: LazyLock<Regex> = LazyLock::new(|| regex(r"^:([a-z0-9_+-]+(?:::skin-tone-\d)?):"));
+static BARE_MENTION: LazyLock<Regex> = LazyLock::new(|| regex(r"<([@#])([A-Z0-9]+)>"));
 
 pub fn parse(text: &str, names: &dyn Names) -> Vec<Segment> {
     let mut out = Vec::new();
@@ -50,6 +51,16 @@ pub fn parse(text: &str, names: &dyn Names) -> Vec<Segment> {
     }
     push_formatted(&mut out, &text[last..]);
     out
+}
+
+/// `<@U1>` becomes `<@U1|vivien>`: the link keeps its id, and gains the name Slack left out.
+pub fn label_mentions(text: &str, names: &dyn Names) -> String {
+    let label = |c: &regex::Captures| {
+        let (sigil, id) = (&c[1], &c[2]);
+        let name = if sigil == "@" { names.user(id) } else { names.channel(id) };
+        name.map_or_else(|| c[0].to_owned(), |name| format!("<{sigil}{id}|{name}>"))
+    };
+    BARE_MENTION.replace_all(text, label).into_owned()
 }
 
 pub fn plain(text: &str, names: &dyn Names) -> String {
@@ -266,6 +277,14 @@ mod tests {
     #[test]
     fn entities_are_unescaped() {
         assert_eq!(plain("a &amp; b &lt;c&gt;", &NoNames), "a & b <c>");
+    }
+
+    #[test]
+    fn label_mentions_names_bare_links_only() {
+        assert_eq!(
+            label_mentions("hey <@U1> in <#C1>, <@U1|vee> <#C1|gen> <@U9> <#C9> <!here> <https://a.io>", &Fake),
+            "hey <@U1|vivien> in <#C1|general>, <@U1|vee> <#C1|gen> <@U9> <#C9> <!here> <https://a.io>"
+        );
     }
 
     #[test]

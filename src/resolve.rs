@@ -25,6 +25,7 @@ struct Known {
     users: Vec<User>,
     groups: Vec<Group>,
     user_at: HashMap<String, usize>,
+    looked_up: HashSet<String>,
     names: NameBook,
     channels_fresh: bool,
     users_fresh: bool,
@@ -185,10 +186,15 @@ impl Directory {
         if ids.is_empty() {
             return Ok(());
         }
-        let found = in_parallel(ids, |id| async move { Ok(self.slack.user_info(&id).await.ok()) }).await?;
+        self.lock().looked_up.extend(ids.iter().cloned());
+        let found: Vec<User> =
+            in_parallel(ids, |id| async move { Ok(self.slack.user_info(&id).await.ok()) }).await?.into_iter().flatten().collect();
+        if found.is_empty() {
+            return Ok(());
+        }
         let users = {
             let mut known = self.lock();
-            known.add_users(found.into_iter().flatten().collect());
+            known.add_users(found);
             known.users.clone()
         };
         self.cache.save("users", &users).await
@@ -310,7 +316,7 @@ impl Known {
     }
 
     fn unknown_users(&self, ids: &[String]) -> Vec<String> {
-        let mut unknown: Vec<String> = ids.iter().filter(|id| self.user(id).is_none()).cloned().collect();
+        let mut unknown: Vec<String> = ids.iter().filter(|id| self.user(id).is_none() && !self.looked_up.contains(*id)).cloned().collect();
         unknown.sort();
         unknown.dedup();
         unknown
@@ -401,11 +407,24 @@ struct Tables {
 
 impl NameBook {
     pub fn channel_label(&self, id: &str) -> String {
-        self.0.channels.get(id).cloned().unwrap_or_else(|| id.to_owned())
+        self.channel_name(id).unwrap_or_else(|| id.to_owned())
     }
 
     pub fn user_label(&self, id: &str) -> String {
-        self.0.users.get(id).cloned().unwrap_or_else(|| id.to_owned())
+        self.user_name(id).unwrap_or_else(|| id.to_owned())
+    }
+
+    pub fn channel_name(&self, id: &str) -> Option<String> {
+        self.0.channels.get(id).cloned()
+    }
+
+    pub fn user_name(&self, id: &str) -> Option<String> {
+        self.0.users.get(id).cloned()
+    }
+
+    /// The person behind `user`, or the bot name a bot posted under.
+    pub fn author_name(&self, user: Option<&str>, username: Option<&str>) -> Option<String> {
+        user.and_then(|u| self.user_name(u)).or_else(|| username.map(str::to_owned))
     }
 
     /// Both copies share the same tables, so they know the same names.
@@ -416,10 +435,10 @@ impl NameBook {
 
 impl mrkdwn::Names for NameBook {
     fn user(&self, id: &str) -> Option<String> {
-        self.0.users.get(id).cloned()
+        self.user_name(id)
     }
     fn channel(&self, id: &str) -> Option<String> {
-        self.0.channels.get(id).map(|n| n.trim_start_matches(['#', '🔒']).to_owned())
+        self.channel_name(id).map(|n| n.trim_start_matches(['#', '🔒']).to_owned())
     }
     fn group(&self, id: &str) -> Option<String> {
         self.0.groups.get(id).cloned()
@@ -509,6 +528,18 @@ mod tests {
         d.learn_users(&messages).await.unwrap();
         assert_eq!(d.names().user_label("U9"), "bob");
         assert_eq!(d.names().user_label("U0"), "U0");
+    }
+
+    #[tokio::test]
+    async fn a_user_slack_cannot_find_is_asked_for_once() {
+        let server = MockServer::start().await;
+        Mock::given(path("/users.list")).respond_with(ok(serde_json::json!({"members": []}))).mount(&server).await;
+        Mock::given(path("/users.info")).respond_with(ResponseTemplate::new(404)).expect(1).mount(&server).await;
+        let d = directory(&server).await;
+        let ids = ["U0GHOST".to_owned()];
+        d.learn_ids(&ids).await.unwrap();
+        d.learn_ids(&ids).await.unwrap();
+        assert_eq!(d.names().user_name("U0GHOST"), None);
     }
 
     /// A directory that already listed its users, and a `users.info` for U9 that takes a while.

@@ -3,9 +3,9 @@ use crate::api::rtm;
 use crate::cli::FirehoseArgs;
 use crate::ctx::Ctx;
 use crate::firehose::{self, Highlighter, Line};
-use crate::render;
 use crate::resolve::NameBook;
 use crate::typesafe::{TypeSafe, Unavailable};
+use crate::{named, render};
 use anyhow::{Result, bail};
 use futures_util::StreamExt;
 use futures_util::stream::FuturesOrdered;
@@ -38,10 +38,9 @@ pub async fn run(ctx: &mut Ctx, args: FirehoseArgs) -> Result<()> {
                     rtm::Event::GaveUp(reason) => bail!("the live feed is unavailable: {reason}"),
                     _ => {}
                 }
-                let Some(line) = Line::from_event(&event) else { continue };
-                if let Some(user) = &line.user {
-                    ctx.dir.learn_ids(std::slice::from_ref(user)).await?;
-                }
+                let rtm::Event::Message { channel, message } = &event else { continue };
+                ctx.dir.learn_users(std::slice::from_ref(message)).await?;
+                let line = Line::from_message(channel, message);
                 pending.push_back(tagged(tagger.clone(), line, ctx.dir.names()));
             }
             Some((line, failure)) = pending.next() => {
@@ -84,10 +83,11 @@ async fn tagged(tagger: Option<Tagger>, line: Line, names: NameBook) -> (Line, O
 }
 
 fn print_line(ctx: &Ctx, line: &Line, hl: &Highlighter) -> Result<()> {
+    let names = ctx.dir.names();
     if ctx.json {
-        println!("{}", serde_json::to_string(line)?);
+        println!("{}", serde_json::to_string(&named::line(line, &names))?);
     } else {
-        print!("{}", render::firehose_line(&ctx.theme, &ctx.dir.names(), line, hl));
+        print!("{}", render::firehose_line(&ctx.theme, &names, line, hl));
     }
     std::io::stdout().flush()?;
     Ok(())

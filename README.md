@@ -100,6 +100,8 @@ If the workspace refuses the RTM websocket, the open conversation is polled ever
 ## Commands
 
 Every command takes `--json` (for scripts and agents) and `-w <workspace>`.
+In `firehose`, `inbox` and `thread` JSON, each message keeps its ids and adds `user_name` (and `channel_name` in `firehose`); bare `<@U…>` and `<#C…>` links in `text` gain their name, as in `<@U0NINA|nina>`.
+A name Slack cannot resolve is left out.
 
 ```sh
 slack send '#general' "Deploy **v2.3** is out, see [notes](https://…) cc @bob"

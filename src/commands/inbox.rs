@@ -2,8 +2,8 @@
 use crate::cli::InboxArgs;
 use crate::ctx::Ctx;
 use crate::inbox::{self, Item, State};
-use crate::render;
 use crate::typesafe::TypeSafe;
+use crate::{named, render};
 use anyhow::Result;
 use std::io::IsTerminal;
 
@@ -19,7 +19,7 @@ pub async fn run(ctx: Ctx, args: InboxArgs) -> Result<()> {
     let items = State::load(&workspace).visible(items, inbox::local_now());
     let items = if ctx.config.typesafe.enabled { ranked(&ctx, items, &me).await } else { items };
     if ctx.json {
-        return ctx.emit(&items);
+        return ctx.emit(&named::items(&items, &ctx.dir.names())?);
     }
     print!("{}", render::inbox(&ctx.theme, &ctx.dir.names(), &items));
     Ok(())
