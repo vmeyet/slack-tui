@@ -368,37 +368,98 @@ async fn raw_api_call() {
     assert_eq!(json["channel"]["id"], "C1");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn messages_follow_prints_live_events() {
+/// A live feed that says hello, sends `events`, then stays open for the command to read them.
+async fn live_feed(env: &Env, events: Vec<Value>) {
     use futures_util::SinkExt;
-    let env = Env::new().await;
-    env.mock("conversations.list", channels_payload()).await;
-    env.mock("users.list", users_payload()).await;
-    env.mock("conversations.history", json!({"messages": [{"ts": "1694700000.000100", "user": "U1", "text": "before"}]})).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let ws_url = format!("ws://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-        ws.send(json!({"type": "hello"}).to_string().into()).await.unwrap();
-        ws.send(
-            json!({"type": "message", "channel": "C1", "ts": "1694700100.000200", "user": "U2", "text": "live one"}).to_string().into(),
-        )
-        .await
-        .unwrap();
-        ws.send(
-            json!({"type": "message", "channel": "C2", "ts": "1694700100.000300", "user": "U2", "text": "other channel"})
-                .to_string()
-                .into(),
-        )
-        .await
-        .unwrap();
+        for event in std::iter::once(json!({"type": "hello"})).chain(events) {
+            ws.send(event.to_string().into()).await.unwrap();
+        }
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     });
     env.mock("rtm.connect", json!({"url": ws_url})).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn messages_follow_prints_live_events() {
+    let env = Env::new().await;
+    env.mock("conversations.list", channels_payload()).await;
+    env.mock("users.list", users_payload()).await;
+    env.mock("conversations.history", json!({"messages": [{"ts": "1694700000.000100", "user": "U1", "text": "before"}]})).await;
+    live_feed(
+        &env,
+        vec![
+            json!({"type": "message", "channel": "C1", "ts": "1694700100.000200", "user": "U2", "text": "live one"}),
+            json!({"type": "message", "channel": "C2", "ts": "1694700100.000300", "user": "U2", "text": "other channel"}),
+        ],
+    )
+    .await;
     let out = env.slack().args(["messages", "#general", "--follow"]).timeout(std::time::Duration::from_secs(2)).output().unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("before"), "{stdout}");
     assert!(stdout.contains("bob  live one"), "{stdout}");
     assert!(!stdout.contains("other channel"), "{stdout}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn firehose_json_carries_names() {
+    let env = Env::new().await;
+    env.mock("conversations.list", channels_payload()).await;
+    env.mock("users.list", users_payload()).await;
+    live_feed(
+        &env,
+        vec![
+            json!({"type": "message", "channel": "D1", "ts": "1694700100.000200", "user": "U2", "text": "ping <@U1> in <#C1>"}),
+            json!({"type": "message", "channel": "C9", "ts": "1694700100.000300", "user": "U9", "text": "who? <@U9>"}),
+        ],
+    )
+    .await;
+    let out = env.slack().args(["firehose", "--json"]).timeout(std::time::Duration::from_secs(2)).output().unwrap();
+    let lines: Vec<Value> = String::from_utf8(out.stdout).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!((&lines[0]["channel"], &lines[0]["channel_name"]), (&json!("D1"), &json!("@bob")));
+    assert_eq!((&lines[0]["user"], &lines[0]["user_name"]), (&json!("U2"), &json!("bob")));
+    assert_eq!(lines[0]["text"], "ping <@U1|vivien> in <#C1|general>");
+    assert_eq!(lines[1].get("user_name"), None);
+    assert_eq!(lines[1].get("channel_name"), None);
+    assert_eq!(lines[1]["text"], "who? <@U9>");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn thread_json_carries_names() {
+    let env = Env::new().await;
+    env.mock("conversations.list", channels_payload()).await;
+    env.mock("users.list", users_payload()).await;
+    env.mock("conversations.replies", json!({"messages": [
+        {"ts": "1694700000.000100", "user": "U1", "text": "ask <@U2> in <#C1>, not <@U2|robert>", "reply_count": 2, "thread_ts": "1694700000.000100"},
+        {"ts": "1694700100.000200", "bot_id": "B1", "username": "deploybot", "text": "done", "thread_ts": "1694700000.000100"},
+        {"ts": "1694700200.000300", "user": "U9", "text": "hi", "thread_ts": "1694700000.000100"}
+    ]}))
+    .await;
+    let json: Value = serde_json::from_str(&stdout(env.slack().args(["thread", "#general", "1694700000.000100", "--json"]))).unwrap();
+    let messages = json["messages"].as_array().unwrap();
+    assert_eq!((&messages[0]["user"], &messages[0]["user_name"]), (&json!("U1"), &json!("vivien")));
+    assert_eq!(messages[0]["text"], "ask <@U2|bob> in <#C1|general>, not <@U2|robert>");
+    assert_eq!(messages[1]["user_name"], "deploybot");
+    assert_eq!(messages[2].get("user_name"), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inbox_json_carries_names() {
+    let env = Env::new().await;
+    env.mock("auth.test", json!({"team_id": "T1", "team": "Acme", "user_id": "U1", "user": "vivien", "url": "https://acme.slack.com/"}))
+        .await;
+    env.mock("client.counts", json!({"ims": [{"id": "D1", "last_read": "1694700000.000000", "has_unreads": true}]})).await;
+    env.mock("conversations.history", json!({"messages": [{"ts": "1694700100.000200", "user": "U2", "text": "lunch <@U1>?"}]})).await;
+    env.mock("conversations.list", channels_payload()).await;
+    env.mock("users.list", users_payload()).await;
+    let json: Value = serde_json::from_str(&stdout(env.slack().args(["inbox", "--json"]))).unwrap();
+    let item = &json[0];
+    assert_eq!(item["label"], "@bob");
+    assert_eq!((&item["unread"][0]["user"], &item["unread"][0]["user_name"]), (&json!("U2"), &json!("bob")));
+    assert_eq!(item["unread"][0]["text"], "lunch <@U1|vivien>?");
 }

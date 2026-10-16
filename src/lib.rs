@@ -14,6 +14,7 @@ mod fuzzy;
 mod inbox;
 mod markdown;
 mod mrkdwn;
+mod named;
 mod pattern;
 mod permalink;
 mod promises;

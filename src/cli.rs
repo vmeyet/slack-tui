@@ -9,7 +9,7 @@ pub struct Cli {
     /// Workspace domain (the `acme` in acme.slack.com). Defaults to the last login.
     #[arg(short, long, global = true, env = "SLACK_WORKSPACE")]
     pub workspace: Option<String>,
-    /// Print machine-readable JSON instead of the pretty output.
+    /// Print machine-readable JSON instead of the pretty output. Ids come with the names they resolve to.
     #[arg(long, global = true)]
     pub json: bool,
     /// What to do. Left out on a terminal, opens the TUI.

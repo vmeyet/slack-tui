@@ -1,6 +1,5 @@
 //! One line per message across every conversation, like tailing a log.
 use crate::api::Message;
-use crate::api::rtm::Event;
 use crate::mrkdwn::{self, Names, Segment};
 use crate::resolve::NameBook;
 use crate::typesafe::{Judge, Question, Unavailable};
@@ -72,11 +71,6 @@ pub struct Line {
 }
 
 impl Line {
-    pub fn from_event(event: &Event) -> Option<Line> {
-        let Event::Message { channel, message } = event else { return None };
-        Some(Line::from_message(channel, message))
-    }
-
     pub fn from_message(channel: &str, m: &Message) -> Line {
         Line {
             ts: m.ts.clone(),
@@ -198,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn line_from_event_flattens_text() {
+    fn line_from_message_flattens_text() {
         let m = Message {
             ts: "1".into(),
             user: Some("U1".into()),
@@ -206,10 +200,9 @@ mod tests {
             thread_ts: Some("0".into()),
             ..Default::default()
         };
-        let line = Line::from_event(&Event::Message { channel: "C1".into(), message: m }).unwrap();
+        let line = Line::from_message("C1", &m);
         assert!(line.in_thread);
         assert_eq!(line.flat_text(&mrkdwn::NoNames), "hello world");
-        assert!(Line::from_event(&Event::Connected).is_none());
     }
 
     #[tokio::test]
