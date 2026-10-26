@@ -1433,6 +1433,13 @@ fn error_survives_time_and_clears_on_the_next_key() {
 }
 
 #[test]
+fn a_fetched_permalink_goes_to_the_clipboard_with_a_toast() {
+    let mut app = reading();
+    assert_eq!(app.apply(Incoming::Permalink("https://acme.slack.com/p1".into())), vec![Action::Copy("https://acme.slack.com/p1".into())]);
+    assert_eq!(app.status_line(), "permalink copied");
+}
+
+#[test]
 fn key_that_fails_shows_its_own_error() {
     let mut app = reading();
     app.apply(Incoming::Error("boom".into()));

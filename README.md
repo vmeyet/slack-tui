@@ -7,7 +7,7 @@ One Rust binary called `slack`, ~10 ms startup.
 > **Unofficial.** It logs in with your browser session, not a Slack app, so it needs no admin approval.
 > Check that your workspace rules allow this before you use it.
 >
-> **macOS only** for now (keychain, `open`, `pbcopy`).
+> **macOS only** for now (keychain, `open`).
 >
 > **Vibe Coded** for personal usage but use at your own risks.
 
@@ -66,7 +66,7 @@ Whoever is typing in the open conversation shows under the last message.
 | `ctrl-e` | Write the message in `$EDITOR` (`$VISUAL` first, then `vi`); save to send, quit empty to cancel |
 | `+` | React: `1`–`8` from the strip (on the message, then your most used), `/` to search by name; pick one of yours again to take it off |
 | `o` / `u` | Open the message in Slack / open its first link |
-| `y` | Copy the permalink |
+| `y` | Copy the permalink through the terminal (OSC 52): works over ssh and tmux, not in macOS Terminal.app |
 | `/` | Filter channels |
 | `s` | Search |
 | `ctrl-k` | Fuzzy jump to a channel, a person or a followed thread; start with `>` to search Slack |
@@ -75,7 +75,7 @@ Whoever is typing in the open conversation shows under the last message.
 | `p` | Promises: follow-ups you said you would do and have not closed (needs triage) |
 | `z` | Reading mode: one centered column, nothing else |
 | `:` | Command line |
-| `?` | Every key |
+| `?` | Every key; `j` `k` scroll |
 
 `⌘k` also works on terminals that forward it (Ghostty, Kitty, WezTerm, iTerm2 with the kitty keyboard protocol).
 

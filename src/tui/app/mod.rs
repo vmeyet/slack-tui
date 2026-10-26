@@ -145,6 +145,8 @@ pub enum Action {
         channel: String,
         ts: String,
     },
+    /// Put the text on the clipboard; the event loop writes it between two frames.
+    Copy(String),
     LoadInbox,
     /// Ask Jev how pressing each inbox item is.
     Prioritize(Vec<Item>),
@@ -262,6 +264,8 @@ pub enum Incoming {
         text: String,
     },
     SearchResults(Vec<SearchMatch>),
+    /// A permalink to put on the clipboard.
+    Permalink(String),
     Toast(String),
     /// The daily update check answered, `None` when it could not.
     Latest(Option<String>),

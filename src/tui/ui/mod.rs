@@ -20,9 +20,10 @@ use super::app::{App, Focus, Overlay, Screen};
 use pictures::Placement;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding};
+use vtui::pane::fade;
 use vtui::theme::Theme;
 
 /// Breathing room between the border and the text.
@@ -63,13 +64,13 @@ fn draw_panes(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Plac
         pictures.extend(thread::draw(f, app, right));
     }
     if app.focus != Focus::Channels || modal {
-        fade(f, left, app.theme.faded);
+        fade(f, left, &app.theme, app.theme.faded);
     }
     if app.focus != Focus::Messages || modal {
-        fade(f, middle, if modal { app.theme.faded } else { app.theme.muted });
+        fade(f, middle, &app.theme, if modal { app.theme.faded } else { app.theme.muted });
     }
     if app.conversation.thread.is_some() && (app.focus != Focus::Thread || modal) {
-        fade(f, right, app.theme.faded);
+        fade(f, right, &app.theme, app.theme.faded);
     }
     pictures
 }
@@ -81,7 +82,7 @@ fn draw_reading(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Pl
     let column = Rect { x: area.x + (area.width - width) / 2, width, ..area };
     let pictures = if app.conversation.thread.is_some() { thread::draw(f, app, column) } else { messages::draw(f, app, column) };
     if modal {
-        fade(f, area, app.theme.faded);
+        fade(f, area, &app.theme, app.theme.faded);
     }
     pictures
 }
@@ -146,19 +147,6 @@ pub fn row_highlight(theme: &Theme, focused: bool) -> Style {
 /// content never shifts when focus moves.
 pub fn cursor_bar(theme: &Theme, focused: bool) -> Line<'static> {
     if focused { Line::from(Span::styled("▎", Style::new().fg(theme.accent))) } else { Line::from(" ") }
-}
-
-/// Repaints an area in one quiet grey so a pane recedes when it is not the focus, or when a modal is up.
-pub fn fade(f: &mut Frame, area: Rect, color: Color) {
-    let buf = f.buffer_mut();
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_fg(color);
-                cell.modifier.remove(Modifier::BOLD);
-            }
-        }
-    }
 }
 
 /// A box of `width` by `height` cells in the middle of `area`, shrunk to fit when the terminal is smaller.
