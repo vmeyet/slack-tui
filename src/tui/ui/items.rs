@@ -7,13 +7,13 @@ use crate::render::time;
 use crate::resolve::NameBook;
 use crate::tui::app::App;
 use crate::tui::images::{Thumb, Thumbs};
-use crate::tui::motion;
-use crate::tui::theme::Theme;
 use ratatui::layout::Size;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 use std::collections::HashMap;
+use vtui::motion::Motion;
+use vtui::theme::Theme;
 
 const TIME_W: usize = 5;
 /// Two border columns plus the always-reserved cursor-bar column.
@@ -36,7 +36,14 @@ pub(super) struct Viewer<'a> {
 }
 
 pub(super) fn viewer(app: &App) -> Viewer<'_> {
-    Viewer { names: &app.names, me: &app.me, theme: &app.theme, thumbs: &app.thumbs, spinner: motion::spinner(app.elapsed()), zen: app.zen }
+    Viewer {
+        names: &app.names,
+        me: &app.me,
+        theme: &app.theme,
+        thumbs: &app.thumbs,
+        spinner: Motion::Lively.spinner(app.elapsed()),
+        zen: app.zen,
+    }
 }
 
 /// How one message sits in its list.
@@ -109,9 +116,9 @@ fn message_item(
     if let Some(label) = row.day {
         let dashes = "─".repeat(width.saturating_sub(label.len() + 4));
         lines.push(Line::from(vec![
-            Span::styled("── ", Style::new().fg(theme.border)),
+            Span::styled("── ", Style::new().fg(theme.border_focus)),
             Span::styled(label.to_owned(), Style::new().fg(theme.faded)),
-            Span::styled(format!(" {dashes}"), Style::new().fg(theme.border)),
+            Span::styled(format!(" {dashes}"), Style::new().fg(theme.border_focus)),
         ]));
     }
     let time_style = if row.selected { Style::new().fg(theme.accent).bold() } else { Style::new().fg(theme.muted) };

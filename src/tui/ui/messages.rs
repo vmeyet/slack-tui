@@ -9,12 +9,13 @@ use crate::render::text;
 use crate::render::time;
 use crate::tui::app::{App, Focus, Kind};
 use crate::tui::motion;
-use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, HighlightSpacing, List, ListItem};
+use vtui::motion::Motion;
+use vtui::theme::Theme;
 
 const NAME_W: usize = 12;
 
@@ -28,7 +29,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) -> Vec<Placement> {
         "messages".to_owned()
     };
     if app.loading {
-        title.push_str(&format!(" {} loading", motion::spinner(app.elapsed())));
+        title.push_str(&format!(" {} loading", Motion::Lively.spinner(app.elapsed())));
     }
     let width = area.width.saturating_sub(BORDERS_AND_CURSOR_W) as usize;
     let bodies = std::mem::take(&mut app.message_bodies);

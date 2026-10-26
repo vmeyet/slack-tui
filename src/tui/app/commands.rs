@@ -2,11 +2,11 @@ use super::{Action, App, Focus, Input, MyMessage, Overlay, Screen};
 use crate::inbox::Snooze;
 use crate::tui::images::Thumbs;
 use crate::tui::palette::{self, Command, Format, Palette};
-use crate::tui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use vtui::theme::Theme;
 
 /// A command either yields actions or a reason it could not run, shown in the status line.
 type Outcome = Result<Vec<Action>, String>;

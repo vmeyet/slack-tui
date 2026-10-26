@@ -17,13 +17,13 @@ pub use items::Bodies;
 pub use style::{body_spans, user_style};
 
 use super::app::{App, Focus, Overlay, Screen};
-use super::theme::Theme;
 use pictures::Placement;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding};
+use vtui::theme::Theme;
 
 /// Breathing room between the border and the text.
 const MODAL_PAD_X: u16 = 2;
@@ -120,7 +120,7 @@ fn draw_overlays(f: &mut Frame, app: &mut App, main: Rect) {
 /// Quiet rounded frame; focus is carried by the title alone.
 pub fn pane(theme: &Theme, title: &str, focused: bool) -> Block<'static> {
     let title = if focused { format!(" {title} ").bold().fg(theme.accent) } else { format!(" {title} ").fg(theme.muted) };
-    Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(theme.border)).title(title)
+    Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(theme.border_focus)).title(title)
 }
 
 /// Reading mode has no frame: just the title, a breath of space, then the text.

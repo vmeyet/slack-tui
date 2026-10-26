@@ -1,11 +1,11 @@
 use crate::render::text;
 use crate::tui::app::{App, Focus, Live, Overlay};
-use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use vtui::theme::Theme;
 
 /// The connection dot and the status on the left, the key hints pushed to the right edge.
 pub(super) fn draw(f: &mut Frame, app: &App, area: Rect) {

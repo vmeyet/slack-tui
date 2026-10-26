@@ -1,12 +1,12 @@
 use super::{MODAL_FRAME_H, MODAL_FRAME_W, centered_cells, modal_pane};
 use crate::render;
 use crate::render::text;
-use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
+use vtui::theme::Theme;
 
 /// Every browse key, grouped the way a reader looks for them.
 const HELP_GROUPS: [(&str, &[(&str, &str)]); 4] = [

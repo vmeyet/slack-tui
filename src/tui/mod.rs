@@ -41,22 +41,6 @@ pub(crate) async fn run_inbox(ctx: Ctx) -> Result<()> {
     run_with(ctx, true).await
 }
 
-/// `tui.theme` picks the palette, `tui.highlight` adds a fill under the selected row.
-fn theme_from(config: &crate::config::Tui) -> Result<theme::Theme> {
-    let mut theme = match config.theme.as_deref() {
-        Some(name) => theme::Theme::named(name)
-            .ok_or_else(|| anyhow::anyhow!("config `tui.theme = \"{name}\"` is not a theme (try {})", theme::Theme::NAMES.join(", ")))?,
-        None => theme::Theme::default(),
-    };
-    if let Some(color) = config.highlight.as_deref().filter(|c| *c != "none") {
-        let parsed = color.parse().map_err(|_| {
-            anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a`, `236` or `none`)")
-        })?;
-        theme.highlight = Some(parsed);
-    }
-    Ok(theme)
-}
-
 /// The cache file counting how often each emoji was put on a message.
 const FAVORITES: &str = "favorite_emoji";
 
@@ -82,7 +66,7 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     if let Some(Err(unavailable)) = jev {
         let _ = tx.send(Incoming::TriageUnavailable(unavailable));
     }
-    let theme = theme_from(&ctx.config.tui)?;
+    let theme = theme::from_config(&ctx.config.tui)?;
     let highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
     let mut terminal = ratatui::init();
     let enhanced = enable_modifier_keys();

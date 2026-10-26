@@ -1,5 +1,4 @@
 use super::motion;
-use super::theme::Theme;
 use crate::inbox::{Item, Kind, Priority, Snooze, State, Urgency, Verdicts};
 use crate::render;
 use crate::render::time;
@@ -11,6 +10,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
 use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
+use vtui::motion::Motion;
+use vtui::theme::Theme;
 
 #[derive(Debug, Default)]
 pub struct Inbox {
@@ -93,7 +94,7 @@ pub fn draw(f: &mut Frame, inbox: &mut Inbox, names: &NameBook, area: Rect, them
     let popup = super::ui::centered_pct(area, 92, 90);
     f.render_widget(Clear, popup);
     let title = match (inbox.loading, inbox.items.len()) {
-        (true, _) => format!("inbox {} loading", motion::spinner(elapsed)),
+        (true, _) => format!("inbox {} loading", Motion::Lively.spinner(elapsed)),
         (false, 0) => "inbox · all clear".to_owned(),
         (false, n) => format!("inbox · {n}"),
     };
@@ -182,7 +183,7 @@ fn draw_snooze_picker(f: &mut Frame, theme: &Theme, area: Rect) {
         Paragraph::new(lines).block(
             Block::bordered()
                 .border_type(BorderType::Rounded)
-                .border_style(Style::new().fg(theme.border))
+                .border_style(Style::new().fg(theme.border_focus))
                 .title(" snooze for ".bold().fg(theme.warn)),
         ),
         popup,

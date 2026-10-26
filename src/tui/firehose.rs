@@ -1,4 +1,3 @@
-use super::theme::Theme;
 use crate::firehose::{Highlighter, Line as LiveLine, Tag};
 use crate::render;
 use crate::render::text;
@@ -11,6 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState};
 use std::collections::VecDeque;
 use std::ops::Range;
+use vtui::theme::Theme;
 
 pub const CAPACITY: usize = 1000;
 
