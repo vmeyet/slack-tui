@@ -5,8 +5,10 @@ use crate::inbox::Snooze;
 use crate::tui::firehose::Firehose;
 use crate::tui::jump::{Candidate, Jump, Target};
 use crate::tui::palette::{Commands, Palette};
+use crate::tui::ui::help;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use vtui::field::Field;
+use vtui::help::Help;
 use vtui::toward::Toward;
 
 impl App {
@@ -27,8 +29,8 @@ impl App {
             return self.quit_key(QuitKey::CtrlC);
         }
         match &self.overlay {
-            Some(Overlay::Help) => {
-                self.overlay = None;
+            Some(Overlay::Help(open)) => {
+                self.overlay = scroll_help(*open, key).map(Overlay::Help);
                 return vec![];
             }
             Some(Overlay::ConfirmDelete(_)) => return self.handle_confirm_key(key),
@@ -97,7 +99,7 @@ impl App {
                 }
                 return actions;
             }
-            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
+            KeyCode::Char('?') => self.overlay = Some(Overlay::help()),
             _ => {}
         }
         vec![]
@@ -226,7 +228,7 @@ impl App {
                     return actions;
                 }
             }
-            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
+            KeyCode::Char('?') => self.overlay = Some(Overlay::help()),
             _ => {}
         }
         vec![]
@@ -236,7 +238,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
-            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
+            KeyCode::Char('?') => self.overlay = Some(Overlay::help()),
             KeyCode::Tab => self.focus = self.next_focus(),
             KeyCode::BackTab => self.focus = self.prev_focus(),
             KeyCode::Char('l') | KeyCode::Right => return self.go_right(),
@@ -544,4 +546,14 @@ fn first_link(m: &Message) -> Option<String> {
         _ => None,
     });
     in_text.or_else(|| m.files.iter().map(|f| f.permalink.clone()).find(|p| !p.is_empty()))
+}
+
+/// `j k` scroll the key help; any other key closes it.
+fn scroll_help(open: Help, key: KeyEvent) -> Option<Help> {
+    let scroll = match key.code {
+        KeyCode::Char('j') | KeyCode::Down => open.scroll.saturating_add(1).min(help::last_row()),
+        KeyCode::Char('k') | KeyCode::Up => open.scroll.saturating_sub(1),
+        _ => return None,
+    };
+    Some(Help { scroll, ..open })
 }

@@ -1,7 +1,7 @@
 mod channels;
 mod confirm;
 mod empty;
-mod help;
+pub(super) mod help;
 mod input;
 mod items;
 mod messages;
@@ -112,7 +112,7 @@ fn draw_overlays(f: &mut Frame, app: &mut App, main: Rect) {
     match &mut app.overlay {
         Some(Overlay::Jump(jump)) => super::jump::draw(f, jump, main, &theme),
         Some(Overlay::ConfirmDelete(pending)) => confirm::draw(f, &theme, &app.names, pending, f.area()),
-        Some(Overlay::Help) => help::draw(f, &theme, f.area()),
+        Some(Overlay::Help(open)) => help::draw(f, &theme, f.area(), *open),
         _ => {}
     }
 }

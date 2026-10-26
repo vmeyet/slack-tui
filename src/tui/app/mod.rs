@@ -28,6 +28,7 @@ use crate::resolve::NameBook;
 use crate::typesafe::Unavailable;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use vtui::help::Help;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Focus {
@@ -56,13 +57,20 @@ impl Input {
 /// What sits over the panes and the screen and takes every key; one at a time.
 #[derive(Debug)]
 pub enum Overlay {
-    Help,
+    Help(Help),
     /// A delete waiting for its yes; nothing leaves the screen before that.
     ConfirmDelete(MyMessage),
     React(Pick),
     Input(Input),
     Palette(Palette),
     Jump(Jump),
+}
+
+impl Overlay {
+    /// The key help from the top; slack has one list, so it is every key already.
+    pub fn help() -> Self {
+        Self::Help(Help { scroll: 0, every_key: true })
+    }
 }
 
 /// A full view drawn over the panes, under any overlay.

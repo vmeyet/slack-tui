@@ -1,11 +1,7 @@
-use super::{MODAL_FRAME_H, MODAL_FRAME_W, centered_cells, modal_pane};
-use crate::render;
-use crate::render::text;
+//! The `?` overlay: every key, grouped the way a reader looks for them, then how a message is written. vtui draws it.
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use vtui::help::{Help, Row, Section};
 use vtui::theme::Theme;
 
 /// Every browse key, grouped the way a reader looks for them.
@@ -58,107 +54,65 @@ const HELP_GROUPS: [(&str, &[(&str, &str)]); 4] = [
     ),
 ];
 
-const HELP_FOOTER: &str = "messages are markdown: **bold** _italic_ `code` @user #channel";
-/// Blank columns between the key column and what the key does.
-const HELP_GUTTER: usize = 2;
-/// Bindings sit under their group name, not next to it.
-const HELP_INDENT: usize = 2;
+/// How a message is written: what is typed, and what it becomes.
+const MARKDOWN: [(&str, &str); 4] =
+    [("**bold**", "bold"), ("_italic_", "italic"), ("`code`", "code"), ("@user #channel", "a mention · a channel link")];
 
-pub(super) fn draw(f: &mut Frame, theme: &Theme, area: Rect) {
-    let lines = help_lines(theme);
-    let popup = centered_cells(area, help_width() + MODAL_FRAME_W, lines.len() as u16 + MODAL_FRAME_H);
-    let block = modal_pane(theme, "keys")
-        .title_bottom(Line::from(Span::styled(" esc or ? to close ", Style::new().fg(theme.faded))).right_aligned());
-    f.render_widget(Clear, popup);
-    f.render_widget(Paragraph::new(lines).block(block), popup);
+fn sections() -> Vec<Section> {
+    let groups = HELP_GROUPS.iter().map(|(title, bindings)| section(title, bindings));
+    groups.chain([section("markdown", &MARKDOWN)]).collect()
 }
 
-fn help_bindings() -> impl Iterator<Item = (&'static str, &'static str)> {
-    HELP_GROUPS.iter().flat_map(|(_, bindings)| bindings.iter().copied())
+fn section(title: &'static str, rows: &[(&str, &'static str)]) -> Section {
+    Section { title, rows: rows.iter().map(|(keys, does)| Row { keys: (*keys).to_owned(), does }).collect() }
 }
 
-fn help_key_width() -> usize {
-    help_bindings().map(|(key, _)| text::visible_width(key)).max().unwrap_or(0)
+/// The last row the list can scroll to.
+pub fn last_row() -> usize {
+    vtui::help::last_row(&sections())
 }
 
-/// Columns the widest row needs: a binding, a group name or the footer.
-fn help_width() -> u16 {
-    let key_w = help_key_width();
-    let bindings = help_bindings().map(|(_, what)| HELP_INDENT + key_w + HELP_GUTTER + text::visible_width(what));
-    let names = HELP_GROUPS.iter().map(|(name, _)| text::visible_width(name));
-    bindings.chain(names).chain([text::visible_width(HELP_FOOTER)]).max().unwrap_or(0) as u16
-}
-
-/// Keys in one column and their meaning in the next, a quiet header per group, the markdown
-/// note set apart at the end.
-fn help_lines(theme: &Theme) -> Vec<Line<'static>> {
-    let key_w = help_key_width();
-    let mut lines = Vec::new();
-    for (name, bindings) in HELP_GROUPS {
-        if !lines.is_empty() {
-            lines.push(Line::raw(""));
-        }
-        lines.push(Line::from(Span::styled(name, Style::new().fg(theme.faded).add_modifier(Modifier::BOLD))));
-        for (key, what) in bindings {
-            lines.push(Line::from(vec![
-                Span::raw(" ".repeat(HELP_INDENT)),
-                Span::styled(render::fit(key, key_w), Style::new().fg(theme.accent).bold()),
-                Span::raw(" ".repeat(HELP_GUTTER)),
-                Span::styled(*what, Style::new().fg(theme.muted)),
-            ]));
-        }
-    }
-    lines.push(Line::raw(""));
-    lines.push(Line::from(Span::styled(HELP_FOOTER, Style::new().fg(theme.faded))));
-    lines
+pub(super) fn draw(f: &mut Frame, theme: &Theme, area: Rect, help: Help) {
+    vtui::help::draw(f, theme, area, help, &sections());
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
-    use super::*;
     use crate::tui::app::{App, Overlay};
     use crate::tui::ui::testing::{cells, render_at};
 
-    #[test]
-    fn help_overlay_and_empty_state_render() {
-        let mut app = App::new();
-        app.overlay = Some(Overlay::Help);
-        let out = render_at(&mut app, 80, 20);
-        assert!(out.contains("keys"));
-        assert!(out.contains("reply in the focused conversation"));
-    }
-
     fn help_rows(width: u16, height: u16) -> Vec<String> {
         let mut app = App::new();
-        app.overlay = Some(Overlay::Help);
+        app.overlay = Some(Overlay::help());
         render_at(&mut app, width, height).lines().map(|row| cells(row).to_owned()).collect()
     }
 
     #[test]
-    fn every_binding_sits_whole_on_one_line_with_its_key() {
-        for (width, height) in [(80, 40), (140, 50)] {
-            let rows = help_rows(width, height);
-            for (key, what) in help_bindings() {
-                let found: Vec<&String> = rows.iter().filter(|row| row.contains(what)).collect();
-                assert_eq!(found.len(), 1, "{width}x{height}: “{what}” on {} lines", found.len());
-                assert!(found[0].contains(key), "{width}x{height}: “{what}” lost its key: {}", found[0]);
-            }
-            for note in [HELP_FOOTER, "esc or ? to close"] {
-                assert!(rows.iter().any(|row| row.contains(note)), "{width}x{height}: missing “{note}”");
-            }
+    fn a_wide_screen_lists_every_key_in_two_columns() {
+        let rows = help_rows(140, 50);
+        assert!(rows.iter().any(|row| row.contains("MOVE") && row.contains("FIND")), "{rows:#?}");
+    }
+
+    #[test]
+    fn every_key_and_the_markdown_rows_show_on_a_tall_screen() {
+        let rows = help_rows(200, 60);
+        for (keys, does) in super::HELP_GROUPS.iter().flat_map(|(_, bindings)| bindings.iter()).chain(&super::MARKDOWN) {
+            let row = rows.iter().find(|row| row.contains(does)).unwrap_or_else(|| panic!("missing “{does}”: {rows:#?}"));
+            assert!(row.contains(keys), "“{does}” lost its key: {row}");
         }
     }
 
     #[test]
-    fn descriptions_all_start_at_the_same_column() {
-        let rows = help_rows(140, 50);
-        let column = |what: &str| {
-            let row = rows.iter().find(|row| row.contains(what)).unwrap();
-            text::visible_width(&row[..row.find(what).unwrap()])
-        };
-        let columns: std::collections::HashSet<usize> = help_bindings().map(|(_, what)| column(what)).collect();
-        assert_eq!(columns.len(), 1, "descriptions start at {columns:?}");
+    fn a_short_screen_says_how_to_scroll() {
+        let rows = help_rows(80, 20);
+        assert!(rows.iter().any(|row| row.contains("j k scroll")), "{rows:#?}");
+    }
+
+    #[test]
+    fn listing_every_key_hides_the_hint_for_more() {
+        let rows = help_rows(140, 60);
+        assert!(!rows.iter().any(|row| row.contains("? every key")), "{rows:#?}");
     }
 
     #[test]
@@ -166,6 +120,5 @@ mod tests {
         let rows = help_rows(40, 12);
         assert_eq!(rows.len(), 12);
         assert!(rows.iter().any(|row| row.contains("keys")), "{rows:?}");
-        assert!(rows.iter().all(|row| text::visible_width(row) == 40), "{rows:?}");
     }
 }

@@ -164,7 +164,7 @@ impl App {
     }
 
     fn empty_state_visible(&self) -> bool {
-        if matches!(self.overlay, Some(Overlay::Jump(_) | Overlay::Help)) {
+        if matches!(self.overlay, Some(Overlay::Jump(_) | Overlay::Help(_))) {
             return false;
         }
         match &self.screen {

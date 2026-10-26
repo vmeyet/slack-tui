@@ -216,7 +216,7 @@ impl App {
     }
 
     fn show_help(&mut self) -> Vec<Action> {
-        self.overlay = Some(Overlay::Help);
+        self.overlay = Some(Overlay::help());
         vec![]
     }
 
