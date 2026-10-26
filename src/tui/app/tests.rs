@@ -1032,6 +1032,14 @@ fn jump_opens_channels_people_threads_and_search() {
 }
 
 #[test]
+fn backspace_on_an_empty_jump_closes_it() {
+    let mut app = loaded();
+    app.handle_key(ctrl('k'));
+    app.handle_key(code(KeyCode::Backspace));
+    assert!(jump(&app).is_none());
+}
+
+#[test]
 fn firehose_collects_every_channel_and_jumps() {
     let mut app = loaded();
     live(&mut app, rtm::Event::Message { channel: "C2".into(), message: msg("1", "one") });

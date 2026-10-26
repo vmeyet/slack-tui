@@ -130,11 +130,11 @@ impl App {
             KeyCode::Up | KeyCode::BackTab => jump.move_by(-1),
             KeyCode::Char('n') if ctrl => jump.move_by(1),
             KeyCode::Char('p') if ctrl => jump.move_by(-1),
-            KeyCode::Backspace => jump.backspace(),
+            KeyCode::Backspace if !jump.backspace() => self.overlay = None,
             KeyCode::Char(c) if !ctrl => jump.type_char(c),
             KeyCode::Enter => {
-                if jump.is_search() {
-                    let query = jump.query[1..].trim().to_owned();
+                if let Some(query) = jump.search() {
+                    let query = query.to_owned();
                     self.overlay = None;
                     return if query.is_empty() { vec![] } else { self.search_for(query) };
                 }
