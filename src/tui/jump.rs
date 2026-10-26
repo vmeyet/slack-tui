@@ -1,10 +1,10 @@
 use super::theme::Theme;
-use crate::fuzzy;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
+use vtui::fuzzy;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {

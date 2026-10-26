@@ -2,7 +2,6 @@
 mod app;
 mod complete;
 mod compose;
-mod field;
 mod firehose;
 mod images;
 mod inbox;

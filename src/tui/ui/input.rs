@@ -90,12 +90,12 @@ mod tests {
     use crate::render::text;
     use crate::resolve::NameBook;
     use crate::tui::app::{ChannelRow, Incoming, Kind, Overlay};
-    use crate::tui::field::Field;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use std::collections::HashMap;
+    use vtui::field::Field;
 
     /// Every cell of the input row with its colors, so a test sees what the cursor and the ghost paint.
     fn input_row(app: &mut App) -> Vec<(String, Color, Color)> {

@@ -4,7 +4,6 @@ use crate::firehose::{Highlighter, Line as LiveLine};
 use crate::inbox::State;
 use crate::resolve::NameBook;
 use crate::tui::complete::Swap;
-use crate::tui::field::Field;
 use crate::tui::images::Thumbs;
 use crate::tui::inbox::Inbox;
 use crate::tui::theme::Theme;
@@ -12,6 +11,7 @@ use crate::tui::ui::Bodies;
 use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
+use vtui::field::Field;
 
 /// What the app is started with; everything else it learns from `Incoming`.
 pub struct Settings {

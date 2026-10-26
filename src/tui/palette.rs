@@ -1,7 +1,9 @@
 //! The `:` command line: typed verbs with fuzzy tab completion and history.
-use super::complete::{self, Swap};
-use crate::fuzzy;
+use super::complete::Swap;
 use crate::inbox::Snooze;
+use vtui::complete;
+use vtui::fuzzy;
+use vtui::toward::Toward;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -165,7 +167,7 @@ impl Palette {
     /// labels for the slot under the cursor.
     pub fn complete(&mut self, candidates: &[String], backwards: bool) {
         if let Some(swap) = &mut self.cycle {
-            swap.advance(backwards);
+            swap.advance(Toward::next_if(!backwards));
         } else {
             let (prefix, token) = split_last_token(&self.input);
             self.cycle = Swap::new(prefix, token, "", candidates);

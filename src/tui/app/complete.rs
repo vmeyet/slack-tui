@@ -3,7 +3,8 @@
 use super::commands::emoji_names;
 use super::{App, Kind, Overlay};
 use crate::tui::complete::Swap;
-use crate::tui::field::Field;
+use vtui::field::Field;
+use vtui::toward::Toward;
 
 /// What a word completes to, from the mark it starts with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,9 +42,9 @@ fn label(candidate: &str) -> String {
 impl App {
     /// Tab puts the next candidate in place of the word, shift-tab the one before; `cycling` is
     /// the completion the previous key left, if that key was a tab too.
-    pub(super) fn complete(&mut self, cycling: Option<Swap>, backwards: bool) {
+    pub(super) fn complete(&mut self, cycling: Option<Swap>, toward: Toward) {
         let advanced = cycling.map(|mut swap| {
-            swap.advance(backwards);
+            swap.advance(toward);
             swap
         });
         let Some(swap) = advanced.or_else(|| self.start_completion()) else { return };

@@ -39,7 +39,7 @@ impl Pick {
 impl Search {
     fn of(query: String, custom: &[String]) -> Self {
         let names = emoji_names().iter().chain(custom).map(|name| (name.as_str(), name));
-        let found = crate::fuzzy::rank(&query, names).into_iter().map(|(_, name)| name.clone()).collect();
+        let found = vtui::fuzzy::rank(&query, names).into_iter().map(|(_, name)| name.clone()).collect();
         Self { query, found }
     }
 }

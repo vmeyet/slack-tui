@@ -2,11 +2,12 @@ use super::quit::QuitKey;
 use super::{Action, App, Focus, Input, Overlay, Screen};
 use crate::api::Message;
 use crate::inbox::Snooze;
-use crate::tui::field::Field;
 use crate::tui::firehose::Firehose;
 use crate::tui::jump::{Candidate, Jump, Target};
 use crate::tui::palette::Palette;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use vtui::field::Field;
+use vtui::toward::Toward;
 
 impl App {
     /// Any key but the one finishing a quit calls the pending quit off, then does its own job.
@@ -286,7 +287,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cycling = self.completion.take();
         match key.code {
-            KeyCode::Tab | KeyCode::BackTab => self.complete(cycling, key.code == KeyCode::BackTab),
+            KeyCode::Tab | KeyCode::BackTab => self.complete(cycling, Toward::next_if(key.code == KeyCode::Tab)),
             KeyCode::Esc => {
                 if self.filtering() {
                     self.filter.clear();
@@ -323,7 +324,7 @@ impl App {
 
     pub(super) fn close_input(&mut self) {
         self.overlay = None;
-        self.buffer.clear();
+        self.buffer = Field::default();
         self.completion = None;
     }
 

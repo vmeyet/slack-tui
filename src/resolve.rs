@@ -1,11 +1,12 @@
 use crate::api::{Channel, ChannelKind, Group, Message, Slack, User, in_parallel};
 use crate::cache::Cache;
 use crate::pattern::regex;
-use crate::{fuzzy, markdown, mrkdwn};
+use crate::{markdown, mrkdwn};
 use anyhow::{Result, bail};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
+use vtui::fuzzy;
 
 static CHANNEL_ID: LazyLock<Regex> = LazyLock::new(|| regex(r"^[CDG][A-Z0-9]{8,}$"));
 static USER_ID: LazyLock<Regex> = LazyLock::new(|| regex(r"^[UW][A-Z0-9]{8,}$"));
@@ -270,9 +271,7 @@ impl Known {
     }
 
     fn closest_user(&self, handle: &str) -> Result<String> {
-        let labelled: Vec<(String, &User)> =
-            self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (format!("{} {}", u.handle(), u.real_name), u)).collect();
-        let people = || labelled.iter().map(|(label, u)| (label.as_str(), *u));
+        let people = || self.users.iter().filter(|u| !u.deleted && !u.is_bot).map(|u| (format!("{} {}", u.handle(), u.real_name), u));
         if let Some(u) = fuzzy::best(handle, people()) {
             eprintln!("→ @{}", u.handle());
             return Ok(u.id.clone());

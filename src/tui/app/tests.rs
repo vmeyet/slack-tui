@@ -2,12 +2,12 @@
 use super::*;
 use crate::api::{File, Message};
 use crate::inbox::Item;
-use crate::tui::field::Field;
 use crate::tui::images::Thumbs;
 use crate::tui::jump::Target;
 use crate::tui::motion::{FRAME, SPINNER_FRAME};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
+use vtui::field::Field;
 
 fn picker(app: &App) -> Option<&Pick> {
     match &app.overlay {

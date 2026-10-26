@@ -180,7 +180,7 @@ mod tests {
     use crate::api::Reaction;
     use crate::resolve::NameBook;
     use crate::tui::app::{self, App, ChannelRow, Focus, Incoming, Input, Kind, Overlay, Thread};
-    use crate::tui::field::Field;
+    use vtui::field::Field;
 
     #[test]
     fn full_layout_snapshot() {
