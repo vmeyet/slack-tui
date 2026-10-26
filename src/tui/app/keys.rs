@@ -4,7 +4,7 @@ use crate::api::Message;
 use crate::inbox::Snooze;
 use crate::tui::firehose::Firehose;
 use crate::tui::jump::{Candidate, Jump, Target};
-use crate::tui::palette::Palette;
+use crate::tui::palette::{Commands, Palette};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use vtui::field::Field;
 use vtui::toward::Toward;
@@ -39,7 +39,7 @@ impl App {
             None => {}
         }
         if key.code == KeyCode::Char(':') {
-            self.overlay = Some(Overlay::Palette(Palette::with_history(self.palette_history.clone())));
+            self.overlay = Some(Overlay::Palette(Palette::new(Commands, self.palette_history.clone())));
             return vec![];
         }
         if key.code == KeyCode::Char('k') && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) {

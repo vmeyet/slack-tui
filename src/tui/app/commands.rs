@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 use vtui::theme::Theme;
+use vtui::toward::Toward;
 
 /// A command either yields actions or a reason it could not run, shown in the status line.
 type Outcome = Result<Vec<Action>, String>;
@@ -16,11 +17,12 @@ impl App {
         let Some(Overlay::Palette(mut palette)) = self.overlay.take() else { return vec![] };
         match key.code {
             KeyCode::Esc => return vec![],
-            KeyCode::Backspace if palette.input.is_empty() => return vec![],
             KeyCode::Enter => return self.run_line(palette),
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => palette.type_char(c),
-            KeyCode::Backspace => palette.backspace(),
-            KeyCode::Tab | KeyCode::BackTab => palette.complete(&self.completions_for(&palette.input), key.code == KeyCode::BackTab),
+            KeyCode::Backspace if !palette.backspace() => return vec![],
+            KeyCode::Tab | KeyCode::BackTab => {
+                palette.complete(&self.completions_for(&palette.input), Toward::next_if(key.code == KeyCode::Tab));
+            }
             KeyCode::Up => palette.history_up(),
             KeyCode::Down => palette.history_down(),
             KeyCode::Right | KeyCode::End => palette.accept(&self.completions_for(&palette.input)),
@@ -52,7 +54,7 @@ impl App {
         let channels = || self.channels.iter().map(|c| c.label.clone());
         let people = || self.people.iter().map(|(_, h)| format!("@{h}"));
         match palette::slot(input) {
-            palette::Slot::Verb => Cow::Owned(palette::VERBS.iter().map(|(v, _)| (*v).to_owned()).collect()),
+            palette::Slot::Verb => Cow::Owned(palette::VERBS.iter().map(|verb| verb.word.to_owned()).collect()),
             palette::Slot::Channel => Cow::Owned(channels().collect()),
             palette::Slot::Conversation => Cow::Owned(channels().chain(people()).collect()),
             palette::Slot::Emoji => Cow::Borrowed(emoji_names()),
