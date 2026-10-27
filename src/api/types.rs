@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Identity {
@@ -249,13 +249,13 @@ pub struct Attachment {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SearchMatch {
     pub ts: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub text: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub username: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub user: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub permalink: String,
     #[serde(default)]
     pub channel: SearchChannel,
@@ -263,9 +263,9 @@ pub struct SearchMatch {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SearchChannel {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub name: String,
 }
 
@@ -346,6 +346,11 @@ pub struct Posted {
     pub permalink: String,
 }
 
+/// Slack sends `null` where a field has no value, as `user` on a match from a bot.
+fn null_as_default<'de, D: Deserializer<'de>, T: Default + Deserialize<'de>>(d: D) -> Result<T, D::Error> {
+    Option::<T>::deserialize(d).map(Option::unwrap_or_default)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -384,5 +389,14 @@ mod tests {
         assert_eq!(m.user.as_deref(), Some("U1"));
         let c: Channel = serde_json::from_str(r#"{"id":"C1"}"#).unwrap();
         assert_eq!(c.name, "");
+    }
+
+    #[test]
+    fn a_search_match_from_a_bot_reads_its_null_fields_as_empty() {
+        let raw = r#"{"total":1,"matches":[{"ts":"1.2","text":"deployed","username":"nina","user":null,"permalink":null,"channel":{"id":null,"name":"acme"}}]}"#;
+        let result: SearchResult = serde_json::from_str(raw).unwrap();
+        let hit = &result.matches[0];
+        assert_eq!((hit.user.as_str(), hit.username.as_str(), hit.permalink.as_str()), ("", "nina", ""));
+        assert_eq!((hit.channel.id.as_str(), hit.channel.name.as_str()), ("", "acme"));
     }
 }
