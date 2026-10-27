@@ -1,8 +1,8 @@
 use crate::render::text::{self, Style as TextStyle};
-use crate::tui::theme::Theme;
 use ratatui::style::Style;
 use ratatui::text::Span;
 use unicode_width::UnicodeWidthStr;
+use vtui::theme::Theme;
 
 /// One wrapped line of message text as spans. A code line gets its bar and a fill to `width`
 /// so the block reads as one surface.

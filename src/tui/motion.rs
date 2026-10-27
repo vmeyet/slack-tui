@@ -3,30 +3,22 @@ use std::time::Duration;
 
 /// One step of the empty-state animation.
 pub const FRAME: Duration = Duration::from_millis(300);
+/// How often the loop wakes while something loads: one step of vtui's lively spinner.
 pub const SPINNER_FRAME: Duration = Duration::from_millis(80);
-
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub fn frame(elapsed: Duration) -> u32 {
     (elapsed.as_millis() / FRAME.as_millis()) as u32
-}
-
-pub fn spinner(elapsed: Duration) -> &'static str {
-    SPINNER[(elapsed.as_millis() / SPINNER_FRAME.as_millis()) as usize % SPINNER.len()]
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use vtui::motion::Motion;
 
     #[test]
-    fn spinner_steps_every_80ms_and_wraps_around() {
-        assert_eq!(spinner(Duration::ZERO), "⠋");
-        assert_eq!(spinner(Duration::from_millis(79)), "⠋");
-        assert_eq!(spinner(Duration::from_millis(80)), "⠙");
-        assert_eq!(spinner(Duration::from_millis(799)), "⠏");
-        assert_eq!(spinner(Duration::from_millis(800)), "⠋");
+    fn the_spinner_steps_once_per_wake() {
+        assert_ne!(Motion::Lively.spinner(Duration::ZERO), Motion::Lively.spinner(SPINNER_FRAME));
     }
 
     #[test]

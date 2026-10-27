@@ -1,11 +1,11 @@
 use crate::tui::app::{App, Input, Pick, REACT_PAGE};
 use crate::tui::palette::Palette;
-use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use vtui::theme::Theme;
 
 pub(super) fn draw(f: &mut Frame, app: &App, input: &Input, area: Rect) {
     let label = match input {
@@ -90,12 +90,12 @@ mod tests {
     use crate::render::text;
     use crate::resolve::NameBook;
     use crate::tui::app::{ChannelRow, Incoming, Kind, Overlay};
-    use crate::tui::field::Field;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use std::collections::HashMap;
+    use vtui::field::Field;
 
     /// Every cell of the input row with its colors, so a test sees what the cursor and the ghost paint.
     fn input_row(app: &mut App) -> Vec<(String, Color, Color)> {

@@ -1,7 +1,7 @@
 mod channels;
 mod confirm;
 mod empty;
-mod help;
+pub(super) mod help;
 mod input;
 mod items;
 mod messages;
@@ -17,13 +17,14 @@ pub use items::Bodies;
 pub use style::{body_spans, user_style};
 
 use super::app::{App, Focus, Overlay, Screen};
-use super::theme::Theme;
 use pictures::Placement;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding};
+use vtui::pane::fade;
+use vtui::theme::Theme;
 
 /// Breathing room between the border and the text.
 const MODAL_PAD_X: u16 = 2;
@@ -63,13 +64,13 @@ fn draw_panes(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Plac
         pictures.extend(thread::draw(f, app, right));
     }
     if app.focus != Focus::Channels || modal {
-        fade(f, left, app.theme.faded);
+        fade(f, left, &app.theme, app.theme.faded);
     }
     if app.focus != Focus::Messages || modal {
-        fade(f, middle, if modal { app.theme.faded } else { app.theme.muted });
+        fade(f, middle, &app.theme, if modal { app.theme.faded } else { app.theme.muted });
     }
     if app.conversation.thread.is_some() && (app.focus != Focus::Thread || modal) {
-        fade(f, right, app.theme.faded);
+        fade(f, right, &app.theme, app.theme.faded);
     }
     pictures
 }
@@ -81,7 +82,7 @@ fn draw_reading(f: &mut Frame, app: &mut App, area: Rect, modal: bool) -> Vec<Pl
     let column = Rect { x: area.x + (area.width - width) / 2, width, ..area };
     let pictures = if app.conversation.thread.is_some() { thread::draw(f, app, column) } else { messages::draw(f, app, column) };
     if modal {
-        fade(f, area, app.theme.faded);
+        fade(f, area, &app.theme, app.theme.faded);
     }
     pictures
 }
@@ -112,7 +113,7 @@ fn draw_overlays(f: &mut Frame, app: &mut App, main: Rect) {
     match &mut app.overlay {
         Some(Overlay::Jump(jump)) => super::jump::draw(f, jump, main, &theme),
         Some(Overlay::ConfirmDelete(pending)) => confirm::draw(f, &theme, &app.names, pending, f.area()),
-        Some(Overlay::Help) => help::draw(f, &theme, f.area()),
+        Some(Overlay::Help(open)) => help::draw(f, &theme, f.area(), *open),
         _ => {}
     }
 }
@@ -120,7 +121,7 @@ fn draw_overlays(f: &mut Frame, app: &mut App, main: Rect) {
 /// Quiet rounded frame; focus is carried by the title alone.
 pub fn pane(theme: &Theme, title: &str, focused: bool) -> Block<'static> {
     let title = if focused { format!(" {title} ").bold().fg(theme.accent) } else { format!(" {title} ").fg(theme.muted) };
-    Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(theme.border)).title(title)
+    Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(theme.border_focus)).title(title)
 }
 
 /// Reading mode has no frame: just the title, a breath of space, then the text.
@@ -148,19 +149,6 @@ pub fn cursor_bar(theme: &Theme, focused: bool) -> Line<'static> {
     if focused { Line::from(Span::styled("▎", Style::new().fg(theme.accent))) } else { Line::from(" ") }
 }
 
-/// Repaints an area in one quiet grey so a pane recedes when it is not the focus, or when a modal is up.
-pub fn fade(f: &mut Frame, area: Rect, color: Color) {
-    let buf = f.buffer_mut();
-    for y in area.top()..area.bottom() {
-        for x in area.left()..area.right() {
-            if let Some(cell) = buf.cell_mut((x, y)) {
-                cell.set_fg(color);
-                cell.modifier.remove(Modifier::BOLD);
-            }
-        }
-    }
-}
-
 /// A box of `width` by `height` cells in the middle of `area`, shrunk to fit when the terminal is smaller.
 pub fn centered_cells(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
@@ -180,7 +168,7 @@ mod tests {
     use crate::api::Reaction;
     use crate::resolve::NameBook;
     use crate::tui::app::{self, App, ChannelRow, Focus, Incoming, Input, Kind, Overlay, Thread};
-    use crate::tui::field::Field;
+    use vtui::field::Field;
 
     #[test]
     fn full_layout_snapshot() {

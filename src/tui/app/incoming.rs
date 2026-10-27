@@ -24,6 +24,10 @@ impl App {
             Incoming::Replies { channel, ts, messages, names } => return self.replies_loaded(channel, ts, messages, names),
             Incoming::Sent { channel, thread_ts } => return self.sent(channel, thread_ts),
             Incoming::Composed { channel, thread_ts, text } => return self.composed(channel, thread_ts, text),
+            Incoming::Permalink(url) => {
+                self.toast("permalink copied");
+                return vec![Action::Copy(url)];
+            }
             Incoming::Channels { rows, people, names, badges, me } => self.channels_loaded(rows, people, names, badges, me),
             Incoming::SearchResults(matches) => self.search_loaded(matches),
             Incoming::Inbox { items, names } => return self.inbox_loaded(items, names),

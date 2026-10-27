@@ -3,12 +3,12 @@ use crate::mrkdwn;
 use crate::render::text;
 use crate::resolve::NameBook;
 use crate::tui::app::MyMessage;
-use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
+use vtui::theme::Theme;
 
 const CONFIRM_W: u16 = 56;
 const CONFIRM_ANSWER: &str = "y deletes it · any other key keeps it";

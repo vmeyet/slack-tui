@@ -10,7 +10,6 @@ mod config;
 pub mod ctx;
 mod emoji;
 mod firehose;
-mod fuzzy;
 mod inbox;
 mod markdown;
 mod mrkdwn;

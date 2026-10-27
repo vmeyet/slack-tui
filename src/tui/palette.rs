@@ -1,7 +1,7 @@
 //! The `:` command line: typed verbs with fuzzy tab completion and history.
-use super::complete::{self, Swap};
-use crate::fuzzy;
 use crate::inbox::Snooze;
+use vtui::fuzzy;
+use vtui::palette::Verb;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -31,25 +31,25 @@ pub enum Format {
     Markdown,
 }
 
-pub const VERBS: [(&str, &str); 18] = [
-    ("join", "join a channel: :join #ops"),
-    ("leave", "leave the current channel, or :leave #ops"),
-    ("go", "open a conversation: :go #ops, :go @bob"),
-    ("msg", "send a message: :msg @bob on my way"),
-    ("compose", "write the message in $EDITOR"),
-    ("react", "react to the selected message: :react rocket"),
-    ("edit", "rewrite the selected message, yours only"),
-    ("delete", "delete the selected message, yours only, after a yes"),
-    ("thread", "open the selected message's thread"),
-    ("search", "search Slack: :search deploy failed"),
-    ("open", "open the selected message in Slack"),
-    ("copy", "copy the selected message's permalink"),
-    ("export", "save the conversation: :export json | md"),
-    ("read", "mark the conversation read"),
-    ("snooze", "snooze the selected inbox item: :snooze 1h | 3h | tomorrow | monday"),
-    ("set", "change and save a setting: :set theme=nord · :set highlight=#2a2a2a"),
-    ("help", "show the keys"),
-    ("quit", "leave"),
+pub const VERBS: [Verb; 18] = [
+    Verb { word: "join", does: "join a channel: :join #ops" },
+    Verb { word: "leave", does: "leave the current channel, or :leave #ops" },
+    Verb { word: "go", does: "open a conversation: :go #ops, :go @bob" },
+    Verb { word: "msg", does: "send a message: :msg @bob on my way" },
+    Verb { word: "compose", does: "write the message in $EDITOR" },
+    Verb { word: "react", does: "react to the selected message: :react rocket" },
+    Verb { word: "edit", does: "rewrite the selected message, yours only" },
+    Verb { word: "delete", does: "delete the selected message, yours only, after a yes" },
+    Verb { word: "thread", does: "open the selected message's thread" },
+    Verb { word: "search", does: "search Slack: :search deploy failed" },
+    Verb { word: "open", does: "open the selected message in Slack" },
+    Verb { word: "copy", does: "copy the selected message's permalink" },
+    Verb { word: "export", does: "save the conversation: :export json | md" },
+    Verb { word: "read", does: "mark the conversation read" },
+    Verb { word: "snooze", does: "snooze the selected inbox item: :snooze 1h | 3h | tomorrow | monday" },
+    Verb { word: "set", does: "change and save a setting: :set theme=nord · :set highlight=#2a2a2a" },
+    Verb { word: "help", does: "show the keys" },
+    Verb { word: "quit", does: "leave" },
 ];
 
 pub fn parse(line: &str) -> Result<Command, String> {
@@ -97,7 +97,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "help" | "h" | "?" => Ok(Command::Help),
         "quit" | "q" | "exit" => Ok(Command::Quit),
         unknown => {
-            let close = fuzzy::suggestions(unknown, VERBS.iter().map(|(v, _)| *v), 3);
+            let close = fuzzy::suggestions(unknown, VERBS.iter().map(|verb| verb.word), 3);
             if close.is_empty() {
                 return Err(format!("unknown command :{unknown}"));
             }
@@ -138,112 +138,21 @@ pub fn slot(line: &str) -> Slot {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Palette {
-    pub input: String,
-    pub history: Vec<String>,
-    history_at: Option<usize>,
-    cycle: Option<Swap>,
-}
+/// The `:` line's only mode: everything typed is a command.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Commands;
 
-impl Palette {
-    pub fn with_history(history: Vec<String>) -> Self {
-        Self { history, ..Default::default() }
+impl vtui::palette::Mode for Commands {
+    fn switched_by(self, _first: char) -> Option<Self> {
+        None
     }
 
-    pub fn type_char(&mut self, c: char) {
-        self.input.push(c);
-        self.cycle = None;
-    }
-
-    pub fn backspace(&mut self) {
-        self.input.pop();
-        self.cycle = None;
-    }
-
-    /// Replaces the token being typed with the next candidate; `candidates` supplies the
-    /// labels for the slot under the cursor.
-    pub fn complete(&mut self, candidates: &[String], backwards: bool) {
-        if let Some(swap) = &mut self.cycle {
-            swap.advance(backwards);
-        } else {
-            let (prefix, token) = split_last_token(&self.input);
-            self.cycle = Swap::new(prefix, token, "", candidates);
-        }
-        let Some(swap) = &self.cycle else { return };
-        self.input = swap.text().0;
-        self.end_token();
-    }
-
-    /// The grey text zsh-style autosuggestion would show after the cursor: the rest of the
-    /// best completion for the token being typed, or nothing when the token is empty or complete.
-    pub fn ghost(&self, candidates: &[String]) -> Option<String> {
-        if self.cycle.is_some() {
-            return None;
-        }
-        let (_, token) = split_last_token(&self.input);
-        complete::ghost(token, candidates)
-    }
-
-    /// Accepts the ghost text, as `→` does in a shell.
-    pub fn accept(&mut self, candidates: &[String]) {
-        if let Some(rest) = self.ghost(candidates) {
-            self.input.push_str(&rest);
-            self.end_token();
-        }
-    }
-
-    /// A space so the next token can start, unless a `key=` waits for its value.
-    fn end_token(&mut self) {
-        if !self.input.ends_with('=') {
-            self.input.push(' ');
-        }
-    }
-
-    pub fn hint(&self) -> Option<String> {
-        Some(self.cycle.as_ref()?.hint(str::to_owned))
-    }
-
-    pub fn history_up(&mut self) {
-        if self.history.is_empty() {
-            return;
-        }
-        let at = self.history_at.map_or(self.history.len() - 1, |i| i.saturating_sub(1));
-        self.history_at = Some(at);
-        self.input = self.history[at].clone();
-        self.cycle = None;
-    }
-
-    pub fn history_down(&mut self) {
-        let Some(at) = self.history_at else { return };
-        if at + 1 >= self.history.len() {
-            self.history_at = None;
-            self.input.clear();
-        } else {
-            self.history_at = Some(at + 1);
-            self.input = self.history[at + 1].clone();
-        }
-        self.cycle = None;
-    }
-
-    /// Takes the line, remembers it, and leaves the palette empty for the next command.
-    pub fn submit(&mut self) -> String {
-        let line = std::mem::take(&mut self.input).trim().to_owned();
-        if !line.is_empty() && self.history.last() != Some(&line) {
-            self.history.push(line.clone());
-        }
-        self.history_at = None;
-        self.cycle = None;
-        line
+    fn takes_commands(self) -> bool {
+        true
     }
 }
 
-fn split_last_token(input: &str) -> (&str, &str) {
-    match input.rfind(char::is_whitespace) {
-        Some(i) => (&input[..=i], &input[i + 1..]),
-        None => ("", input),
-    }
-}
+pub type Palette = vtui::palette::Palette<Commands>;
 
 #[cfg(test)]
 mod tests {
@@ -280,66 +189,5 @@ mod tests {
         assert_eq!(slot("msg @bob hi"), Slot::Free);
         assert_eq!(slot("react ro"), Slot::Emoji);
         assert_eq!(slot("export "), Slot::Literal(&["json", "md"]));
-    }
-
-    #[test]
-    fn tab_cycles_fuzzy_completions() {
-        let mut p = Palette::default();
-        for c in "join gen".chars() {
-            p.type_char(c);
-        }
-        let candidates = vec!["#general".to_string(), "#engineering".to_string(), "#general-fr".to_string()];
-        p.complete(&candidates, false);
-        assert_eq!(p.input, "join #general ");
-        assert!(p.hint().unwrap().starts_with("[#general]"));
-        p.complete(&candidates, false);
-        assert_eq!(p.input, "join #general-fr ");
-        p.complete(&candidates, true);
-        assert_eq!(p.input, "join #general ");
-        p.type_char('x');
-        assert_eq!(p.hint(), None);
-    }
-
-    #[test]
-    fn ghost_text_suggests_and_accepts() {
-        let mut p = Palette::default();
-        let verbs: Vec<String> = VERBS.iter().map(|(v, _)| (*v).to_owned()).collect();
-        for c in "jo".chars() {
-            p.type_char(c);
-        }
-        assert_eq!(p.ghost(&verbs).as_deref(), Some("in"));
-        p.accept(&verbs);
-        assert_eq!(p.input, "join ");
-        assert_eq!(p.ghost(&verbs), None);
-        let channels = vec!["#general".to_string(), "#general-fr".to_string()];
-        for c in "#GEN".chars() {
-            p.type_char(c);
-        }
-        assert_eq!(p.ghost(&channels).as_deref(), Some("eral"));
-        p.type_char('x');
-        assert_eq!(p.ghost(&channels), None);
-    }
-
-    #[test]
-    fn history_recall() {
-        let mut p = Palette::default();
-        for c in "go #a".chars() {
-            p.type_char(c);
-        }
-        assert_eq!(p.submit(), "go #a");
-        p.input = "go #b".into();
-        p.submit();
-        p.submit();
-        assert_eq!(p.history, ["go #a", "go #b"]);
-        p.history_up();
-        assert_eq!(p.input, "go #b");
-        p.history_up();
-        assert_eq!(p.input, "go #a");
-        p.history_up();
-        assert_eq!(p.input, "go #a");
-        p.history_down();
-        assert_eq!(p.input, "go #b");
-        p.history_down();
-        assert_eq!(p.input, "");
     }
 }

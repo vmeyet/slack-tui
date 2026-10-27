@@ -1,10 +1,12 @@
-use super::theme::Theme;
-use crate::fuzzy;
+//! The `⌘k` jump: a palette that finds a channel, a person or a thread, or searches Slack after a `>`.
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Style, Stylize};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
+use vtui::fuzzy;
+use vtui::palette::MAX_SHOWN;
+use vtui::palette::view::{self, Pick, Popup};
+use vtui::theme::Theme;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
@@ -19,102 +21,97 @@ pub struct Candidate {
     pub target: Target,
 }
 
-pub const MAX_SHOWN: usize = 12;
+/// What the line looks for: a place to go, or after a `>` the words to search Slack for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    #[default]
+    Find,
+    Search,
+}
+
+impl vtui::palette::Mode for Mode {
+    fn switched_by(self, first: char) -> Option<Self> {
+        (self == Self::Find && first == '>').then_some(Self::Search)
+    }
+
+    fn takes_commands(self) -> bool {
+        false
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Jump {
-    pub query: String,
-    pub selected: usize,
+    pub palette: vtui::palette::Palette<Mode>,
     pub channels: Vec<Candidate>,
     pub people: Vec<Candidate>,
     pub threads: Vec<Candidate>,
-    pub view: ListState,
 }
 
 impl Jump {
-    pub fn is_search(&self) -> bool {
-        self.query.starts_with('>')
+    /// The words to search Slack for, once a `>` started the line.
+    pub fn search(&self) -> Option<&str> {
+        (self.palette.mode == Mode::Search).then(|| self.palette.input.trim())
     }
 
     /// Best matches for the query, channels first on an empty query.
     pub fn matches(&self) -> Vec<Candidate> {
-        if self.is_search() {
+        if self.palette.mode == Mode::Search {
             return vec![];
         }
         let all = self.channels.iter().chain(&self.people).chain(&self.threads);
-        if self.query.is_empty() {
+        if self.palette.input.is_empty() {
             return all.take(MAX_SHOWN).cloned().collect();
         }
-        let ranked = fuzzy::rank(&self.query, all.map(|c| (c.label.as_str(), c)));
+        let ranked = fuzzy::rank(&self.palette.input, all.map(|c| (c.label.as_str(), c)));
         ranked.into_iter().map(|(_, c)| c.clone()).take(MAX_SHOWN).collect()
     }
 
     pub fn selected_candidate(&self) -> Option<Candidate> {
-        self.matches().into_iter().nth(self.selected)
+        self.matches().into_iter().nth(self.palette.selected)
     }
 
-    pub fn move_by(&mut self, delta: i64) {
+    pub fn move_by(&mut self, delta: isize) {
         let len = self.matches().len();
-        if len == 0 {
-            self.selected = 0;
-            return;
-        }
-        self.selected = (self.selected as i64).saturating_add(delta).clamp(0, len as i64 - 1) as usize;
+        self.palette.move_by(delta, len);
     }
 
     pub fn type_char(&mut self, c: char) {
-        self.query.push(c);
-        self.selected = 0;
+        self.palette.type_char(c);
     }
 
-    pub fn backspace(&mut self) {
-        self.query.pop();
-        self.selected = 0;
+    /// `false` once there is nothing left to erase, which closes the jump.
+    pub fn backspace(&mut self) -> bool {
+        self.palette.backspace()
     }
 }
 
-pub fn draw(f: &mut Frame, jump: &mut Jump, area: Rect, theme: &Theme) {
-    let width = (area.width * 3 / 5).clamp(30.min(area.width), area.width);
-    let height = (MAX_SHOWN as u16 + 3).min(area.height);
-    let popup = Rect { y: area.y + area.height.saturating_sub(height) / 3, ..super::ui::centered_cells(area, width, height) };
-    f.render_widget(Clear, popup);
-    let block = super::ui::pane(theme, "jump · > to search", true);
-    let inner = block.inner(popup);
-    f.render_widget(block, popup);
-    let prompt = Line::from(vec![
-        Span::styled(" › ", Style::new().fg(theme.accent).bold()),
-        Span::raw(jump.query.clone()),
-        Span::styled("▌", Style::new().fg(theme.accent)),
-    ]);
-    f.render_widget(Paragraph::new(prompt), Rect { height: 1, ..inner });
-    let list_area = Rect { y: inner.y + 1, height: inner.height.saturating_sub(1), ..inner };
-    if jump.is_search() {
-        f.render_widget(Paragraph::new(format!("   enter searches Slack for “{}”", jump.query[1..].trim()).fg(theme.muted)), list_area);
-        return;
-    }
-    let items: Vec<ListItem> = jump
-        .matches()
-        .into_iter()
+pub fn draw(f: &mut Frame, jump: &Jump, area: Rect, theme: &Theme) {
+    let (sign, footer) = match jump.palette.mode {
+        Mode::Find => ("", "  ↑↓ pick · enter opens · > searches Slack · esc"),
+        Mode::Search => (">", "  enter searches · backspace goes back · esc"),
+    };
+    let prompt = view::prompt(theme, &jump.palette, sign, |_| vec![]);
+    let popup = Popup { title: "jump · > to search", prompt, footer };
+    view::draw(f, theme, area, popup, |room| match jump.search() {
+        Some(query) => vec![Line::from(Span::styled(format!("  enter searches Slack for “{query}”"), Style::new().fg(theme.muted)))],
+        None => pick_lines(jump, theme, room),
+    });
+}
+
+fn pick_lines(jump: &Jump, theme: &Theme, room: usize) -> Vec<Line<'static>> {
+    let matches = jump.matches();
+    let picks: Vec<Pick> = matches
+        .iter()
         .map(|c| {
-            let (icon, style) = match c.target {
-                Target::Channel(_) => ("#", Style::new()),
-                Target::Person(_) => ("@", Style::new().fg(theme.mention)),
-                Target::Thread { .. } => ("⤷", Style::new().fg(theme.accent)),
+            let (icon, colour) = match c.target {
+                Target::Channel(_) => ("#", theme.muted),
+                Target::Person(_) => ("@", theme.mention),
+                Target::Thread { .. } => ("⤷", theme.accent),
             };
-            ListItem::new(Line::from(vec![Span::styled(format!(" {icon} "), style.bold()), Span::raw(c.label)]))
+            Pick { icon, colour, label: &c.label, detail: "" }
         })
         .collect();
-    let empty = items.is_empty();
-    let list = List::new(items)
-        .highlight_style(super::ui::row_highlight(theme, true).bold())
-        .highlight_symbol(super::ui::cursor_bar(theme, true))
-        .repeat_highlight_symbol(true)
-        .highlight_spacing(HighlightSpacing::Always);
-    jump.view.select((!empty).then_some(jump.selected));
-    f.render_stateful_widget(list, list_area, &mut jump.view);
-    if empty {
-        f.render_widget(Paragraph::new("   no match".fg(theme.muted)), list_area);
-    }
+    view::pick_lines(theme, &picks, jump.palette.selected, room)
 }
 
 #[cfg(test)]
@@ -137,6 +134,12 @@ mod tests {
         }
     }
 
+    fn typed(text: &str) -> Jump {
+        let mut j = jump();
+        text.chars().for_each(|c| j.type_char(c));
+        j
+    }
+
     #[test]
     fn empty_query_lists_everything_in_order() {
         let labels: Vec<String> = jump().matches().into_iter().map(|c| c.label).collect();
@@ -145,22 +148,26 @@ mod tests {
 
     #[test]
     fn query_ranks_and_selection_follows() {
-        let mut j = jump();
-        for c in "vvt".chars() {
-            j.type_char(c);
-        }
+        let mut j = typed("vvt");
         assert_eq!(j.selected_candidate().unwrap().target, Target::Channel("C2".into()));
         j.move_by(5);
-        assert_eq!(j.selected, j.matches().len() - 1);
+        assert_eq!(j.palette.selected, j.matches().len() - 1);
         j.backspace();
-        assert_eq!(j.selected, 0);
+        assert_eq!(j.palette.selected, 0);
     }
 
     #[test]
-    fn search_prefix_has_no_matches() {
-        let mut j = jump();
-        j.type_char('>');
-        assert!(j.is_search());
-        assert_eq!(j.matches(), [] as [crate::tui::jump::Candidate; 0]);
+    fn a_leading_chevron_searches_and_lists_nothing() {
+        let j = typed(">deploy failed ");
+        assert_eq!(j.search(), Some("deploy failed"));
+        assert_eq!(j.matches(), [] as [Candidate; 0]);
+    }
+
+    #[test]
+    fn backspace_on_an_empty_search_goes_back_to_finding() {
+        let mut j = typed(">");
+        assert!(j.backspace());
+        assert_eq!(j.search(), None);
+        assert!(!j.backspace(), "nothing left: the jump closes");
     }
 }

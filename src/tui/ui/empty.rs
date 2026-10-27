@@ -1,9 +1,9 @@
-use crate::tui::theme::Theme;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use vtui::theme::Theme;
 
 /// The caption under the ghost, chosen from what the pane is showing.
 pub struct Empty {

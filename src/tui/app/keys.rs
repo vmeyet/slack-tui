@@ -2,11 +2,14 @@ use super::quit::QuitKey;
 use super::{Action, App, Focus, Input, Overlay, Screen};
 use crate::api::Message;
 use crate::inbox::Snooze;
-use crate::tui::field::Field;
 use crate::tui::firehose::Firehose;
 use crate::tui::jump::{Candidate, Jump, Target};
-use crate::tui::palette::Palette;
+use crate::tui::palette::{Commands, Palette};
+use crate::tui::ui::help;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use vtui::field::Field;
+use vtui::help::Help;
+use vtui::toward::Toward;
 
 impl App {
     /// Any key but the one finishing a quit calls the pending quit off, then does its own job.
@@ -26,8 +29,8 @@ impl App {
             return self.quit_key(QuitKey::CtrlC);
         }
         match &self.overlay {
-            Some(Overlay::Help) => {
-                self.overlay = None;
+            Some(Overlay::Help(open)) => {
+                self.overlay = scroll_help(*open, key).map(Overlay::Help);
                 return vec![];
             }
             Some(Overlay::ConfirmDelete(_)) => return self.handle_confirm_key(key),
@@ -38,7 +41,7 @@ impl App {
             None => {}
         }
         if key.code == KeyCode::Char(':') {
-            self.overlay = Some(Overlay::Palette(Palette::with_history(self.palette_history.clone())));
+            self.overlay = Some(Overlay::Palette(Palette::new(Commands, self.palette_history.clone())));
             return vec![];
         }
         if key.code == KeyCode::Char('k') && key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) {
@@ -96,7 +99,7 @@ impl App {
                 }
                 return actions;
             }
-            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
+            KeyCode::Char('?') => self.overlay = Some(Overlay::help()),
             _ => {}
         }
         vec![]
@@ -129,11 +132,11 @@ impl App {
             KeyCode::Up | KeyCode::BackTab => jump.move_by(-1),
             KeyCode::Char('n') if ctrl => jump.move_by(1),
             KeyCode::Char('p') if ctrl => jump.move_by(-1),
-            KeyCode::Backspace => jump.backspace(),
+            KeyCode::Backspace if !jump.backspace() => self.overlay = None,
             KeyCode::Char(c) if !ctrl => jump.type_char(c),
             KeyCode::Enter => {
-                if jump.is_search() {
-                    let query = jump.query[1..].trim().to_owned();
+                if let Some(query) = jump.search() {
+                    let query = query.to_owned();
                     self.overlay = None;
                     return if query.is_empty() { vec![] } else { self.search_for(query) };
                 }
@@ -225,7 +228,7 @@ impl App {
                     return actions;
                 }
             }
-            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
+            KeyCode::Char('?') => self.overlay = Some(Overlay::help()),
             _ => {}
         }
         vec![]
@@ -235,7 +238,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('q') => return self.quit_key(QuitKey::Q),
-            KeyCode::Char('?') => self.overlay = Some(Overlay::Help),
+            KeyCode::Char('?') => self.overlay = Some(Overlay::help()),
             KeyCode::Tab => self.focus = self.next_focus(),
             KeyCode::BackTab => self.focus = self.prev_focus(),
             KeyCode::Char('l') | KeyCode::Right => return self.go_right(),
@@ -286,7 +289,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cycling = self.completion.take();
         match key.code {
-            KeyCode::Tab | KeyCode::BackTab => self.complete(cycling, key.code == KeyCode::BackTab),
+            KeyCode::Tab | KeyCode::BackTab => self.complete(cycling, Toward::next_if(key.code == KeyCode::Tab)),
             KeyCode::Esc => {
                 if self.filtering() {
                     self.filter.clear();
@@ -323,7 +326,7 @@ impl App {
 
     pub(super) fn close_input(&mut self) {
         self.overlay = None;
-        self.buffer.clear();
+        self.buffer = Field::default();
         self.completion = None;
     }
 
@@ -543,4 +546,14 @@ fn first_link(m: &Message) -> Option<String> {
         _ => None,
     });
     in_text.or_else(|| m.files.iter().map(|f| f.permalink.clone()).find(|p| !p.is_empty()))
+}
+
+/// `j k` scroll the key help; any other key closes it.
+fn scroll_help(open: Help, key: KeyEvent) -> Option<Help> {
+    let scroll = match key.code {
+        KeyCode::Char('j') | KeyCode::Down => open.scroll.saturating_add(1).min(help::last_row()),
+        KeyCode::Char('k') | KeyCode::Up => open.scroll.saturating_sub(1),
+        _ => return None,
+    };
+    Some(Help { scroll, ..open })
 }

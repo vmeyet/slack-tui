@@ -2,12 +2,12 @@
 use super::*;
 use crate::api::{File, Message};
 use crate::inbox::Item;
-use crate::tui::field::Field;
 use crate::tui::images::Thumbs;
 use crate::tui::jump::Target;
 use crate::tui::motion::{FRAME, SPINNER_FRAME};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
+use vtui::field::Field;
 
 fn picker(app: &App) -> Option<&Pick> {
     match &app.overlay {
@@ -532,7 +532,7 @@ fn animates_only_while_an_empty_state_is_visible() {
     assert!(!app.animating());
     app.apply(Incoming::SearchResults(vec![]));
     assert!(app.animating(), "search without results");
-    app.overlay = Some(Overlay::Help);
+    app.overlay = Some(Overlay::help());
     assert!(!app.animating(), "a modal covers it");
 }
 
@@ -674,13 +674,41 @@ fn right_opens_the_selected_thread_and_left_closes_it() {
 fn quit_and_help() {
     let mut app = loaded();
     app.handle_key(key('?'));
-    assert!(matches!(app.overlay, Some(Overlay::Help)));
-    app.handle_key(key('j'));
+    assert!(matches!(app.overlay, Some(Overlay::Help(_))));
+    app.handle_key(code(KeyCode::Esc));
     assert!(app.overlay.is_none());
     assert_eq!(app.channel_selected, 0);
     app.handle_key(ctrl('c'));
     app.handle_key(ctrl('c'));
     assert!(app.should_quit);
+}
+
+fn help_scroll(app: &App) -> Option<usize> {
+    match &app.overlay {
+        Some(Overlay::Help(help)) => Some(help.scroll),
+        _ => None,
+    }
+}
+
+#[test]
+fn j_and_k_scroll_the_help_and_stop_at_the_top() {
+    let mut app = loaded();
+    app.handle_key(key('?'));
+    app.handle_key(key('j'));
+    app.handle_key(key('j'));
+    assert_eq!(help_scroll(&app), Some(2));
+    app.handle_key(key('k'));
+    app.handle_key(key('k'));
+    app.handle_key(key('k'));
+    assert_eq!(help_scroll(&app), Some(0));
+}
+
+#[test]
+fn a_question_mark_closes_the_help() {
+    let mut app = loaded();
+    app.handle_key(key('?'));
+    app.handle_key(key('?'));
+    assert!(app.overlay.is_none());
 }
 
 #[test]
@@ -1029,6 +1057,14 @@ fn jump_opens_channels_people_threads_and_search() {
     assert!(jump(&app).is_none());
     app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::SUPER));
     assert!(jump(&app).is_some());
+}
+
+#[test]
+fn backspace_on_an_empty_jump_closes_it() {
+    let mut app = loaded();
+    app.handle_key(ctrl('k'));
+    app.handle_key(code(KeyCode::Backspace));
+    assert!(jump(&app).is_none());
 }
 
 #[test]
@@ -1394,6 +1430,13 @@ fn error_survives_time_and_clears_on_the_next_key() {
     assert!(!app.animating(), "nothing to wake up for");
     app.handle_key(key('j'));
     assert_eq!(app.status_line(), "C1");
+}
+
+#[test]
+fn a_fetched_permalink_goes_to_the_clipboard_with_a_toast() {
+    let mut app = reading();
+    assert_eq!(app.apply(Incoming::Permalink("https://acme.slack.com/p1".into())), vec![Action::Copy("https://acme.slack.com/p1".into())]);
+    assert_eq!(app.status_line(), "permalink copied");
 }
 
 #[test]

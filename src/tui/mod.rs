@@ -1,8 +1,6 @@
 //! The interactive terminal client.
 mod app;
 mod complete;
-mod compose;
-mod field;
 mod firehose;
 mod images;
 mod inbox;
@@ -18,20 +16,16 @@ use crate::ctx::Ctx;
 use crate::markdown;
 use crate::resolve::{Directory, NameBook};
 use crate::typesafe::{TypeSafe, Unavailable};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use app::{Action, App, ChannelRow, Incoming, Kind, Settings};
-use crossterm::event::{
-    Event, EventStream, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-};
-use crossterm::terminal::{EnterAlternateScreen, enable_raw_mode};
+use crossterm::event::{Event, EventStream, KeyEventKind};
 use futures_util::StreamExt;
-use ratatui::DefaultTerminal;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::io::AsyncWriteExt;
 use tokio::sync::{OnceCell, mpsc};
+use vtui::editor::Edited;
 
 /// Opens the interactive client and returns when the user quits.
 pub async fn run(ctx: Ctx) -> Result<()> {
@@ -40,22 +34,6 @@ pub async fn run(ctx: Ctx) -> Result<()> {
 
 pub(crate) async fn run_inbox(ctx: Ctx) -> Result<()> {
     run_with(ctx, true).await
-}
-
-/// `tui.theme` picks the palette, `tui.highlight` adds a fill under the selected row.
-fn theme_from(config: &crate::config::Tui) -> Result<theme::Theme> {
-    let mut theme = match config.theme.as_deref() {
-        Some(name) => theme::Theme::named(name)
-            .ok_or_else(|| anyhow::anyhow!("config `tui.theme = \"{name}\"` is not a theme (try {})", theme::Theme::NAMES.join(", ")))?,
-        None => theme::Theme::default(),
-    };
-    if let Some(color) = config.highlight.as_deref().filter(|c| *c != "none") {
-        let parsed = color.parse().map_err(|_| {
-            anyhow::anyhow!("config `tui.highlight = \"{color}\"` is not a colour (try `darkgray`, `#2a2a2a`, `236` or `none`)")
-        })?;
-        theme.highlight = Some(parsed);
-    }
-    Ok(theme)
 }
 
 /// The cache file counting how often each emoji was put on a message.
@@ -83,10 +61,9 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
     if let Some(Err(unavailable)) = jev {
         let _ = tx.send(Incoming::TriageUnavailable(unavailable));
     }
-    let theme = theme_from(&ctx.config.tui)?;
+    let theme = theme::from_config(&ctx.config.tui)?;
     let highlighter = crate::firehose::Highlighter::new(&ctx.config.firehose.highlight)?;
-    let mut terminal = ratatui::init();
-    let enhanced = enable_modifier_keys();
+    let (mut terminal, screen) = vtui::screen::Screen::enter_without_mouse();
     let thumbs = if ctx.config.tui.images.unwrap_or(true) { images::Thumbs::from_terminal() } else { images::Thumbs::off() };
     let mut app = App::with(Settings { theme, workspace, highlighter, thumbs, triage });
     spawn(Action::LoadChannels, backend.clone(), tx.clone());
@@ -121,13 +98,11 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
                 Action::Compose { channel, thread_ts, draft } => {
                     // The event stream reads stdin from its own thread; it steps aside so the editor gets the keys.
                     drop(events);
-                    let composed = {
-                        let _paused = Paused::start(&mut terminal, enhanced);
-                        compose::edit(&draft)
-                    };
+                    let edited = screen.lend(&mut terminal, || vtui::editor::edit(&draft, "slack-"));
                     events = EventStream::new();
-                    let _ = tx.send(composed_outcome(channel, thread_ts, composed));
+                    let _ = tx.send(composed_outcome(channel, thread_ts, edited));
                 }
+                Action::Copy(text) => vtui::clipboard::print(&text),
                 // Saves run one after the other, so an older state never lands over a newer one.
                 action @ (Action::SaveInbox { .. } | Action::SaveFavorites(_)) => answer(action, &backend, &tx).await,
                 action => spawn(action, backend.clone(), tx.clone()),
@@ -137,73 +112,15 @@ async fn run_with(ctx: Ctx, open_inbox: bool) -> Result<()> {
             break Ok(());
         }
     };
-    if enhanced {
-        let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
-    }
-    ratatui::restore();
+    screen.leave();
     result
 }
 
-/// Asks terminals speaking the kitty keyboard protocol to report ⌘ and other modifiers,
-/// so ⌘K works where the terminal lets it through (Ghostty, Kitty, `WezTerm`, iTerm2 with the option on).
-fn enable_modifier_keys() -> bool {
-    if !crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false) || !push_modifier_keys() {
-        return false;
-    }
-    pop_modifier_keys_on_panic();
-    true
-}
-
-/// The hook `ratatui::init` installs gives back raw mode and the screen, not these flags.
-fn pop_modifier_keys_on_panic() {
-    let restore = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
-        restore(info);
-    }));
-}
-
-fn push_modifier_keys() -> bool {
-    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
-    crossterm::execute!(std::io::stdout(), PushKeyboardEnhancementFlags(flags)).is_ok()
-}
-
-/// The shell gets its terminal back — no raw mode, no alternate screen — for as long as this
-/// lives, so a child process inherits a plain stdin and stdout. Dropping it takes the screen
-/// back and repaints, whatever the child did.
-struct Paused<'a> {
-    terminal: &'a mut DefaultTerminal,
-    enhanced: bool,
-}
-
-impl<'a> Paused<'a> {
-    fn start(terminal: &'a mut DefaultTerminal, enhanced: bool) -> Self {
-        if enhanced {
-            let _ = crossterm::execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
-        }
-        ratatui::restore();
-        Self { terminal, enhanced }
-    }
-}
-
-impl Drop for Paused<'_> {
-    /// Everything `ratatui::init` does except installing a panic hook, which must not stack up
-    /// nor be able to panic here, during an unwind.
-    fn drop(&mut self) {
-        let _ = enable_raw_mode();
-        let _ = crossterm::execute!(std::io::stdout(), EnterAlternateScreen);
-        if self.enhanced {
-            push_modifier_keys();
-        }
-        let _ = self.terminal.clear();
-    }
-}
-
 /// A compose the user backed out of is no event for the app, only a quiet note.
-fn composed_outcome(channel: String, thread_ts: Option<String>, composed: Result<Option<String>>) -> Incoming {
-    match composed {
-        Ok(Some(text)) => Incoming::Composed { channel, thread_ts, text },
-        Ok(None) => Incoming::Toast("nothing sent".into()),
+fn composed_outcome(channel: String, thread_ts: Option<String>, edited: std::io::Result<Edited>) -> Incoming {
+    match edited {
+        Ok(Edited::Done(text)) => Incoming::Composed { channel, thread_ts, text },
+        Ok(Edited::Cancelled | Edited::Errored(_)) => Incoming::Toast("nothing sent".into()),
         Err(e) => Incoming::Error(format!("{e:#}")),
     }
 }
@@ -303,7 +220,7 @@ fn badges(counts: &crate::api::Counts) -> HashMap<String, app::Badge> {
 async fn perform(action: Action, backend: &Backend) -> Result<Incoming> {
     let slack = &backend.slack;
     match action {
-        Action::Compose { .. } => bail!("compose is run by the event loop, not here"),
+        Action::Compose { .. } | Action::Copy(_) => bail!("the event loop runs this one itself"),
         Action::LoadChannels => load_channels(backend).await,
         Action::CheckUpdate => Ok(Incoming::Latest(crate::update::latest_commit().await)),
         Action::LoadHistory(channel) => load_history(backend, channel).await,
@@ -493,11 +410,7 @@ async fn save_setting(key: String, value: String) -> Result<Incoming> {
 }
 
 async fn yank(slack: &crate::api::Slack, channel: &str, ts: &str) -> Result<Incoming> {
-    let url = slack.permalink(channel, ts).await?;
-    let mut child = tokio::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn()?;
-    child.stdin.take().context("piped stdin")?.write_all(url.as_bytes()).await?;
-    child.wait().await?;
-    Ok(Incoming::Toast("permalink copied".into()))
+    Ok(Incoming::Permalink(slack.permalink(channel, ts).await?))
 }
 
 #[cfg(test)]
