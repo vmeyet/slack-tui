@@ -32,7 +32,7 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process"
 tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 toml = "1.1.6"
 unicode-width = "0.2.2"
-vtui = { git = "https://github.com/vmeyet/vtui", tag = "v0.2.1" }
+vtui = { git = "https://github.com/vmeyet/vtui", tag = "v0.2.2" }
 
 [dev-dependencies]
 assert_cmd = "2.2.2"

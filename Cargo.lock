@@ -3498,8 +3498,8 @@ dependencies = [
 
 [[package]]
 name = "vtui"
-version = "0.2.1"
-source = "git+https://github.com/vmeyet/vtui?tag=v0.2.1#7af1dc52214c655ea1515218abb7b5327a170890"
+version = "0.2.2"
+source = "git+https://github.com/vmeyet/vtui?tag=v0.2.2#58567c41d83f114f24ceef68be7966a89d8d145e"
 dependencies = [
  "base64 0.22.1",
  "crossterm",
