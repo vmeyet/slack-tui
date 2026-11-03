@@ -1257,6 +1257,26 @@ fn palette_completion_and_history() {
 }
 
 #[test]
+fn up_on_a_typed_line_keeps_what_is_typed() {
+    let mut app = loaded();
+    palette_run(&mut app, "go #random");
+    app.handle_key(key(':'));
+    app.handle_key(key('g'));
+    app.handle_key(code(KeyCode::Up));
+    assert_eq!(palette(&app).unwrap().input, "g");
+}
+
+#[test]
+fn down_past_the_newest_line_empties_the_line() {
+    let mut app = loaded();
+    palette_run(&mut app, "go #random");
+    app.handle_key(key(':'));
+    app.handle_key(code(KeyCode::Up));
+    app.handle_key(code(KeyCode::Down));
+    assert_eq!(palette(&app).unwrap().input, "");
+}
+
+#[test]
 fn palette_export_and_read_use_the_open_conversation() {
     let mut app = loaded();
     app.handle_key(code(KeyCode::Enter));

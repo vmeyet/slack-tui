@@ -1,7 +1,7 @@
 //! The `:` command line: typed verbs with fuzzy tab completion and history.
 use crate::inbox::Snooze;
-use vtui::fuzzy;
 use vtui::palette::Verb;
+use vtui::palette::typed::{Setting, TypedLine, Typing, unknown_verb};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
@@ -53,8 +53,8 @@ pub const VERBS: [Verb; 18] = [
 ];
 
 pub fn parse(line: &str) -> Result<Command, String> {
-    let line = line.trim().trim_start_matches(':').trim();
-    let (verb, rest) = line.split_once(char::is_whitespace).map_or((line, ""), |(v, r)| (v, r.trim()));
+    let typed = TypedLine::read(line);
+    let TypedLine { verb, rest, .. } = typed;
     let need =
         |what: &str| -> Result<String, String> { if rest.is_empty() { Err(format!(":{verb} needs {what}")) } else { Ok(rest.to_owned()) } };
     match verb {
@@ -91,18 +91,12 @@ pub fn parse(line: &str) -> Result<Command, String> {
             _ => Err(":snooze takes 1h, 3h, tomorrow or monday".into()),
         },
         "set" => {
-            let Some((key, value)) = rest.split_once('=') else { return Err(":set needs key=value, e.g. highlight=#2a2a2a".into()) };
-            Ok(Command::Set { key: key.trim().to_owned(), value: value.trim().to_owned() })
+            let Some(Setting { key, value }) = typed.setting() else { return Err(":set needs key=value, e.g. highlight=#2a2a2a".into()) };
+            Ok(Command::Set { key: key.to_owned(), value: value.to_owned() })
         }
         "help" | "h" | "?" => Ok(Command::Help),
         "quit" | "q" | "exit" => Ok(Command::Quit),
-        unknown => {
-            let close = fuzzy::suggestions(unknown, VERBS.iter().map(|verb| verb.word), 3);
-            if close.is_empty() {
-                return Err(format!("unknown command :{unknown}"));
-            }
-            Err(format!("unknown command :{unknown}, did you mean :{}?", close.join(", :")))
-        }
+        unknown => Err(unknown_verb(unknown, VERBS.iter().map(|verb| verb.word))),
     }
 }
 
@@ -118,16 +112,9 @@ pub enum Slot {
 }
 
 pub fn slot(line: &str) -> Slot {
-    let line = line.trim_start_matches(':');
-    let mut tokens = line.split_whitespace();
-    let verb = tokens.next().unwrap_or("");
-    let args_done = tokens.count();
-    let editing_verb = !line.contains(char::is_whitespace);
-    if editing_verb {
-        return Slot::Verb;
-    }
-    let arg_index = if line.ends_with(char::is_whitespace) { args_done } else { args_done.saturating_sub(1) };
-    match (verb, arg_index) {
+    let TypedLine { verb, typing, .. } = TypedLine::read(line);
+    let Typing::Argument(argument) = typing else { return Slot::Verb };
+    match (verb, argument) {
         ("join" | "j" | "leave", 0) => Slot::Channel,
         ("go" | "g" | "c" | "msg" | "m" | "dm", 0) => Slot::Conversation,
         ("react" | "r", 0) => Slot::Emoji,
@@ -138,21 +125,7 @@ pub fn slot(line: &str) -> Slot {
     }
 }
 
-/// The `:` line's only mode: everything typed is a command.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Commands;
-
-impl vtui::palette::Mode for Commands {
-    fn switched_by(self, _first: char) -> Option<Self> {
-        None
-    }
-
-    fn takes_commands(self) -> bool {
-        true
-    }
-}
-
-pub type Palette = vtui::palette::Palette<Commands>;
+pub type Palette = vtui::palette::Palette<vtui::palette::CommandLine>;
 
 #[cfg(test)]
 mod tests {

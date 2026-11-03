@@ -108,7 +108,7 @@ fn pick_lines(jump: &Jump, theme: &Theme, room: usize) -> Vec<Line<'static>> {
                 Target::Person(_) => ("@", theme.mention),
                 Target::Thread { .. } => ("⤷", theme.accent),
             };
-            Pick { icon, colour, label: &c.label, detail: "" }
+            Pick { icon, colour, label: &c.label, detail: Line::default() }
         })
         .collect();
     view::pick_lines(theme, &picks, jump.palette.selected, room)

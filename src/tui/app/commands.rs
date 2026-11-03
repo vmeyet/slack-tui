@@ -9,6 +9,9 @@ use std::sync::LazyLock;
 use vtui::theme::Theme;
 use vtui::toward::Toward;
 
+/// The rows the `:` line lists under it: it is one line, so `↑` `↓` only walk the history.
+const NO_LIST: usize = 0;
+
 /// A command either yields actions or a reason it could not run, shown in the status line.
 type Outcome = Result<Vec<Action>, String>;
 
@@ -23,8 +26,9 @@ impl App {
             KeyCode::Tab | KeyCode::BackTab => {
                 palette.complete(&self.completions_for(&palette.input), Toward::next_if(key.code == KeyCode::Tab));
             }
-            KeyCode::Up => palette.history_up(),
-            KeyCode::Down => palette.history_down(),
+            KeyCode::Up | KeyCode::Down => {
+                palette.arrow(Toward::next_if(key.code == KeyCode::Down), NO_LIST);
+            }
             KeyCode::Right | KeyCode::End => palette.accept(&self.completions_for(&palette.input)),
             _ => {}
         }

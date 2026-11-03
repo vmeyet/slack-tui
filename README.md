@@ -81,7 +81,7 @@ Whoever is typing in the open conversation shows under the last message.
 
 **Command line.**
 `:join #ops`, `:leave`, `:go @bob`, `:msg @bob on my way`, `:compose`, `:react rocket`, `:search deploy failed`, `:export md`, `:read`, `:snooze 1h`, `:set theme=nord`, `:help`, `:quit`.
-Tab completes verbs, channels, people and emoji; `↑` recalls history.
+Tab completes verbs, channels, people and emoji; `↑` on an empty line recalls history, and `↑` `↓` walk it until you type.
 
 **Inbox.**
 Unread DMs, mentions and thread replies in one list.
